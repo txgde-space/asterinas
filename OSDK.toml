@@ -1,0 +1,114 @@
+# The OSDK manifest at the Asterinas root virtual workspace 
+# provides default OSDK settings for all packages.
+
+# The common options for build, run and test
+[boot]
+method = "grub-rescue-iso"
+
+[grub]
+boot_protocol = "multiboot2"
+
+[qemu]
+args = "$(./tools/qemu_args.sh normal)"
+
+# Special options for running
+[run.boot]
+kcmd_args = [
+    "SHELL=/bin/sh",
+    "LOGNAME=root",
+    "HOME=/",
+    "USER=root",
+    "PATH=/bin:/benchmark",
+    "init=/init",
+]
+init_args = ["sh", "-l"]
+initramfs = "test/initramfs/build/initramfs.cpio.gz"
+
+# Special options for testing
+[test.qemu]
+args = "$(./tools/qemu_args.sh test)"
+
+# Other Schemes
+
+[scheme."microvm"]
+boot.method = "qemu-direct"
+build.strip_elf = true
+qemu.args = "$(./tools/qemu_args.sh microvm)"
+
+[scheme."iommu"]
+supported_archs = ["x86_64"]
+qemu.args = "$(./tools/qemu_args.sh iommu)"
+
+[scheme."tdx"]
+supported_archs = ["x86_64"]
+build.features = ["cvm_guest"]
+boot.method = "grub-qcow2"
+grub.boot_protocol = "linux"
+qemu.args = "$(./tools/qemu_args.sh tdx)"
+
+[scheme."riscv"]
+supported_archs = ["riscv64"]
+boot.method = "qemu-direct"
+build.strip_elf = false
+
+qemu.args = """\
+    -cpu rv64,svpbmt=true \
+    -machine virt \
+    -m ${MEM-:8G} \
+    -smp ${SMP-:1} \
+    --no-reboot \
+    -nographic \
+    -display none \
+    -serial chardev:mux \
+    -monitor chardev:mux \
+    -chardev stdio,id=mux,mux=on,signal=off,logfile=qemu.log \
+    -drive if=none,format=raw,id=x0,file=./test/initramfs/build/ext2.img \
+    -drive if=none,format=raw,id=x1,file=./test/initramfs/build/exfat.img \
+    # NOTE: The `/etc/profile.d/init.sh` assumes that `ext2.img` appears as the first block device (`/dev/vda`).
+    # The ordering below ensures `x1` (ext2.img) is discovered before `x0`, maintaining this assumption.
+    # TODO: Once UUID-based mounting is implemented, this strict ordering will no longer be required.
+    -device virtio-blk-device,drive=x1 \
+    -device virtio-blk-device,drive=x0 \
+    -device virtio-keyboard-device \
+    -device virtio-serial-device \
+    -device virtconsole,chardev=mux \
+"""
+
+[scheme."sifive_u"]
+supported_archs = ["riscv64"]
+build.features = ["riscv_sv39_mode"]
+boot.method = "qemu-direct"
+build.strip_elf = false
+qemu.with_monitor = true
+
+qemu.args = """\
+    -machine sifive_u \
+    -m 8G \
+    -smp 5 \
+    -no-reboot \
+    -nographic \
+    -display none \
+    -serial chardev:mux \
+    -monitor chardev:mux \
+    -chardev stdio,id=mux,mux=on,signal=off,logfile=qemu.log
+"""
+
+[scheme."loongarch"]
+boot.method = "qemu-direct"
+build.strip_elf = false
+
+qemu.args = """\
+    -machine virt \
+    -m 8G \
+    -smp 1 \
+    --no-reboot \
+    -nographic \
+    -display none \
+    -serial chardev:mux \
+    -monitor chardev:mux \
+    -chardev stdio,id=mux,mux=on,signal=off,logfile=qemu.log \
+    -device virtio-keyboard-pci \
+    -device virtio-serial \
+    -device virtconsole,chardev=mux \
+    -rtc base=utc
+"""

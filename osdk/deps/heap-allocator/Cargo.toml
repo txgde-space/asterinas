@@ -1,0 +1,15 @@
+[package]
+name = "osdk-heap-allocator"
+description = "The default slab-based heap allocator shipped with OSDK."
+readme = "README.md"
+version.workspace = true
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[dependencies]
+log.workspace = true
+ostd.workspace = true
+
+[lints]
+workspace = true
