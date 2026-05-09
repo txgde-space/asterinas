@@ -2,7 +2,10 @@
 
 use aster_bigtcp::wire::{IpAddress, IpEndpoint, Ipv4Address};
 
-use crate::{net::socket::util::SocketAddr, prelude::*};
+use crate::{
+    net::{iface::BoundPort, socket::util::SocketAddr},
+    prelude::*,
+};
 
 impl TryFrom<SocketAddr> for IpEndpoint {
     type Error = Error;
@@ -35,3 +38,13 @@ impl From<IpEndpoint> for SocketAddr {
 /// unspecified endpoint helps with that.
 pub(super) const UNSPECIFIED_LOCAL_ENDPOINT: IpEndpoint =
     IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), 0);
+
+/// 创建 bind() 成功后对用户态可见的本地端点。
+pub(super) fn new_visible_local_endpoint(
+    requested_endpoint: &IpEndpoint,
+    bound_port: &BoundPort,
+) -> IpEndpoint {
+    // 绑定到 0.0.0.0 时，内部会选择实际接口地址收包；Linux 的 getsockname()
+    // 仍然暴露用户传入的通配地址，只把端口替换成最终分配的端口。
+    IpEndpoint::new(requested_endpoint.addr, bound_port.port())
+}
