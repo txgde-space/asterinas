@@ -6,7 +6,10 @@ use super::{bound::BoundDatagram, observer::DatagramObserver};
 use crate::{
     events::IoEvents,
     net::socket::{
-        ip::common::{bind_port, get_ephemeral_endpoint},
+        ip::{
+            addr::new_visible_local_endpoint,
+            common::{bind_port, get_ephemeral_endpoint},
+        },
         util::datagram_common,
     },
     prelude::*,
@@ -40,6 +43,7 @@ impl datagram_common::Unbound for UnboundDatagram {
         options: BindOptions,
     ) -> Result<Self::Bound> {
         let bound_port = bind_port(endpoint, options.can_reuse)?;
+        let local_endpoint = new_visible_local_endpoint(endpoint, &bound_port);
 
         let bound_socket =
             match UdpSocket::new_bind(bound_port, DatagramObserver::new(pollee.clone())) {
@@ -49,7 +53,7 @@ impl datagram_common::Unbound for UnboundDatagram {
                 }
             };
 
-        Ok(BoundDatagram::new(bound_socket))
+        Ok(BoundDatagram::new(bound_socket, local_endpoint))
     }
 
     fn bind_ephemeral(

@@ -17,13 +17,15 @@ use crate::{
 
 pub(super) struct BoundDatagram {
     bound_socket: UdpSocket,
+    local_endpoint: IpEndpoint,
     remote_endpoint: Option<IpEndpoint>,
 }
 
 impl BoundDatagram {
-    pub(super) fn new(bound_socket: UdpSocket) -> Self {
+    pub(super) fn new(bound_socket: UdpSocket, local_endpoint: IpEndpoint) -> Self {
         Self {
             bound_socket,
+            local_endpoint,
             remote_endpoint: None,
         }
     }
@@ -41,7 +43,7 @@ impl datagram_common::Bound for BoundDatagram {
     type Endpoint = IpEndpoint;
 
     fn local_endpoint(&self) -> Self::Endpoint {
-        self.bound_socket.local_endpoint().unwrap()
+        self.local_endpoint
     }
 
     fn remote_endpoint(&self) -> Option<&Self::Endpoint> {
