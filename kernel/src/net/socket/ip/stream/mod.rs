@@ -476,6 +476,7 @@ impl Socket for StreamSocket {
             let listen_stream = match init_stream.listen(
                 backlog,
                 &raw_option,
+                options.socket.reuse_addr(),
                 StreamObserver::new(self.pollee.clone()),
             ) {
                 Ok(listen_stream) => listen_stream,
