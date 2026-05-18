@@ -149,6 +149,53 @@ FN_TEST(bind_to_connected_port)
 }
 END_TEST()
 
+FN_TEST(restart_listener_on_same_port)
+{
+	struct sockaddr_in restart_addr = {
+		.sin_family = AF_INET,
+		.sin_port = 0,
+	};
+	socklen_t restart_addrlen = sizeof(restart_addr);
+	int option = 1;
+	char byte = 's';
+
+	CHECK(inet_aton("127.0.0.1", &restart_addr.sin_addr));
+
+	int first_listener = TEST_SUCC(socket(AF_INET, SOCK_STREAM, 0));
+	TEST_SUCC(setsockopt(first_listener, SOL_SOCKET, SO_REUSEADDR, &option,
+			     sizeof(option)));
+	TEST_SUCC(bind(first_listener, (struct sockaddr *)&restart_addr,
+		       restart_addrlen));
+	TEST_SUCC(getsockname(first_listener, (struct sockaddr *)&restart_addr,
+			      &restart_addrlen));
+	TEST_SUCC(listen(first_listener, 1));
+
+	int client = TEST_SUCC(socket(AF_INET, SOCK_STREAM, 0));
+	TEST_SUCC(connect(client, (struct sockaddr *)&restart_addr,
+			  restart_addrlen));
+	struct pollfd poll_fd = { .fd = first_listener, .events = POLLIN };
+	TEST_RES(poll(&poll_fd, 1, 1000),
+		 _ret == 1 && (poll_fd.revents & POLLIN));
+	int accepted = TEST_SUCC(accept(first_listener, NULL, NULL));
+	TEST_RES(write(client, &byte, sizeof(byte)), _ret == sizeof(byte));
+	TEST_RES(read(accepted, &byte, sizeof(byte)),
+		 _ret == sizeof(byte) && byte == 's');
+
+	/* Linux 服务重启场景：旧 listener 关闭后，同端口应可立即重新监听。 */
+	TEST_SUCC(close(accepted));
+	TEST_SUCC(close(client));
+	TEST_SUCC(close(first_listener));
+
+	int second_listener = TEST_SUCC(socket(AF_INET, SOCK_STREAM, 0));
+	TEST_SUCC(setsockopt(second_listener, SOL_SOCKET, SO_REUSEADDR, &option,
+			     sizeof(option)));
+	TEST_SUCC(bind(second_listener, (struct sockaddr *)&restart_addr,
+		       restart_addrlen));
+	TEST_SUCC(listen(second_listener, 1));
+	TEST_SUCC(close(second_listener));
+}
+END_TEST()
+
 FN_TEST(enable_reuse_after_bound)
 {
 	renew_socks();
