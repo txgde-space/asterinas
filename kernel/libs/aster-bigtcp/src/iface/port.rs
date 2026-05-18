@@ -23,7 +23,10 @@ impl BindPortConfig {
     }
 
     pub(super) fn can_reuse(&self) -> bool {
-        matches!(self, Self::CanReuse(_)) || matches!(self, Self::Ephemeral(true))
+        // accept 出来的连接沿用 listener 端口；把 backlog 端口计为可复用，避免
+        // SO_REUSEADDR 服务重启被残留的已接受连接阻塞。
+        matches!(self, Self::CanReuse(_) | Self::Backlog(_))
+            || matches!(self, Self::Ephemeral(true))
     }
 
     pub(super) fn port(&self) -> Option<u16> {
