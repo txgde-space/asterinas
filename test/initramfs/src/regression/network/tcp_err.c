@@ -527,7 +527,7 @@ FN_TEST(sendmsg_and_recvmsg)
 	// TEST CASE 5: Send a large buffer
 
 	int big_buffer_size = 1000000;
-	char *big_buffer = (char *)calloc(0, big_buffer_size);
+	char *big_buffer = (char *)calloc(1, big_buffer_size);
 	iov[0].iov_base = big_buffer;
 	iov[0].iov_len = big_buffer_size;
 	msg.msg_iovlen = 2;
@@ -537,6 +537,7 @@ FN_TEST(sendmsg_and_recvmsg)
 	TEST_SUCC(getsockopt(sk_accepted, SOL_SOCKET, SO_SNDBUF, &sndbuf,
 			     &optlen));
 	TEST_RES(sendmsg(sk_accepted, &msg, 0), _ret <= sndbuf);
+	free(big_buffer);
 }
 END_TEST()
 
