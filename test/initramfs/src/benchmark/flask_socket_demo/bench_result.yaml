@@ -1,0 +1,8 @@
+chart:
+  description: flask_socket_demo starts Flask on 0.0.0.0 and probes loopback and the guest IPv4 address
+  legend: Flask socket compatibility demo
+  title: Flask service startup and Linux socket compatibility demo
+  unit: tests
+result_extraction:
+  result_index: 1
+  search_pattern: 'flask_socket_demo summary: +[0-9]+ tests passed'
