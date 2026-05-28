@@ -6,6 +6,8 @@
   lmbench = callPackage ./lmbench.nix { };
   memcached = pkgsHostTarget.memcached;
   nginx = pkgsHostTarget.nginx;
+  pythonSocketDemo =
+    pkgsHostTarget.python3.withPackages (ps: [ ps.flask ]);
   redis =
     (pkgsHostTarget.redis.overrideAttrs (_: { doCheck = false; })).override {
       withSystemd = false;
@@ -29,6 +31,7 @@
       cp -r ${iperf3}/bin/iperf3 $out/bin/
       cp -r ${memcached}/bin/memcached $out/bin/
       cp -r ${nginx}/bin/nginx $out/bin/
+      cp -r ${pythonSocketDemo}/bin/python3 $out/bin/
       cp -r ${redis}/bin/redis-server $out/bin/
       cp -r ${schbench}/bin/schbench $out/bin/
       cp -r ${sqlite-speedtest1}/bin/sqlite-speedtest1 $out/bin/
