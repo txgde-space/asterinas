@@ -25,8 +25,9 @@ ASTERINAS_DIR=$(realpath "${SCRIPT_DIR}/../..")
 cd "${ASTERINAS_DIR}"
 
 # Base QEMU arguments
+OVMF_FD=${OVMF_FD:-/root/ovmf/release/OVMF.fd}
 BASE_QEMU_ARGS="qemu-system-x86_64 \
-    -bios /root/ovmf/release/OVMF.fd \
+    -bios ${OVMF_FD} \
 "
 
 # Mode-specific QEMU arguments
