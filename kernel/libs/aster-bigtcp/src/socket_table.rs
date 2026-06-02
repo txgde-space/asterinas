@@ -12,7 +12,7 @@ use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint};
 
 use crate::{
     ext::Ext,
-    socket::{TcpConnectionBg, TcpListenerBg, UdpSocketBg},
+    socket::{RawIpSocketBg, TcpConnectionBg, TcpListenerBg, UdpSocketBg},
     wire::PortNum,
 };
 
@@ -142,6 +142,8 @@ pub(crate) struct SocketTable<E: Ext> {
     // Note that multiple UDP sockets can be bound to the same address,
     // so we cannot use (addr, port) as a _unique_ key for UDP sockets.
     udp_sockets: Vec<Arc<UdpSocketBg<E>>>,
+    // Raw IP sockets are matched by IP protocol instead of transport port.
+    raw_ip_sockets: Vec<Arc<RawIpSocketBg<E>>>,
 }
 
 // On Linux, the number of buckets is determined at runtime based on the available memory.
@@ -166,11 +168,13 @@ impl<E: Ext> SocketTable<E> {
             .collect();
 
         let udp_sockets = Vec::new();
+        let raw_ip_sockets = Vec::new();
 
         Self {
             listener_buckets,
             connection_buckets,
             udp_sockets,
+            raw_ip_sockets,
         }
     }
 
@@ -234,6 +238,16 @@ impl<E: Ext> SocketTable<E> {
                 .any(|socket| Arc::ptr_eq(socket, &udp_socket))
         );
         self.udp_sockets.push(udp_socket);
+    }
+
+    pub(crate) fn insert_raw_ip_socket(&mut self, socket: Arc<RawIpSocketBg<E>>) {
+        debug_assert!(
+            !self
+                .raw_ip_sockets
+                .iter()
+                .any(|registered| Arc::ptr_eq(registered, &socket))
+        );
+        self.raw_ip_sockets.push(socket);
     }
 
     pub(crate) fn lookup_listener(&self, key: &ListenerKey) -> Option<&Arc<TcpListenerBg<E>>> {
@@ -311,8 +325,23 @@ impl<E: Ext> SocketTable<E> {
         Some(self.udp_sockets.swap_remove(index))
     }
 
+    pub(crate) fn remove_raw_ip_socket(
+        &mut self,
+        socket: &Arc<RawIpSocketBg<E>>,
+    ) -> Option<Arc<RawIpSocketBg<E>>> {
+        let index = self
+            .raw_ip_sockets
+            .iter()
+            .position(|registered| Arc::ptr_eq(registered, socket))?;
+        Some(self.raw_ip_sockets.swap_remove(index))
+    }
+
     pub(crate) fn udp_socket_iter(&self) -> impl Iterator<Item = &Arc<UdpSocketBg<E>>> {
         self.udp_sockets.iter()
+    }
+
+    pub(crate) fn raw_ip_socket_iter(&self) -> impl Iterator<Item = &Arc<RawIpSocketBg<E>>> {
+        self.raw_ip_sockets.iter()
     }
 }
 
