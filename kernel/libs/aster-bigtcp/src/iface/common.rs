@@ -28,7 +28,7 @@ use super::{
 use crate::{
     errors::BindError,
     ext::Ext,
-    socket::{TcpListenerBg, UdpSocketBg},
+    socket::{RawIpSocketBg, TcpListenerBg, UdpSocketBg},
     socket_table::SocketTable,
 };
 
@@ -208,6 +208,11 @@ impl<E: Ext> IfaceCommon<E> {
         sockets.insert_udp_socket(socket);
     }
 
+    pub(crate) fn register_raw_ip_socket(&self, socket: Arc<RawIpSocketBg<E>>) {
+        let mut sockets = self.sockets.lock();
+        sockets.insert_raw_ip_socket(socket);
+    }
+
     pub(crate) fn remove_tcp_listener(&self, socket: &Arc<TcpListenerBg<E>>) {
         let mut sockets = self.sockets.lock();
         let removed = sockets.remove_listener(socket.listener_key());
@@ -217,6 +222,12 @@ impl<E: Ext> IfaceCommon<E> {
     pub(crate) fn remove_udp_socket(&self, socket: &Arc<UdpSocketBg<E>>) {
         let mut sockets = self.sockets.lock();
         let removed = sockets.remove_udp_socket(socket);
+        debug_assert!(removed.is_some());
+    }
+
+    pub(crate) fn remove_raw_ip_socket(&self, socket: &Arc<RawIpSocketBg<E>>) {
+        let mut sockets = self.sockets.lock();
+        let removed = sockets.remove_raw_ip_socket(socket);
         debug_assert!(removed.is_some());
     }
 }
