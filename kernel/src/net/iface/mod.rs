@@ -7,13 +7,14 @@ mod poll;
 mod sched;
 
 pub use broadcast::is_broadcast_endpoint;
-pub use init::{init, iter_all_ifaces, loopback_iface, virtio_iface};
+pub use init::{init, iter_all_ifaces, loopback_iface};
 pub(super) use poll::init_in_first_kthread;
 
 pub type Iface = dyn aster_bigtcp::iface::Iface<ext::BigtcpExt>;
 pub type BoundPort = aster_bigtcp::iface::BoundPort<ext::BigtcpExt>;
 
 pub type RawTcpSocketExt = aster_bigtcp::socket::RawTcpSocketExt<ext::BigtcpExt>;
+pub type RawIpSocket = aster_bigtcp::socket::RawIpSocket<ext::BigtcpExt>;
 
 pub type TcpConnection = aster_bigtcp::socket::TcpConnection<ext::BigtcpExt>;
 pub type TcpListener = aster_bigtcp::socket::TcpListener<ext::BigtcpExt>;
