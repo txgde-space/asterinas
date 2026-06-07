@@ -4,7 +4,7 @@ use super::SyscallReturn;
 use crate::{
     fs::file::{FileLike, file_table::FdFlags},
     net::socket::{
-        ip::{DatagramSocket, StreamSocket},
+        ip::{DatagramSocket, RawSocket, StreamSocket},
         netlink::{
             NetlinkRouteSocket, NetlinkUeventSocket, StandardNetlinkProtocol, is_valid_protocol,
         },
@@ -53,6 +53,17 @@ pub fn sys_socket(domain: i32, type_: i32, protocol: i32, ctx: &Context) -> Resu
                     DatagramSocket::new(is_nonblocking) as Arc<dyn FileLike>
                 }
                 _ => return_errno_with_message!(Errno::EAFNOSUPPORT, "unsupported protocol"),
+            }
+        }
+        (CSocketAddrFamily::AF_INET, SockType::SOCK_RAW) => {
+            let protocol = Protocol::try_from(protocol)?;
+            debug!("protocol = {:?}", protocol);
+            // 当前 raw socket 最小实现只开放 IPv4 ICMP，避免未验证协议被误暴露。
+            match protocol {
+                Protocol::IPPROTO_ICMP => {
+                    RawSocket::new(is_nonblocking, protocol)? as Arc<dyn FileLike>
+                }
+                _ => return_errno_with_message!(Errno::EPROTONOSUPPORT, "unsupported raw protocol"),
             }
         }
         (CSocketAddrFamily::AF_NETLINK, SockType::SOCK_RAW | SockType::SOCK_DGRAM) => {
