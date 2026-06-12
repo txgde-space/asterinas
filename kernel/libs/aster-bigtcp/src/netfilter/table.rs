@@ -284,3 +284,117 @@ impl OutputRule {
     }
 }
 
+impl MutableNatRules {
+    const fn new() -> Self {
+        Self {
+            rules: [None, None, None, None, None, None, None, None],
+            len: 0,
+        }
+    }
+
+    fn append_rule(&mut self, rule: NatRule) -> bool {
+        if self.len == MAX_NAT_RULES {
+            return false;
+        }
+
+        self.rules[self.len] = Some(rule);
+        self.len += 1;
+        true
+    }
+
+    fn flush(&mut self, chain: Option<NatRuleChain>) {
+        let mut next_len = 0;
+
+        for index in 0..self.len {
+            let Some(rule) = self.rules[index] else {
+                continue;
+            };
+
+            if chain.is_some_and(|chain| chain == rule.chain) || chain.is_none() {
+                continue;
+            }
+
+            self.rules[next_len] = Some(rule);
+            next_len += 1;
+        }
+
+        for rule in &mut self.rules[next_len..] {
+            *rule = None;
+        }
+        self.len = next_len;
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn rewrite_postrouting_transport(
+        &mut self,
+        protocol: OutputRuleProtocol,
+        mut ipv4_repr: Ipv4Repr,
+        src_port: u16,
+        dst_port: u16,
+        masquerade_addr: Option<Ipv4Address>,
+    ) -> (Ipv4Repr, Option<u16>) {
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+
+        for rule in &mut self.rules[..self.len] {
+            let Some(rule) = rule.as_mut() else {
+                continue;
+            };
+
+            if !rule.matches_postrouting_transport(protocol, &ipv4_repr, src_port, dst_port) {
+                continue;
+            }
+
+            let new_src_addr = match rule.target {
+                NatRuleTarget::Masquerade => masquerade_addr,
+                NatRuleTarget::Snat => rule.to_addr,
+                NatRuleTarget::Dnat => None,
+            };
+            let Some(new_src_addr) = new_src_addr else {
+                return (ipv4_repr, None);
+            };
+
+            rule.record_match(packet_len);
+            ipv4_repr.src_addr = new_src_addr;
+            return (ipv4_repr, rule.to_port);
+        }
+
+        (ipv4_repr, None)
+    }
+
+    fn rewrite_postrouting_icmp(
+        &mut self,
+        mut ipv4_repr: Ipv4Repr,
+        masquerade_addr: Option<Ipv4Address>,
+    ) -> Ipv4Repr {
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+
+        for rule in &mut self.rules[..self.len] {
+            let Some(rule) = rule.as_mut() else {
+                continue;
+            };
+
+            if !rule.matches_postrouting_icmp(&ipv4_repr) {
+                continue;
+            }
+
+            let new_src_addr = match rule.target {
+                NatRuleTarget::Masquerade => masquerade_addr,
+                NatRuleTarget::Snat => rule.to_addr,
+                NatRuleTarget::Dnat => None,
+            };
+            let Some(new_src_addr) = new_src_addr else {
+                return ipv4_repr;
+            };
+
+            rule.record_match(packet_len);
+            ipv4_repr.src_addr = new_src_addr;
+            return ipv4_repr;
+        }
+
+        ipv4_repr
+    }
+}
+
