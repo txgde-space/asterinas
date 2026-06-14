@@ -549,3 +549,148 @@ impl MutableOutputRules {
 /// NETFILTER_STAGE20: The table now covers ICMP Echo plus TCP/UDP port
 /// matchers, which is enough for common firewall demonstrations such as
 /// dropping HTTP or DNS-like traffic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputRuleProtocol {
+    Icmp,
+    Tcp,
+    Udp,
+}
+
+/// Describes the terminal target selected by a mutable OUTPUT rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputRuleTarget {
+    Accept,
+    Drop,
+}
+
+/// Describes a mutable NAT chain.
+///
+/// NETFILTER_STAGE21: NAT support starts with the two IPv4 chains used by
+/// classic iptables NAT examples. Stage 22 can attach these rules to packet
+/// rewriting without changing the userspace control syntax.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NatRuleChain {
+    PreRouting,
+    PostRouting,
+}
+
+/// Describes the NAT target selected by a mutable rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NatRuleTarget {
+    Dnat,
+    Masquerade,
+    Snat,
+}
+
+impl OutputRuleTarget {
+    const fn into_action(self) -> Action {
+        match self {
+            Self::Accept => Action::Accept,
+            Self::Drop => Action::Drop,
+        }
+    }
+}
+
+impl FilterTable {
+    /// Evaluates generic IPv4 rules and returns the first matching verdict.
+    pub(super) fn evaluate_ipv4(&self, context: Ipv4PacketContext<'_>) -> Verdict {
+        let Some(chain) = self.find_chain(context.hook_point()) else {
+            return Verdict::Accept;
+        };
+
+        chain.evaluate_ipv4(context)
+    }
+
+    fn find_chain(&self, hook_point: HookPoint) -> Option<Chain> {
+        for chain in self.chains {
+            if chain.handles(hook_point) {
+                return Some(*chain);
+            }
+        }
+
+        None
+    }
+
+    /// Evaluates IPv4 ICMPv4 rules and returns the first matching verdict.
+    pub(super) fn evaluate_ipv4_icmpv4(
+        &self,
+        context: Ipv4PacketContext<'_>,
+        icmp_repr: &Icmpv4Repr<'_>,
+    ) -> Verdict {
+        if context.hook_point() == HookPoint::LocalOut {
+            let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
+                return Verdict::Accept;
+            };
+
+            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+            if let Some(verdict) = OUTPUT_RULES
+                .lock()
+                .evaluate_matching_icmp_echo(context, *ident, packet_len)
+            {
+                return verdict;
+            }
+        }
+
+        let Some(chain) = self.find_chain(context.hook_point()) else {
+            return Verdict::Accept;
+        };
+
+        chain.evaluate_ipv4_icmpv4(context, icmp_repr)
+    }
+
+    /// Evaluates IPv4 TCP rules and returns the first matching verdict.
+    pub(super) fn evaluate_ipv4_tcp(
+        &self,
+        context: Ipv4PacketContext<'_>,
+        tcp_repr: &TcpRepr<'_>,
+    ) -> Verdict {
+        self.evaluate_ipv4_transport(
+            context,
+            OutputRuleProtocol::Tcp,
+            tcp_repr.src_port,
+            tcp_repr.dst_port,
+        )
+    }
+
+    /// Evaluates IPv4 UDP rules and returns the first matching verdict.
+    pub(super) fn evaluate_ipv4_udp(
+        &self,
+        context: Ipv4PacketContext<'_>,
+        udp_repr: &UdpRepr,
+    ) -> Verdict {
+        self.evaluate_ipv4_transport(
+            context,
+            OutputRuleProtocol::Udp,
+            udp_repr.src_port,
+            udp_repr.dst_port,
+        )
+    }
+
+    fn evaluate_ipv4_transport(
+        &self,
+        context: Ipv4PacketContext<'_>,
+        protocol: OutputRuleProtocol,
+        src_port: u16,
+        dst_port: u16,
+    ) -> Verdict {
+        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match OUTPUT
+        // chain semantics as ICMP rules, but match transport ports.
+        if context.hook_point() == HookPoint::LocalOut {
+            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+            if let Some(verdict) = OUTPUT_RULES
+                .lock()
+                .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
+            {
+                return verdict;
+            }
+        }
+
+        let Some(chain) = self.find_chain(context.hook_point()) else {
+            return Verdict::Accept;
+        };
+
+        chain.evaluate_ipv4(context)
+    }
+}
+
+/// Returns the static IPv4 filter table.
