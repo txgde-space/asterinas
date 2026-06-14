@@ -398,3 +398,154 @@ impl MutableNatRules {
     }
 }
 
+impl MutableOutputRules {
+    const fn new() -> Self {
+        Self {
+            rules: [
+                Some(OutputRule::icmp_echo(
+                    Some(STAGE10_DROPPED_ICMP_ECHO_IDENT),
+                    None,
+                    None,
+                    Action::Drop,
+                )),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            len: 1,
+        }
+    }
+
+    fn append_icmp_echo(
+        &mut self,
+        ident: Option<u16>,
+        src_addr: Option<Ipv4Address>,
+        dst_addr: Option<Ipv4Address>,
+        target: OutputRuleTarget,
+    ) -> bool {
+        self.append_rule(OutputRule::icmp_echo(
+            ident,
+            src_addr,
+            dst_addr,
+            target.into_action(),
+        ))
+    }
+
+    fn append_transport(
+        &mut self,
+        protocol: OutputRuleProtocol,
+        src_addr: Option<Ipv4Address>,
+        dst_addr: Option<Ipv4Address>,
+        src_port: Option<u16>,
+        dst_port: Option<u16>,
+        target: OutputRuleTarget,
+    ) -> bool {
+        self.append_rule(OutputRule::transport(
+            protocol,
+            src_addr,
+            dst_addr,
+            src_port,
+            dst_port,
+            target.into_action(),
+        ))
+    }
+
+    fn append_rule(&mut self, rule: OutputRule) -> bool {
+        if self.len == MAX_OUTPUT_RULES {
+            return false;
+        }
+
+        self.rules[self.len] = Some(rule);
+        self.len += 1;
+        true
+    }
+
+    fn delete(&mut self, index: usize) -> bool {
+        if index >= self.len {
+            return false;
+        }
+
+        for idx in index..self.len - 1 {
+            self.rules[idx] = self.rules[idx + 1];
+        }
+        self.len -= 1;
+        self.rules[self.len] = None;
+        true
+    }
+
+    fn flush(&mut self) {
+        for rule in &mut self.rules {
+            *rule = None;
+        }
+        self.len = 0;
+    }
+
+    fn zero_counters(&mut self) {
+        for rule in &mut self.rules[..self.len] {
+            let Some(rule) = rule.as_mut() else {
+                continue;
+            };
+
+            rule.zero_counters();
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn evaluate_matching_icmp_echo(
+        &mut self,
+        context: Ipv4PacketContext<'_>,
+        ident: u16,
+        bytes: usize,
+    ) -> Option<Verdict> {
+        self.evaluate_first_match(bytes, |rule| rule.matches_icmp_echo(context, ident))
+    }
+
+    fn evaluate_matching_transport(
+        &mut self,
+        protocol: OutputRuleProtocol,
+        context: Ipv4PacketContext<'_>,
+        src_port: u16,
+        dst_port: u16,
+        bytes: usize,
+    ) -> Option<Verdict> {
+        self.evaluate_first_match(bytes, |rule| {
+            rule.matches_transport(protocol, context, src_port, dst_port)
+        })
+    }
+
+    fn evaluate_first_match(
+        &mut self,
+        bytes: usize,
+        matches_rule: impl Fn(OutputRule) -> bool,
+    ) -> Option<Verdict> {
+        for rule in &mut self.rules[..self.len] {
+            let Some(rule) = rule.as_mut() else {
+                continue;
+            };
+
+            if matches_rule(*rule) {
+                rule.record_match(bytes);
+                return Some(rule.action.into());
+            }
+        }
+
+        None
+    }
+}
+
+/// Describes the protocol matched by a mutable OUTPUT rule.
+///
+/// NETFILTER_STAGE20: The table now covers ICMP Echo plus TCP/UDP port
+/// matchers, which is enough for common firewall demonstrations such as
+/// dropping HTTP or DNS-like traffic.
