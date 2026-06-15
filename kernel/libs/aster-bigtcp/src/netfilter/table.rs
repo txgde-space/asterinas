@@ -694,3 +694,199 @@ impl FilterTable {
 }
 
 /// Returns the static IPv4 filter table.
+pub(super) fn filter_table() -> &'static FilterTable {
+    &FILTER_TABLE
+}
+
+/// Writes a userspace snapshot of the IPv4 filter table.
+///
+/// NETFILTER_STAGE20: The snapshot now includes ICMP, TCP, and UDP matchers
+/// plus optional source/destination ports.
+pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    writeln!(writer, "table filter")?;
+    writeln!(writer, "chain PREROUTING policy ACCEPT")?;
+    writeln!(writer, "chain INPUT policy ACCEPT")?;
+    writeln!(writer, "chain FORWARD policy ACCEPT")?;
+    writeln!(writer, "chain OUTPUT policy ACCEPT")?;
+
+    let output_rules = OUTPUT_RULES.lock();
+    for (index, rule) in output_rules.rules[..output_rules.len()]
+        .iter()
+        .flatten()
+        .enumerate()
+    {
+        writeln!(
+            writer,
+            "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
+            index,
+            rule.packets,
+            rule.bytes,
+            FormatIpv4Matcher::new(" src", rule.src_addr),
+            FormatIpv4Matcher::new(" dst", rule.dst_addr),
+            FormatProtocolMatcher(*rule),
+            FormatPortMatcher::new(" sport", rule.src_port),
+            FormatPortMatcher::new(" dport", rule.dst_port),
+            FormatAction(rule.action),
+        )?;
+    }
+
+    writeln!(writer, "chain POSTROUTING policy ACCEPT")?;
+    writeln!(
+        writer,
+        "state stage20-output-rule-count {}",
+        output_rules.len()
+    )?;
+    drop(output_rules);
+
+    // NETFILTER_STAGE21: NAT rules are intentionally rendered in the same
+    // procfs snapshot as the filter table so the small `iptables` shim can
+    // implement `-t nat -L` without a second kernel ABI.
+    writeln!(writer, "table nat")?;
+    writeln!(writer, "chain PREROUTING policy ACCEPT")?;
+
+    let nat_rules = NAT_RULES.lock();
+    for (index, rule) in nat_rules.rules[..nat_rules.len()]
+        .iter()
+        .flatten()
+        .enumerate()
+    {
+        writeln!(
+            writer,
+            "  rule {} chain {} pkts {} bytes {} match{}{}{}{}{} target {}{}{}",
+            index,
+            FormatNatChain(rule.chain),
+            rule.packets,
+            rule.bytes,
+            FormatOptionalProtocolMatcher(rule.protocol),
+            FormatIpv4Matcher::new(" src", rule.src_addr),
+            FormatIpv4Matcher::new(" dst", rule.dst_addr),
+            FormatPortMatcher::new(" sport", rule.src_port),
+            FormatPortMatcher::new(" dport", rule.dst_port),
+            FormatNatTarget(rule.target),
+            FormatNatToAddress::new(rule.target, rule.to_addr),
+            FormatNatToPort(rule.to_port),
+        )?;
+    }
+
+    writeln!(writer, "chain POSTROUTING policy ACCEPT")?;
+    writeln!(writer, "state stage21-nat-rule-count {}", nat_rules.len())
+}
+
+/// Appends an OUTPUT-chain ICMP Echo rule.
+pub fn append_output_icmp_echo_rule(
+    ident: Option<u16>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    target: OutputRuleTarget,
+) -> bool {
+    OUTPUT_RULES
+        .lock()
+        .append_icmp_echo(ident, src_addr, dst_addr, target)
+}
+
+/// Appends an OUTPUT-chain TCP or UDP rule.
+pub fn append_output_transport_rule(
+    protocol: OutputRuleProtocol,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: OutputRuleTarget,
+) -> bool {
+    OUTPUT_RULES
+        .lock()
+        .append_transport(protocol, src_addr, dst_addr, src_port, dst_port, target)
+}
+
+/// Deletes one OUTPUT-chain rule by index.
+pub fn delete_output_rule(index: usize) -> bool {
+    OUTPUT_RULES.lock().delete(index)
+}
+
+/// Flushes all OUTPUT-chain rules.
+pub fn flush_output_rules() {
+    OUTPUT_RULES.lock().flush();
+}
+
+/// Clears packet and byte counters from all OUTPUT-chain rules.
+pub fn zero_output_rule_counters() {
+    OUTPUT_RULES.lock().zero_counters();
+}
+
+/// Appends a NAT control-plane rule.
+pub fn append_nat_rule(
+    chain: NatRuleChain,
+    protocol: Option<OutputRuleProtocol>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: NatRuleTarget,
+    to_addr: Option<Ipv4Address>,
+    to_port: Option<u16>,
+) -> bool {
+    NAT_RULES.lock().append_rule(NatRule::new(
+        chain, protocol, src_addr, dst_addr, src_port, dst_port, target, to_addr, to_port,
+    ))
+}
+
+/// Flushes NAT rules from one chain or from the whole NAT table.
+pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
+    NAT_RULES.lock().flush(chain);
+}
+
+/// Applies POSTROUTING NAT to an IPv4 TCP packet representation.
+///
+/// NETFILTER_STAGE22: The prototype NAT data path rewrites the representation
+/// before smoltcp emits bytes, so IPv4/TCP checksums are recalculated by the
+/// existing packet emitter.
+pub fn rewrite_ipv4_tcp_postrouting<'a>(
+    ipv4_repr: Ipv4Repr,
+    mut tcp_repr: TcpRepr<'a>,
+    masquerade_addr: Option<Ipv4Address>,
+) -> (Ipv4Repr, TcpRepr<'a>) {
+    let (ipv4_repr, src_port) = NAT_RULES.lock().rewrite_postrouting_transport(
+        OutputRuleProtocol::Tcp,
+        ipv4_repr,
+        tcp_repr.src_port,
+        tcp_repr.dst_port,
+        masquerade_addr,
+    );
+    if let Some(src_port) = src_port {
+        tcp_repr.src_port = src_port;
+    }
+
+    (ipv4_repr, tcp_repr)
+}
+
+/// Applies POSTROUTING NAT to an IPv4 UDP packet representation.
+pub fn rewrite_ipv4_udp_postrouting(
+    ipv4_repr: Ipv4Repr,
+    mut udp_repr: UdpRepr,
+    masquerade_addr: Option<Ipv4Address>,
+) -> (Ipv4Repr, UdpRepr) {
+    let (ipv4_repr, src_port) = NAT_RULES.lock().rewrite_postrouting_transport(
+        OutputRuleProtocol::Udp,
+        ipv4_repr,
+        udp_repr.src_port,
+        udp_repr.dst_port,
+        masquerade_addr,
+    );
+    if let Some(src_port) = src_port {
+        udp_repr.src_port = src_port;
+    }
+
+    (ipv4_repr, udp_repr)
+}
+
+/// Applies POSTROUTING NAT to an IPv4 ICMP packet representation.
+pub fn rewrite_ipv4_icmp_postrouting(
+    ipv4_repr: Ipv4Repr,
+    masquerade_addr: Option<Ipv4Address>,
+) -> Ipv4Repr {
+    NAT_RULES
+        .lock()
+        .rewrite_postrouting_icmp(ipv4_repr, masquerade_addr)
+}
+
+struct FormatIpv4Matcher {
