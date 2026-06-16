@@ -890,3 +890,159 @@ pub fn rewrite_ipv4_icmp_postrouting(
 }
 
 struct FormatIpv4Matcher {
+    label: &'static str,
+    addr: Option<Ipv4Address>,
+}
+
+impl FormatIpv4Matcher {
+    const fn new(label: &'static str, addr: Option<Ipv4Address>) -> Self {
+        Self { label, addr }
+    }
+}
+
+impl core::fmt::Display for FormatIpv4Matcher {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(addr) = self.addr else {
+            return Ok(());
+        };
+        let octets = addr.octets();
+
+        write!(
+            formatter,
+            "{} {}.{}.{}.{}",
+            self.label, octets[0], octets[1], octets[2], octets[3]
+        )
+    }
+}
+
+struct FormatPortMatcher {
+    label: &'static str,
+    port: Option<u16>,
+}
+
+impl FormatPortMatcher {
+    const fn new(label: &'static str, port: Option<u16>) -> Self {
+        Self { label, port }
+    }
+}
+
+impl core::fmt::Display for FormatPortMatcher {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(port) = self.port else {
+            return Ok(());
+        };
+
+        write!(formatter, "{} {}", self.label, port)
+    }
+}
+
+struct FormatProtocolMatcher(OutputRule);
+
+impl core::fmt::Display for FormatProtocolMatcher {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0.protocol {
+            OutputRuleProtocol::Icmp => match self.0.icmp_echo_ident {
+                Some(ident) => write!(formatter, "icmp-echo-ident 0x{:04x}", ident),
+                None => formatter.write_str("icmp-type echo-request"),
+            },
+            OutputRuleProtocol::Tcp => formatter.write_str("tcp"),
+            OutputRuleProtocol::Udp => formatter.write_str("udp"),
+        }
+    }
+}
+
+struct FormatOptionalProtocolMatcher(Option<OutputRuleProtocol>);
+
+impl core::fmt::Display for FormatOptionalProtocolMatcher {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(protocol) = self.0 else {
+            return formatter.write_str(" all");
+        };
+
+        match protocol {
+            OutputRuleProtocol::Icmp => formatter.write_str(" icmp"),
+            OutputRuleProtocol::Tcp => formatter.write_str(" tcp"),
+            OutputRuleProtocol::Udp => formatter.write_str(" udp"),
+        }
+    }
+}
+
+struct FormatNatChain(NatRuleChain);
+
+impl core::fmt::Display for FormatNatChain {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            NatRuleChain::PreRouting => formatter.write_str("PREROUTING"),
+            NatRuleChain::PostRouting => formatter.write_str("POSTROUTING"),
+        }
+    }
+}
+
+struct FormatNatTarget(NatRuleTarget);
+
+impl core::fmt::Display for FormatNatTarget {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            NatRuleTarget::Dnat => formatter.write_str("DNAT"),
+            NatRuleTarget::Masquerade => formatter.write_str("MASQUERADE"),
+            NatRuleTarget::Snat => formatter.write_str("SNAT"),
+        }
+    }
+}
+
+struct FormatNatToAddress {
+    target: NatRuleTarget,
+    addr: Option<Ipv4Address>,
+}
+
+impl FormatNatToAddress {
+    const fn new(target: NatRuleTarget, addr: Option<Ipv4Address>) -> Self {
+        Self { target, addr }
+    }
+}
+
+impl core::fmt::Display for FormatNatToAddress {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(addr) = self.addr else {
+            return Ok(());
+        };
+        let octets = addr.octets();
+
+        match self.target {
+            NatRuleTarget::Dnat => write!(
+                formatter,
+                " to-destination {}.{}.{}.{}",
+                octets[0], octets[1], octets[2], octets[3]
+            ),
+            NatRuleTarget::Snat => write!(
+                formatter,
+                " to-source {}.{}.{}.{}",
+                octets[0], octets[1], octets[2], octets[3]
+            ),
+            NatRuleTarget::Masquerade => Ok(()),
+        }
+    }
+}
+
+struct FormatNatToPort(Option<u16>);
+
+impl core::fmt::Display for FormatNatToPort {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(port) = self.0 else {
+            return Ok(());
+        };
+
+        write!(formatter, ":{}", port)
+    }
+}
+
+struct FormatAction(Action);
+
+impl core::fmt::Display for FormatAction {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            Action::Accept => formatter.write_str("ACCEPT"),
+            Action::Drop => formatter.write_str("DROP"),
+        }
+    }
+}
