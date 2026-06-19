@@ -190,3 +190,182 @@ fn apply_append_nat_rule(rule: AppendNatRule) -> Result<()> {
     Ok(())
 }
 
+fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
+    const PREFIX: &str = "iptables ";
+
+    let Some(rest) = command.strip_prefix(PREFIX) else {
+        return Ok(None);
+    };
+
+    let mut words = rest.split_whitespace();
+    let table = parse_optional_iptables_table(&mut words)?;
+    let Some(operation) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables operation");
+    };
+
+    // NETFILTER_STAGE21: `-t nat` is parsed here instead of in the userspace
+    // shim so direct procfs writes and the shim share the same compatibility
+    // boundary.
+    match table {
+        IptablesTable::Filter => match operation {
+            "-A" => parse_iptables_append_command(words).map(NetfilterCommand::Append),
+            "-D" => parse_iptables_delete_command(words),
+            "-F" => parse_iptables_chain_command(words).map(|_| NetfilterCommand::FlushOutput),
+            "-Z" => {
+                parse_iptables_chain_command(words).map(|_| NetfilterCommand::ZeroOutputCounters)
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables operation"),
+        },
+        IptablesTable::Nat => match operation {
+            "-A" => parse_iptables_nat_append_command(words).map(NetfilterCommand::AppendNat),
+            "-F" => parse_iptables_nat_flush_command(words).map(NetfilterCommand::FlushNat),
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables NAT operation"),
+        },
+    }
+    .map(Some)
+}
+
+fn parse_optional_iptables_table(
+    words: &mut core::str::SplitWhitespace<'_>,
+) -> Result<IptablesTable> {
+    let mut cloned_words = words.clone();
+    let Some(first_word) = cloned_words.next() else {
+        return Ok(IptablesTable::Filter);
+    };
+
+    if first_word != "-t" && first_word != "--table" {
+        return Ok(IptablesTable::Filter);
+    }
+
+    let _ = words.next();
+    let Some(table_name) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables table name");
+    };
+
+    match table_name {
+        "filter" => Ok(IptablesTable::Filter),
+        "nat" => Ok(IptablesTable::Nat),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables table"),
+    }
+}
+
+fn parse_iptables_append_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<AppendOutputRule> {
+    parse_output_chain(&mut words)?;
+
+    let mut protocol = None;
+    let mut echo_request = false;
+    let mut ident = None;
+    let mut src_addr = None;
+    let mut dst_addr = None;
+    let mut src_port = None;
+    let mut dst_port = None;
+    let mut target = None;
+
+    while let Some(word) = words.next() {
+        match word {
+            "-p" => {
+                let Some(protocol_name) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing iptables protocol");
+                };
+                protocol = Some(parse_rule_protocol(protocol_name)?);
+            }
+            "-m" => {
+                let Some(module) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing iptables module");
+                };
+                if module != "icmp" && module != "tcp" && module != "udp" {
+                    return_errno_with_message!(Errno::EINVAL, "unsupported iptables module");
+                }
+            }
+            "-s" | "--source" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing source IPv4 address");
+                };
+                src_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "-d" | "--destination" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing destination IPv4 address");
+                };
+                dst_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "--icmp-type" => {
+                let Some(icmp_type) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ICMP type");
+                };
+                if icmp_type != "echo-request" && icmp_type != "8" {
+                    return_errno_with_message!(
+                        Errno::EINVAL,
+                        "only ICMP echo-request is supported"
+                    );
+                }
+                echo_request = true;
+            }
+            "--icmp-id" | "--icmp-echo-ident" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ICMP Echo identifier");
+                };
+                ident = Some(parse_hex_u16(value)?);
+            }
+            "--sport" | "--source-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing source port");
+                };
+                src_port = Some(parse_u16(value)?);
+            }
+            "--dport" | "--destination-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing destination port");
+                };
+                dst_port = Some(parse_u16(value)?);
+            }
+            "-j" | "--jump" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing iptables target");
+                };
+                target = Some(parse_rule_target(value)?);
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables matcher"),
+        }
+    }
+
+    let Some(target) = target else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables target");
+    };
+    let Some(protocol) = protocol else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables protocol");
+    };
+
+    match protocol {
+        aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
+            if !echo_request {
+                return_errno_with_message!(
+                    Errno::EINVAL,
+                    "iptables command must match ICMP echo-request"
+                );
+            }
+            if src_port.is_some() || dst_port.is_some() {
+                return_errno_with_message!(Errno::EINVAL, "ICMP rules cannot match ports");
+            }
+        }
+        aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
+        | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
+            if echo_request || ident.is_some() {
+                return_errno_with_message!(Errno::EINVAL, "transport rules cannot match ICMP");
+            }
+        }
+    }
+
+    Ok(AppendOutputRule {
+        protocol,
+        ident,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        target,
+    })
+}
+
