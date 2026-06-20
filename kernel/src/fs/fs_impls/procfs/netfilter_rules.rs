@@ -526,3 +526,206 @@ fn parse_nat_chain(
     parse_nat_chain_name(chain)
 }
 
+fn parse_nat_chain_name(chain: &str) -> Result<aster_bigtcp::netfilter::NatRuleChain> {
+    match chain {
+        "PREROUTING" => Ok(aster_bigtcp::netfilter::NatRuleChain::PreRouting),
+        "POSTROUTING" => Ok(aster_bigtcp::netfilter::NatRuleChain::PostRouting),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported NAT chain"),
+    }
+}
+
+fn parse_append_output_icmp_echo_command(command: &str) -> Result<Option<AppendOutputRule>> {
+    const PREFIX: &str = "append OUTPUT ";
+
+    let Some(rest) = command.strip_prefix(PREFIX) else {
+        return Ok(None);
+    };
+
+    parse_append_output_rule(rest).map(Some)
+}
+
+fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
+    let mut words = command.split_whitespace();
+    let mut src_addr = None;
+    let mut dst_addr = None;
+
+    loop {
+        let Some(word) = words.next() else {
+            return_errno_with_message!(Errno::EINVAL, "missing icmp matcher");
+        };
+
+        match word {
+            "src" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing source IPv4 address");
+                };
+                src_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "dst" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing destination IPv4 address");
+                };
+                dst_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "icmp-echo-ident" => {
+                let Some(ident) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ICMP Echo identifier");
+                };
+                let Some(target) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing target");
+                };
+                if words.next().is_some() {
+                    return_errno_with_message!(Errno::EINVAL, "trailing append command tokens");
+                }
+
+                return Ok(AppendOutputRule {
+                    protocol: aster_bigtcp::netfilter::OutputRuleProtocol::Icmp,
+                    ident: Some(parse_hex_u16(ident)?),
+                    src_addr,
+                    dst_addr,
+                    src_port: None,
+                    dst_port: None,
+                    target: parse_rule_target(target)?,
+                });
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported append matcher"),
+        }
+    }
+}
+
+fn parse_delete_output_command(command: &str) -> Result<Option<usize>> {
+    const PREFIX: &str = "delete OUTPUT ";
+
+    let Some(index) = command.strip_prefix(PREFIX) else {
+        return Ok(None);
+    };
+
+    index
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid delete index"))
+}
+
+fn parse_hex_u16(value: &str) -> Result<u16> {
+    let Some(value) = value.strip_prefix("0x") else {
+        return_errno_with_message!(Errno::EINVAL, "hex value must use 0x prefix");
+    };
+
+    u16::from_str_radix(value, 16)
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid u16 hex value"))
+}
+
+fn parse_u16(value: &str) -> Result<u16> {
+    if let Some(value) = value.strip_prefix("0x") {
+        return u16::from_str_radix(value, 16)
+            .map_err(|_| Error::with_message(Errno::EINVAL, "invalid u16 hex value"));
+    }
+
+    value
+        .parse::<u16>()
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid u16 value"))
+}
+
+fn parse_rule_protocol(value: &str) -> Result<aster_bigtcp::netfilter::OutputRuleProtocol> {
+    match value {
+        "icmp" => Ok(aster_bigtcp::netfilter::OutputRuleProtocol::Icmp),
+        "tcp" => Ok(aster_bigtcp::netfilter::OutputRuleProtocol::Tcp),
+        "udp" => Ok(aster_bigtcp::netfilter::OutputRuleProtocol::Udp),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables protocol"),
+    }
+}
+
+fn parse_nat_target(value: &str) -> Result<aster_bigtcp::netfilter::NatRuleTarget> {
+    match value {
+        "DNAT" => Ok(aster_bigtcp::netfilter::NatRuleTarget::Dnat),
+        "MASQUERADE" => Ok(aster_bigtcp::netfilter::NatRuleTarget::Masquerade),
+        "SNAT" => Ok(aster_bigtcp::netfilter::NatRuleTarget::Snat),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported NAT target"),
+    }
+}
+
+fn parse_nat_to_addr_port(value: &str) -> Result<(aster_bigtcp::wire::Ipv4Address, Option<u16>)> {
+    let (addr, port) = value.split_once(':').unwrap_or((value, ""));
+    let port = if port.is_empty() {
+        None
+    } else {
+        Some(parse_u16(port)?)
+    };
+
+    Ok((parse_ipv4_addr(addr)?, port))
+}
+
+fn validate_nat_rule(
+    chain: aster_bigtcp::netfilter::NatRuleChain,
+    target: aster_bigtcp::netfilter::NatRuleTarget,
+    to_addr: Option<aster_bigtcp::wire::Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+) -> Result<()> {
+    match target {
+        aster_bigtcp::netfilter::NatRuleTarget::Dnat => {
+            if chain != aster_bigtcp::netfilter::NatRuleChain::PreRouting {
+                return_errno_with_message!(Errno::EINVAL, "DNAT requires PREROUTING");
+            }
+            if to_addr.is_none() {
+                return_errno_with_message!(Errno::EINVAL, "DNAT requires --to-destination");
+            }
+        }
+        aster_bigtcp::netfilter::NatRuleTarget::Snat => {
+            if chain != aster_bigtcp::netfilter::NatRuleChain::PostRouting {
+                return_errno_with_message!(Errno::EINVAL, "SNAT requires POSTROUTING");
+            }
+            if to_addr.is_none() {
+                return_errno_with_message!(Errno::EINVAL, "SNAT requires --to-source");
+            }
+        }
+        aster_bigtcp::netfilter::NatRuleTarget::Masquerade => {
+            if chain != aster_bigtcp::netfilter::NatRuleChain::PostRouting {
+                return_errno_with_message!(Errno::EINVAL, "MASQUERADE requires POSTROUTING");
+            }
+            if to_addr.is_some() || src_port.is_some() || dst_port.is_some() {
+                return_errno_with_message!(
+                    Errno::EINVAL,
+                    "MASQUERADE translation address and port matchers are unsupported"
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_rule_target(value: &str) -> Result<aster_bigtcp::netfilter::OutputRuleTarget> {
+    match value {
+        "ACCEPT" => Ok(aster_bigtcp::netfilter::OutputRuleTarget::Accept),
+        "DROP" => Ok(aster_bigtcp::netfilter::OutputRuleTarget::Drop),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported netfilter target"),
+    }
+}
+
+fn parse_ipv4_addr(value: &str) -> Result<aster_bigtcp::wire::Ipv4Address> {
+    let mut octets = [0u8; 4];
+    let (value, prefix_len) = value.split_once('/').unwrap_or((value, "32"));
+    if prefix_len != "32" {
+        return_errno_with_message!(Errno::EINVAL, "only IPv4 /32 matchers are supported");
+    }
+
+    let mut parts = value.split('.');
+
+    for octet in &mut octets {
+        let Some(part) = parts.next() else {
+            return_errno_with_message!(Errno::EINVAL, "IPv4 address has too few octets");
+        };
+        *octet = part
+            .parse::<u8>()
+            .map_err(|_| Error::with_message(Errno::EINVAL, "invalid IPv4 octet"))?;
+    }
+
+    if parts.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "IPv4 address has too many octets");
+    }
+
+    Ok(aster_bigtcp::wire::Ipv4Address::new(
+        octets[0], octets[1], octets[2], octets[3],
+    ))
+}
