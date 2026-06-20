@@ -369,3 +369,160 @@ fn parse_iptables_append_command(
     })
 }
 
+fn parse_iptables_nat_append_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<AppendNatRule> {
+    let chain = parse_nat_chain(&mut words)?;
+
+    let mut protocol = None;
+    let mut src_addr = None;
+    let mut dst_addr = None;
+    let mut src_port = None;
+    let mut dst_port = None;
+    let mut target = None;
+    let mut to_addr = None;
+    let mut to_port = None;
+
+    while let Some(word) = words.next() {
+        match word {
+            "-p" => {
+                let Some(protocol_name) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing iptables protocol");
+                };
+                protocol = Some(parse_rule_protocol(protocol_name)?);
+            }
+            "-m" => {
+                let Some(module) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing iptables module");
+                };
+                if module != "tcp" && module != "udp" && module != "icmp" {
+                    return_errno_with_message!(Errno::EINVAL, "unsupported NAT matcher module");
+                }
+            }
+            "-s" | "--source" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing source IPv4 address");
+                };
+                src_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "-d" | "--destination" => {
+                let Some(addr) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing destination IPv4 address");
+                };
+                dst_addr = Some(parse_ipv4_addr(addr)?);
+            }
+            "--sport" | "--source-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing source port");
+                };
+                src_port = Some(parse_u16(value)?);
+            }
+            "--dport" | "--destination-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing destination port");
+                };
+                dst_port = Some(parse_u16(value)?);
+            }
+            "-j" | "--jump" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing NAT target");
+                };
+                target = Some(parse_nat_target(value)?);
+            }
+            "--to-source" | "--to-destination" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing NAT translation address");
+                };
+                let (addr, port) = parse_nat_to_addr_port(value)?;
+                to_addr = Some(addr);
+                to_port = port;
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported NAT matcher"),
+        }
+    }
+
+    let Some(target) = target else {
+        return_errno_with_message!(Errno::EINVAL, "missing NAT target");
+    };
+
+    validate_nat_rule(chain, target, to_addr, src_port, dst_port)?;
+
+    Ok(AppendNatRule {
+        chain,
+        protocol,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        target,
+        to_addr,
+        to_port,
+    })
+}
+
+fn parse_iptables_delete_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<NetfilterCommand> {
+    parse_output_chain(&mut words)?;
+    let Some(index) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables rule number");
+    };
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing iptables delete tokens");
+    }
+
+    let index = index
+        .parse::<usize>()
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid iptables rule number"))?;
+    if index == 0 {
+        return_errno_with_message!(Errno::EINVAL, "iptables rule number is one-based");
+    }
+
+    Ok(NetfilterCommand::DeleteOutputRule(index - 1))
+}
+
+fn parse_iptables_chain_command(mut words: core::str::SplitWhitespace<'_>) -> Result<()> {
+    parse_output_chain(&mut words)?;
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing iptables chain command tokens");
+    }
+
+    Ok(())
+}
+
+fn parse_iptables_nat_flush_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<Option<aster_bigtcp::netfilter::NatRuleChain>> {
+    let Some(chain_name) = words.next() else {
+        return Ok(None);
+    };
+
+    let chain = parse_nat_chain_name(chain_name)?;
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing NAT flush tokens");
+    }
+
+    Ok(Some(chain))
+}
+
+fn parse_output_chain(words: &mut core::str::SplitWhitespace<'_>) -> Result<()> {
+    let Some(chain) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables chain");
+    };
+    if chain != "OUTPUT" {
+        return_errno_with_message!(Errno::EINVAL, "only OUTPUT chain is supported");
+    }
+
+    Ok(())
+}
+
+fn parse_nat_chain(
+    words: &mut core::str::SplitWhitespace<'_>,
+) -> Result<aster_bigtcp::netfilter::NatRuleChain> {
+    let Some(chain) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing NAT chain");
+    };
+
+    parse_nat_chain_name(chain)
+}
+
