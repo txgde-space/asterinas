@@ -99,3 +99,73 @@ static int write_command(const char *command)
 	return 0;
 }
 
+int main(int argc, char *argv[])
+{
+	char command[COMMAND_BUFFER_SIZE] = "iptables";
+	const char *table = NULL;
+	const char *operation;
+	int operation_index = 1;
+	int first_copied_arg;
+
+	if (argc < 2) {
+		fprintf(stderr, "usage: iptables [-t filter|nat] -A|-D|-F|-Z|-L CHAIN ...\n");
+		return 2;
+	}
+
+	if (strcmp(argv[1], "-t") == 0 || strcmp(argv[1], "--table") == 0) {
+		if (argc < 4) {
+			fprintf(stderr, "iptables: missing table operation\n");
+			return 2;
+		}
+		table = argv[2];
+		if (strcmp(table, "filter") != 0 && strcmp(table, "nat") != 0) {
+			fprintf(stderr, "iptables: unsupported table %s\n", table);
+			return 2;
+		}
+		if (append_token(command, sizeof(command), "-t") < 0 ||
+		    append_token(command, sizeof(command), table) < 0)
+			return 2;
+		operation_index = 3;
+	}
+
+	operation = normalize_operation(argv[operation_index]);
+	if (strcmp(operation, "-A") != 0 && strcmp(operation, "-D") != 0 &&
+	    strcmp(operation, "-F") != 0 && strcmp(operation, "-Z") != 0 &&
+	    strcmp(operation, "-L") != 0) {
+		fprintf(stderr, "iptables: unsupported operation %s\n",
+			argv[operation_index]);
+		return 2;
+	}
+	if (table_is_nat(table) && strcmp(operation, "-Z") == 0) {
+		fprintf(stderr, "iptables: NAT counter zeroing is unsupported\n");
+		return 2;
+	}
+
+	if (append_token(command, sizeof(command), operation) < 0)
+		return 2;
+
+	first_copied_arg = operation_index + 1;
+	if (!table_is_nat(table) && argc == operation_index + 1 &&
+	    command_requires_default_output_chain(operation)) {
+		if (append_token(command, sizeof(command), "OUTPUT") < 0)
+			return 2;
+	} else if (!table_is_nat(table) && argc < operation_index + 2) {
+		fprintf(stderr, "iptables: missing chain\n");
+		return 2;
+	}
+
+	for (int arg_index = first_copied_arg; arg_index < argc; arg_index++) {
+		if (append_token(command, sizeof(command), argv[arg_index]) < 0) {
+			fprintf(stderr, "iptables: command too long\n");
+			return 2;
+		}
+	}
+
+	// NETFILTER_STAGE19: `-L/--list` is handled in userspace because it is a
+	// read-only query. Mutating commands are forwarded to the kernel's Stage 18
+	// iptables-compatible parser through `/proc/netfilter_rules`.
+	if (strcmp(operation, "-L") == 0)
+		return list_rules();
+
+	return write_command(command);
+}
