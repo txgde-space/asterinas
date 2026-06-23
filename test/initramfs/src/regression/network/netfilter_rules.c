@@ -339,3 +339,153 @@ out:
 	return 0;
 }
 
+FN_TEST(read_netfilter_rules_snapshot)
+{
+	char buffer[512];
+	unsigned long long bytes;
+	unsigned long long packets;
+	ssize_t bytes_read;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDONLY));
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+
+	// NETFILTER_STAGE11: The first userspace control-plane smoke test is
+	// intentionally read-only. It verifies that the kernel exposes the current
+	// static filter chain/rule model without requiring an iptables ABI yet.
+	TEST_RES(strstr(buffer, "table filter") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "chain OUTPUT policy ACCEPT") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "target DROP") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+		 _ret == 1);
+	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret == 0);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
+
+FN_TEST(mutate_netfilter_output_rule_list)
+{
+	char buffer[512];
+	const char flush_command[] = "flush OUTPUT";
+	const char append_default_command[] =
+		"append OUTPUT icmp-echo-ident 0x0828 DROP";
+	const char append_second_command[] =
+		"append OUTPUT icmp-echo-ident 0x0829 DROP";
+	const char delete_first_command[] = "delete OUTPUT 0";
+	ssize_t bytes_read;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+
+	// NETFILTER_STAGE14: This covers a real ordered rule-list lifecycle:
+	// append a second rule, delete the first rule by index, flush the chain,
+	// and restore the default rule for later tests.
+	TEST_RES(write(fd, append_second_command, sizeof(append_second_command) - 1),
+		 _ret == sizeof(append_second_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0829") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 2") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x829, 0x14), _ret == 0);
+
+	TEST_RES(write(fd, delete_first_command, sizeof(delete_first_command) - 1),
+		 _ret == sizeof(delete_first_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0829") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x828, 0x15), _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x829, 0x16), _ret == 0);
+
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "target DROP") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x829, 0x17), _ret == 1);
+
+	TEST_RES(write(fd, append_default_command, sizeof(append_default_command) - 1),
+		 _ret == sizeof(append_default_command) - 1);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
+
+FN_TEST(count_netfilter_rule_hits)
+{
+	char before[512];
+	char after[512];
+	unsigned long long before_bytes;
+	unsigned long long before_packets;
+	unsigned long long after_bytes;
+	unsigned long long after_packets;
+
+	// NETFILTER_STAGE15: A rule counter is only useful if it reflects the
+	// packet path. Send two packets that match the default DROP rule and check
+	// that both packet and byte counters increase.
+	TEST_RES(read_netfilter_rules_snapshot(before, sizeof(before)), _ret > 0);
+	TEST_RES(read_rule_counters(before, 0x828, &before_packets, &before_bytes),
+		 _ret == 0);
+
+	TEST_RES(send_echo_and_wait_reply(0x828, 0x18), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x828, 0x19), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(after, sizeof(after)), _ret > 0);
+	TEST_RES(read_rule_counters(after, 0x828, &after_packets, &after_bytes),
+		 _ret == 0);
+
+	TEST_RES(after_packets == before_packets + 2, _ret == 1);
+	TEST_RES(after_bytes > before_bytes, _ret == 1);
+}
+END_TEST()
+
+FN_TEST(zero_netfilter_rule_counters)
+{
+	char after[512];
+	char before[512];
+	const char zero_command[] = "zero OUTPUT";
+	unsigned long long bytes;
+	unsigned long long packets;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+
+	// NETFILTER_STAGE16: Counter reset should not delete rules. It gives
+	// userspace the same practical workflow as clearing iptables counters
+	// before a focused packet-path experiment.
+	TEST_RES(send_echo_and_wait_reply(0x828, 0x1a), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(before, sizeof(before)), _ret > 0);
+	TEST_RES(read_rule_counters(before, 0x828, &packets, &bytes), _ret == 0);
+	TEST_RES(packets > 0, _ret == 1);
+	TEST_RES(bytes > 0, _ret == 1);
+
+	TEST_RES(write(fd, zero_command, sizeof(zero_command) - 1),
+		 _ret == sizeof(zero_command) - 1);
+
+	TEST_RES(read_netfilter_rules_snapshot(after, sizeof(after)), _ret > 0);
+	TEST_RES(read_rule_counters(after, 0x828, &packets, &bytes), _ret == 0);
+	TEST_RES(packets == 0, _ret == 1);
+	TEST_RES(bytes == 0, _ret == 1);
+	TEST_RES(strstr(after, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
