@@ -777,3 +777,90 @@ FN_TEST(run_userspace_iptables_shim)
 	TEST_RES(run_iptables_command(iptables_restore_default_command), _ret == 0);
 }
 END_TEST()
+
+FN_TEST(run_userspace_iptables_tcp_udp_port_matches)
+{
+	char buffer[1024];
+	char *const iptables_flush_command[] = { "./iptables", "--flush", "OUTPUT",
+						 NULL };
+	char *const iptables_list_command[] = { "./iptables", "-L", "OUTPUT",
+						NULL };
+	char *const iptables_drop_udp_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "udp", "--dport", "54020",
+		"-j", "DROP", NULL
+	};
+	char *const iptables_drop_tcp_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "tcp", "--dport", "54021",
+		"-j", "DROP", NULL
+	};
+	char *const iptables_accept_udp_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "udp", "--dport",
+		"54022", "-j", "ACCEPT", NULL
+	};
+	char *const iptables_late_drop_udp_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "udp", "--dport",
+		"54022", "-j", "DROP", NULL
+	};
+	char *const iptables_accept_tcp_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "tcp", "--dport",
+		"54023", "-j", "ACCEPT", NULL
+	};
+	char *const iptables_late_drop_tcp_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "tcp", "--dport",
+		"54023", "-j", "DROP", NULL
+	};
+	char *const iptables_restore_default_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0828", "-j", "DROP", NULL
+	};
+	unsigned long long bytes;
+	unsigned long long packets;
+
+	// NETFILTER_STAGE20: TCP/UDP dport rules are installed through the
+	// userspace shim and verified through observable protocol behavior.
+	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_drop_udp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_drop_tcp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_list_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "udp dport 54020 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "tcp dport 54021 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 2") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_udp_and_wait_port_unreachable(54020), _ret == 0);
+	TEST_RES(tcp_connect_refused_observed(54021), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(read_rule_counters_by_match(buffer, "udp dport 54020",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets > 0, _ret == 1);
+	TEST_RES(read_rule_counters_by_match(buffer, "tcp dport 54021",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets > 0, _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_accept_udp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_late_drop_udp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_accept_tcp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_late_drop_tcp_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 4") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "udp dport 54022 target ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "tcp dport 54023 target ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(send_udp_and_wait_port_unreachable(54022), _ret == 1);
+	TEST_RES(tcp_connect_refused_observed(54023), _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_restore_default_command), _ret == 0);
+}
+END_TEST()
