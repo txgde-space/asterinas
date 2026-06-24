@@ -489,3 +489,123 @@ FN_TEST(zero_netfilter_rule_counters)
 	TEST_SUCC(close(fd));
 }
 END_TEST()
+
+FN_TEST(match_netfilter_ipv4_addresses)
+{
+	char buffer[512];
+	const char flush_command[] = "flush OUTPUT";
+	const char append_dst_miss_command[] =
+		"append OUTPUT dst 127.0.0.2 icmp-echo-ident 0x0830 DROP";
+	const char append_dst_hit_command[] =
+		"append OUTPUT dst 127.0.0.1 icmp-echo-ident 0x0831 DROP";
+	const char append_src_hit_command[] =
+		"append OUTPUT src 127.0.0.1 icmp-echo-ident 0x0832 DROP";
+	const char append_default_command[] =
+		"append OUTPUT icmp-echo-ident 0x0828 DROP";
+	ssize_t bytes_read;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+
+	// NETFILTER_STAGE16: These three rules prove that address matchers are
+	// part of rule evaluation, not just text shown in `/proc/netfilter_rules`.
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_dst_miss_command,
+		       sizeof(append_dst_miss_command) - 1),
+		 _ret == sizeof(append_dst_miss_command) - 1);
+	TEST_RES(write(fd, append_dst_hit_command,
+		       sizeof(append_dst_hit_command) - 1),
+		 _ret == sizeof(append_dst_hit_command) - 1);
+	TEST_RES(write(fd, append_src_hit_command,
+		       sizeof(append_src_hit_command) - 1),
+		 _ret == sizeof(append_src_hit_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "dst 127.0.0.2") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "dst 127.0.0.1") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "src 127.0.0.1") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 3") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x830, 0x1b), _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x831, 0x1c), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x832, 0x1d), _ret == 0);
+
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_default_command, sizeof(append_default_command) - 1),
+		 _ret == sizeof(append_default_command) - 1);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
+
+FN_TEST(match_netfilter_accept_drop_targets)
+{
+	char buffer[768];
+	const char flush_command[] = "flush OUTPUT";
+	const char append_accept_first_command[] =
+		"append OUTPUT icmp-echo-ident 0x0840 ACCEPT";
+	const char append_drop_second_command[] =
+		"append OUTPUT icmp-echo-ident 0x0840 DROP";
+	const char append_drop_first_command[] =
+		"append OUTPUT icmp-echo-ident 0x0841 DROP";
+	const char append_accept_second_command[] =
+		"append OUTPUT icmp-echo-ident 0x0841 ACCEPT";
+	const char append_default_command[] =
+		"append OUTPUT icmp-echo-ident 0x0828 DROP";
+	ssize_t bytes_read;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+
+	// NETFILTER_STAGE17: This is the first explicit first-match target test.
+	// The same matcher is installed twice with opposite targets; only the
+	// earlier rule may decide the verdict, as in a real iptables chain.
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_accept_first_command,
+		       sizeof(append_accept_first_command) - 1),
+		 _ret == sizeof(append_accept_first_command) - 1);
+	TEST_RES(write(fd, append_drop_second_command,
+		       sizeof(append_drop_second_command) - 1),
+		 _ret == sizeof(append_drop_second_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0840 target ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0840 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x840, 0x1e), _ret == 1);
+
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_drop_first_command,
+		       sizeof(append_drop_first_command) - 1),
+		 _ret == sizeof(append_drop_first_command) - 1);
+	TEST_RES(write(fd, append_accept_second_command,
+		       sizeof(append_accept_second_command) - 1),
+		 _ret == sizeof(append_accept_second_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0841 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0841 target ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x841, 0x1f), _ret == 0);
+
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_default_command, sizeof(append_default_command) - 1),
+		 _ret == sizeof(append_default_command) - 1);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
