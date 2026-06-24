@@ -609,3 +609,171 @@ FN_TEST(match_netfilter_accept_drop_targets)
 	TEST_SUCC(close(fd));
 }
 END_TEST()
+
+FN_TEST(match_netfilter_iptables_command_compat)
+{
+	char buffer[1024];
+	const char iptables_flush_command[] = "iptables -F OUTPUT";
+	const char iptables_zero_command[] = "iptables -Z OUTPUT";
+	const char iptables_delete_first_command[] = "iptables -D OUTPUT 1";
+	const char iptables_drop_all_echo_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP";
+	const char iptables_accept_ident_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0852 -j ACCEPT";
+	const char iptables_drop_ident_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0852 -j DROP";
+	const char iptables_restore_default_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0828 -j DROP";
+	ssize_t bytes_read;
+	unsigned long long bytes;
+	unsigned long long packets;
+	int fd;
+
+	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+
+	// NETFILTER_STAGE18: These writes are shaped like common iptables
+	// commands. The kernel still uses the prototype procfs control file, but
+	// the parser now translates a useful iptables subset into real rules.
+	TEST_RES(write(fd, iptables_flush_command,
+		       sizeof(iptables_flush_command) - 1),
+		 _ret == sizeof(iptables_flush_command) - 1);
+	TEST_RES(write(fd, iptables_drop_all_echo_command,
+		       sizeof(iptables_drop_all_echo_command) - 1),
+		 _ret == sizeof(iptables_drop_all_echo_command) - 1);
+
+	TEST_RES(lseek(fd, 0, SEEK_SET), _ret == 0);
+	bytes_read = TEST_SUCC(read(fd, buffer, sizeof(buffer) - 1));
+	buffer[bytes_read] = '\0';
+	TEST_RES(strstr(buffer, "icmp-type echo-request target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x850, 0x20), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x851, 0x21), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(read_rule_counters_by_match(buffer, "icmp-type echo-request",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets == 2, _ret == 1);
+	TEST_RES(bytes > 0, _ret == 1);
+
+	TEST_RES(write(fd, iptables_zero_command,
+		       sizeof(iptables_zero_command) - 1),
+		 _ret == sizeof(iptables_zero_command) - 1);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(read_rule_counters_by_match(buffer, "icmp-type echo-request",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets == 0, _ret == 1);
+	TEST_RES(bytes == 0, _ret == 1);
+
+	TEST_RES(write(fd, iptables_delete_first_command,
+		       sizeof(iptables_delete_first_command) - 1),
+		 _ret == sizeof(iptables_delete_first_command) - 1);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
+		 _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x850, 0x22), _ret == 1);
+
+	TEST_RES(write(fd, iptables_accept_ident_command,
+		       sizeof(iptables_accept_ident_command) - 1),
+		 _ret == sizeof(iptables_accept_ident_command) - 1);
+	TEST_RES(write(fd, iptables_drop_ident_command,
+		       sizeof(iptables_drop_ident_command) - 1),
+		 _ret == sizeof(iptables_drop_ident_command) - 1);
+	TEST_RES(send_echo_and_wait_reply(0x852, 0x23), _ret == 1);
+
+	TEST_RES(write(fd, iptables_flush_command,
+		       sizeof(iptables_flush_command) - 1),
+		 _ret == sizeof(iptables_flush_command) - 1);
+	TEST_RES(write(fd, iptables_restore_default_command,
+		       sizeof(iptables_restore_default_command) - 1),
+		 _ret == sizeof(iptables_restore_default_command) - 1);
+
+	TEST_SUCC(close(fd));
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_shim)
+{
+	char buffer[1024];
+	char *const iptables_flush_command[] = { "./iptables", "--flush", "OUTPUT",
+						 NULL };
+	char *const iptables_zero_command[] = { "./iptables", "--zero", "OUTPUT",
+						NULL };
+	char *const iptables_list_command[] = { "./iptables", "-L", "OUTPUT",
+						NULL };
+	char *const iptables_delete_first_command[] = {
+		"./iptables", "--delete", "OUTPUT", "1", NULL
+	};
+	char *const iptables_drop_all_echo_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "-j", "DROP", NULL
+	};
+	char *const iptables_accept_addr_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0862", "-s", "127.0.0.1/32",
+		"-d", "127.0.0.1/32", "-j", "ACCEPT", NULL
+	};
+	char *const iptables_drop_addr_command[] = {
+		"./iptables", "--append", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0862", "-s", "127.0.0.1/32",
+		"-d", "127.0.0.1/32", "-j", "DROP", NULL
+	};
+	char *const iptables_restore_default_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0828", "-j", "DROP", NULL
+	};
+	unsigned long long bytes;
+	unsigned long long packets;
+
+	// NETFILTER_STAGE19: This test leaves the direct procfs write path and
+	// executes a user-visible `iptables` command shim. That proves the
+	// compatibility layer can be driven by an application-style CLI.
+	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_drop_all_echo_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_list_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "icmp-type echo-request target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+		 _ret == 1);
+
+	TEST_RES(send_echo_and_wait_reply(0x860, 0x24), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x861, 0x25), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(read_rule_counters_by_match(buffer, "icmp-type echo-request",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets == 2, _ret == 1);
+	TEST_RES(bytes > 0, _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_zero_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(read_rule_counters_by_match(buffer, "icmp-type echo-request",
+					     &packets, &bytes),
+		 _ret == 0);
+	TEST_RES(packets == 0, _ret == 1);
+	TEST_RES(bytes == 0, _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_delete_first_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
+		 _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x860, 0x26), _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_accept_addr_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_drop_addr_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "src 127.0.0.1") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "dst 127.0.0.1") != NULL, _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x862, 0x27), _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_restore_default_command), _ret == 0);
+}
+END_TEST()
