@@ -864,3 +864,69 @@ FN_TEST(run_userspace_iptables_tcp_udp_port_matches)
 	TEST_RES(run_iptables_command(iptables_restore_default_command), _ret == 0);
 }
 END_TEST()
+
+FN_TEST(run_userspace_iptables_nat_control_plane)
+{
+	char buffer[2048];
+	char *const iptables_nat_flush_command[] = { "./iptables", "-t", "nat",
+						     "-F", NULL };
+	char *const iptables_nat_flush_prerouting_command[] = {
+		"./iptables", "-t", "nat", "-F", "PREROUTING", NULL
+	};
+	char *const iptables_nat_list_command[] = { "./iptables", "-t", "nat",
+						    "-L", NULL };
+	char *const iptables_snat_command[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-p", "tcp",
+		"--dport", "8080", "-j", "SNAT", "--to-source",
+		"10.0.2.15:40000", NULL
+	};
+	char *const iptables_dnat_command[] = {
+		"./iptables", "-t", "nat", "-A", "PREROUTING", "-p", "udp",
+		"--dport", "5353", "-j", "DNAT", "--to-destination",
+		"127.0.0.1:5354", NULL
+	};
+	char *const iptables_masquerade_command[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+
+	// NETFILTER_STAGE21: NAT starts as a control-plane feature: iptables-style
+	// commands can create and list SNAT, DNAT, and MASQUERADE rules, while
+	// Stage 22 will attach these rules to packet rewriting.
+	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_snat_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_dnat_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_masquerade_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_nat_list_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "table nat") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "chain PREROUTING policy ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "chain POSTROUTING policy ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer,
+			"chain POSTROUTING pkts 0 bytes 0 match tcp dport 8080 target SNAT to-source 10.0.2.15:40000") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer,
+			"chain PREROUTING pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer,
+			"chain POSTROUTING pkts 0 bytes 0 match all target MASQUERADE") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 3") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_nat_flush_prerouting_command),
+		 _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "target DNAT") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 2") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 0") != NULL,
+		 _ret == 1);
+}
+END_TEST()
