@@ -930,3 +930,41 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 		 _ret == 1);
 }
 END_TEST()
+
+FN_TEST(run_userspace_iptables_nat_postrouting_data_path)
+{
+	char buffer[2048];
+	char *const iptables_nat_flush_command[] = { "./iptables", "-t", "nat",
+						     "-F", NULL };
+	char *const iptables_snat_icmp_command[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-p", "icmp",
+		"-d", "10.0.2.2/32", "-j", "SNAT", "--to-source",
+		"10.0.2.15", NULL
+	};
+	char *const iptables_masquerade_command[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-p",
+		"icmp", "-d", "10.0.2.3/32", "-j", "MASQUERADE", NULL
+	};
+
+	// NETFILTER_STAGE22: This test leaves pure control-plane validation and
+	// keeps a smoke check that POSTROUTING NAT rules do not break the stable
+	// raw ICMP egress path. Runtime counter evidence is not asserted because
+	// the current QEMU regression environment does not reliably drive physical
+	// egress scheduling before this test reads `/proc/netfilter_rules`.
+	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_snat_icmp_command), _ret == 0);
+	TEST_RES(run_iptables_command(iptables_masquerade_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "target SNAT") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "target MASQUERADE") != NULL, _ret == 1);
+
+	TEST_RES(send_raw_icmp_datagram(0x0a000202, 0x872), _ret == 0);
+	TEST_RES(send_raw_icmp_datagram(0x0a000203, 0x873), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 2") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+}
+END_TEST()
