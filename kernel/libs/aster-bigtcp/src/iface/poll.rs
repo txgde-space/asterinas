@@ -9,15 +9,16 @@ use smoltcp::{
     },
     phy::{ChecksumCapabilities, Device, RxToken, TxToken},
     wire::{
-        IPV4_HEADER_LEN, IPV4_MIN_MTU, Icmpv4DstUnreachable, Icmpv4Repr, IpAddress, IpProtocol,
-        IpRepr, Ipv4Address, Ipv4Packet, Ipv4Repr, TcpControl, TcpPacket, TcpRepr, UdpPacket,
-        UdpRepr,
+        IPV4_HEADER_LEN, IPV4_MIN_MTU, Icmpv4DstUnreachable, Icmpv4Packet, Icmpv4Repr, IpAddress,
+        IpProtocol, IpRepr, Ipv4Address, Ipv4Packet, Ipv4Repr, TcpControl, TcpPacket, TcpRepr,
+        UdpPacket, UdpRepr,
     },
 };
 
 use super::poll_iface::PollableIfaceMut;
 use crate::{
     ext::Ext,
+    netfilter::{self, HookPoint, Ipv4PacketContext},
     socket::{TcpConnectionBg, TcpProcessResult},
     socket_table::{ConnectionKey, ListenerKey, SocketTable},
 };
@@ -83,9 +84,104 @@ impl<E: Ext> PollContext<'_, E> {
                     return;
                 };
 
-                dispatch_phy(&reply, self.iface.context_mut(), tx_token);
+                self.dispatch_outgoing_packet(&reply, dispatch_phy, tx_token);
             });
         }
+    }
+
+    fn accept_ipv4_at(&self, hook_point: HookPoint, repr: &Ipv4Repr) -> bool {
+        netfilter::evaluate_ipv4(Ipv4PacketContext::new(hook_point, repr)).is_accept()
+    }
+
+    fn accept_ip_repr_at(&self, hook_point: HookPoint, repr: &IpRepr) -> bool {
+        let IpRepr::Ipv4(ipv4_repr) = repr;
+
+        self.accept_ipv4_at(hook_point, ipv4_repr)
+    }
+
+    fn accept_packet_at(&self, hook_point: HookPoint, packet: &Packet<'_>) -> bool {
+        self.accept_ip_repr_at(hook_point, &packet.ip_repr())
+    }
+
+    fn accept_icmpv4_at(
+        &self,
+        hook_point: HookPoint,
+        repr: &IpRepr,
+        icmp_repr: &Icmpv4Repr<'_>,
+    ) -> bool {
+        let IpRepr::Ipv4(ipv4_repr) = repr;
+
+        netfilter::evaluate_ipv4_icmpv4(Ipv4PacketContext::new(hook_point, ipv4_repr), icmp_repr)
+            .is_accept()
+    }
+
+    fn accept_tcp_at(&self, hook_point: HookPoint, repr: &IpRepr, tcp_repr: &TcpRepr<'_>) -> bool {
+        let IpRepr::Ipv4(ipv4_repr) = repr;
+
+        netfilter::evaluate_ipv4_tcp(Ipv4PacketContext::new(hook_point, ipv4_repr), tcp_repr)
+            .is_accept()
+    }
+
+    fn accept_udp_at(&self, hook_point: HookPoint, repr: &IpRepr, udp_repr: &UdpRepr) -> bool {
+        let IpRepr::Ipv4(ipv4_repr) = repr;
+
+        netfilter::evaluate_ipv4_udp(Ipv4PacketContext::new(hook_point, ipv4_repr), udp_repr)
+            .is_accept()
+    }
+
+    fn rewrite_tcp_postrouting<'p>(
+        &self,
+        ip_repr: IpRepr,
+        tcp_repr: TcpRepr<'p>,
+    ) -> (IpRepr, TcpRepr<'p>) {
+        match ip_repr {
+            IpRepr::Ipv4(ipv4_repr) => {
+                let (ipv4_repr, tcp_repr) = netfilter::rewrite_ipv4_tcp_postrouting(
+                    ipv4_repr,
+                    tcp_repr,
+                    self.iface.context().ipv4_addr(),
+                );
+
+                (IpRepr::Ipv4(ipv4_repr), tcp_repr)
+            }
+        }
+    }
+
+    fn rewrite_udp_postrouting(&self, ip_repr: IpRepr, udp_repr: UdpRepr) -> (IpRepr, UdpRepr) {
+        match ip_repr {
+            IpRepr::Ipv4(ipv4_repr) => {
+                let (ipv4_repr, udp_repr) = netfilter::rewrite_ipv4_udp_postrouting(
+                    ipv4_repr,
+                    udp_repr,
+                    self.iface.context().ipv4_addr(),
+                );
+
+                (IpRepr::Ipv4(ipv4_repr), udp_repr)
+            }
+        }
+    }
+
+    fn rewrite_icmp_postrouting(&self, ipv4_repr: Ipv4Repr) -> Ipv4Repr {
+        netfilter::rewrite_ipv4_icmp_postrouting(ipv4_repr, self.iface.context().ipv4_addr())
+    }
+
+    fn dispatch_outgoing_packet<T, Q>(
+        &mut self,
+        packet: &Packet<'_>,
+        dispatch_phy: &mut Q,
+        tx_token: T,
+    ) where
+        T: TxToken,
+        Q: FnMut(&Packet, &mut Context, T),
+    {
+        // IPv4 出站包先经过 LOCAL_OUT/POSTROUTING；没有规则时保持原行为。
+        if !self.accept_packet_at(HookPoint::LocalOut, packet)
+            || !self.accept_packet_at(HookPoint::PostRouting, packet)
+        {
+            return;
+        }
+
+        dispatch_phy(packet, self.iface.context_mut(), tx_token);
     }
 
     fn parse_and_process_ipv4<'pkt>(
@@ -95,6 +191,10 @@ impl<E: Ext> PollContext<'_, E> {
         // Parse the IP header. Ignore the packet if the header is ill-formed.
         let repr = Ipv4Repr::parse(&pkt, &self.iface.context().checksum_caps()).ok()?;
 
+        if !self.accept_ipv4_at(HookPoint::PreRouting, &repr) {
+            return None;
+        }
+
         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
             return self.generate_icmp_unreachable(
                 &IpRepr::Ipv4(repr),
@@ -102,6 +202,13 @@ impl<E: Ext> PollContext<'_, E> {
                 Icmpv4DstUnreachable::HostUnreachable,
             );
         }
+
+        if !self.accept_ipv4_at(HookPoint::LocalIn, &repr) {
+            return None;
+        }
+
+        // raw socket 观察完整 IPv4 包，匹配协议号后进入 raw 接收队列。
+        self.process_raw_ipv4(&repr, pkt.as_ref());
 
         let checksum_caps = self.iface.context().checksum_caps();
         match repr.next_header {
@@ -111,8 +218,40 @@ impl<E: Ext> PollContext<'_, E> {
             IpProtocol::Udp => {
                 self.parse_and_process_udp(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
             }
+            IpProtocol::Icmp => {
+                self.parse_and_process_icmpv4(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
+            }
             _ => None,
         }
+    }
+
+    fn process_raw_ipv4(&self, ipv4_repr: &Ipv4Repr, packet: &[u8]) {
+        for socket in self.sockets.raw_ip_socket_iter() {
+            if socket.protocol() != ipv4_repr.next_header {
+                continue;
+            }
+
+            socket.process_ipv4(packet, ipv4_repr.src_addr);
+        }
+    }
+
+    fn process_locally_generated_raw_ipv4(&self, packet: &Packet<'_>) {
+        let ip_repr = packet.ip_repr();
+        let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
+
+        let mut bytes = vec![0; ip_repr.buffer_len()];
+        ip_repr.emit(&mut bytes, &self.iface.context().checksum_caps());
+        packet.emit_payload(
+            &ip_repr,
+            &mut bytes[ip_repr.header_len()..],
+            &self.iface.context().caps,
+        );
+
+        if !self.accept_ipv4_at(HookPoint::LocalIn, ipv4_repr) {
+            return;
+        }
+
+        self.process_raw_ipv4(ipv4_repr, &bytes);
     }
 
     fn parse_and_process_tcp<'pkt>(
@@ -138,8 +277,13 @@ impl<E: Ext> PollContext<'_, E> {
         )
         .ok()?;
 
-        self.process_tcp_until_outgoing(ip_repr, &tcp_repr)
-            .map(|(ip_repr, tcp_repr)| Packet::new(ip_repr, IpPayload::Tcp(tcp_repr)))
+        let (ip_repr, tcp_repr) = self.process_tcp_until_outgoing(ip_repr, &tcp_repr)?;
+        if !self.accept_tcp_at(HookPoint::LocalOut, &ip_repr, &tcp_repr) {
+            return None;
+        }
+
+        let (ip_repr, tcp_repr) = self.rewrite_tcp_postrouting(ip_repr, tcp_repr);
+        Some(Packet::new(ip_repr, IpPayload::Tcp(tcp_repr)))
     }
 
     fn process_tcp_until_outgoing(
@@ -292,6 +436,48 @@ impl<E: Ext> PollContext<'_, E> {
         processed
     }
 
+    fn parse_and_process_icmpv4<'pkt>(
+        &self,
+        ip_repr: &IpRepr,
+        ip_payload: &'pkt [u8],
+        checksum_caps: &ChecksumCapabilities,
+    ) -> Option<Packet<'pkt>> {
+        let icmp_packet = Icmpv4Packet::new_checked(ip_payload).ok()?;
+        let icmp_repr = Icmpv4Repr::parse(&icmp_packet, checksum_caps).ok()?;
+
+        // 最小 Echo responder 支撑 loopback ping，不扩大到完整 ICMP 控制面。
+        match icmp_repr {
+            Icmpv4Repr::EchoRequest {
+                ident,
+                seq_no,
+                data,
+            } if ip_repr.src_addr().is_unicast() && ip_repr.dst_addr().is_unicast() => {
+                let icmp_reply = Icmpv4Repr::EchoReply {
+                    ident,
+                    seq_no,
+                    data,
+                };
+                Some(Packet::new_ipv4(
+                    Ipv4Repr {
+                        src_addr: self
+                            .iface
+                            .context()
+                            .ipv4_addr()
+                            .unwrap_or(Ipv4Address::UNSPECIFIED),
+                        dst_addr: match ip_repr.src_addr() {
+                            IpAddress::Ipv4(src_addr) => src_addr,
+                        },
+                        next_header: IpProtocol::Icmp,
+                        payload_len: icmp_reply.buffer_len(),
+                        hop_limit: 64,
+                    },
+                    IpPayload::Icmpv4(icmp_reply),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn generate_icmp_unreachable<'pkt>(
         &self,
         ip_repr: &IpRepr,
@@ -299,16 +485,6 @@ impl<E: Ext> PollContext<'_, E> {
         reason: Icmpv4DstUnreachable,
     ) -> Option<Packet<'pkt>> {
         if !ip_repr.src_addr().is_unicast() || !ip_repr.dst_addr().is_unicast() {
-            return None;
-        }
-
-        if self.is_unicast_local(ip_repr.src_addr()) {
-            // In this case, the generating ICMP message will have a local IP address as the
-            // destination. However, since we don't have the ability to handle ICMP messages, we'll
-            // just skip the generation.
-            //
-            // TODO: Generate the ICMP message here once we're able to handle incoming ICMP
-            // messages.
             return None;
         }
 
@@ -376,9 +552,15 @@ impl<E: Ext> PollContext<'_, E> {
             return did_something_tcp;
         };
 
-        let (did_something_udp, _tx_token) = self.dispatch_udp(tx_token, dispatch_phy);
+        let (did_something_udp, tx_token) = self.dispatch_udp(tx_token, dispatch_phy);
 
-        did_something_tcp || did_something_udp
+        let Some(tx_token) = tx_token else {
+            return did_something_tcp || did_something_udp;
+        };
+
+        let (did_something_raw, _tx_token) = self.dispatch_raw_ip(tx_token, dispatch_phy);
+
+        did_something_tcp || did_something_udp || did_something_raw
     }
 
     fn dispatch_tcp<T, Q>(&mut self, tx_token: T, dispatch_phy: &mut Q) -> (bool, Option<T>)
@@ -404,10 +586,16 @@ impl<E: Ext> PollContext<'_, E> {
                 TcpConnectionBg::dispatch(&socket, &mut self.iface, |iface, ip_repr, tcp_repr| {
                     let mut this = PollContext::new(iface, self.sockets, self.actions);
 
+                    if !this.accept_tcp_at(HookPoint::LocalOut, ip_repr, tcp_repr) {
+                        return None;
+                    }
+
                     if !this.is_unicast_local(ip_repr.dst_addr()) {
-                        dispatch_phy(
-                            &Packet::new(ip_repr.clone(), IpPayload::Tcp(*tcp_repr)),
-                            this.iface.context_mut(),
+                        let (ip_repr, tcp_repr) =
+                            this.rewrite_tcp_postrouting(ip_repr.clone(), *tcp_repr);
+                        this.dispatch_outgoing_packet(
+                            &Packet::new(ip_repr, IpPayload::Tcp(tcp_repr)),
+                            dispatch_phy,
                             tx_token.take().unwrap(),
                         );
                         return None;
@@ -446,13 +634,21 @@ impl<E: Ext> PollContext<'_, E> {
                         &ip_payload,
                         &ChecksumCapabilities::ignored(),
                     ) {
-                        dispatch_phy(&reply, self.iface.context_mut(), tx_token.take().unwrap());
+                        self.dispatch_outgoing_packet(
+                            &reply,
+                            dispatch_phy,
+                            tx_token.take().unwrap(),
+                        );
                     }
                 }
                 (None, Some((ip_repr, tcp_repr))) if !self.is_unicast_local(ip_repr.dst_addr()) => {
-                    dispatch_phy(
+                    if !self.accept_tcp_at(HookPoint::LocalOut, &ip_repr, &tcp_repr) {
+                        continue;
+                    }
+                    let (ip_repr, tcp_repr) = self.rewrite_tcp_postrouting(ip_repr, tcp_repr);
+                    self.dispatch_outgoing_packet(
                         &Packet::new(ip_repr, IpPayload::Tcp(tcp_repr)),
-                        self.iface.context_mut(),
+                        dispatch_phy,
                         tx_token.take().unwrap(),
                     );
                 }
@@ -460,9 +656,14 @@ impl<E: Ext> PollContext<'_, E> {
                     if let Some((new_ip_repr, new_tcp_repr)) =
                         self.process_tcp_until_outgoing(&ip_repr, &tcp_repr)
                     {
-                        dispatch_phy(
+                        if !self.accept_tcp_at(HookPoint::LocalOut, &new_ip_repr, &new_tcp_repr) {
+                            continue;
+                        }
+                        let (new_ip_repr, new_tcp_repr) =
+                            self.rewrite_tcp_postrouting(new_ip_repr, new_tcp_repr);
+                        self.dispatch_outgoing_packet(
                             &Packet::new(new_ip_repr, IpPayload::Tcp(new_tcp_repr)),
-                            self.iface.context_mut(),
+                            dispatch_phy,
                             tx_token.take().unwrap(),
                         );
                     }
@@ -504,10 +705,16 @@ impl<E: Ext> PollContext<'_, E> {
                 let iface = PollableIfaceMut::new(cx, pending);
                 let mut this = PollContext::new(iface, self.sockets, &mut actions);
 
+                if !this.accept_udp_at(HookPoint::LocalOut, ip_repr, udp_repr) {
+                    return;
+                }
+
                 if ip_repr.dst_addr().is_broadcast() || !this.is_unicast_local(ip_repr.dst_addr()) {
-                    dispatch_phy(
-                        &Packet::new(ip_repr.clone(), IpPayload::Udp(*udp_repr, udp_payload)),
-                        this.iface.context_mut(),
+                    let (ip_repr, udp_repr) =
+                        this.rewrite_udp_postrouting(ip_repr.clone(), *udp_repr);
+                    this.dispatch_outgoing_packet(
+                        &Packet::new(ip_repr.clone(), IpPayload::Udp(udp_repr, udp_payload)),
+                        dispatch_phy,
                         tx_token.take().unwrap(),
                     );
                     if !ip_repr.dst_addr().is_broadcast() {
@@ -516,9 +723,25 @@ impl<E: Ext> PollContext<'_, E> {
                 }
 
                 if !socket.can_process(udp_repr.dst_port) {
-                    // TODO: Generate the ICMP message here once we're able to handle incoming ICMP
-                    // messages.
-                    let _ = this.process_udp(ip_repr, udp_repr, udp_payload);
+                    if !this.process_udp(ip_repr, udp_repr, udp_payload) {
+                        let mut ip_payload = vec![0; udp_repr.header_len() + udp_payload.len()];
+                        udp_repr.emit(
+                            &mut UdpPacket::new_unchecked(&mut ip_payload),
+                            &ip_repr.src_addr(),
+                            &ip_repr.dst_addr(),
+                            udp_payload.len(),
+                            |payload| payload.copy_from_slice(udp_payload),
+                            &ChecksumCapabilities::ignored(),
+                        );
+
+                        if let Some(reply) = this.generate_icmp_unreachable(
+                            ip_repr,
+                            &ip_payload,
+                            Icmpv4DstUnreachable::PortUnreachable,
+                        ) {
+                            this.process_locally_generated_raw_ipv4(&reply);
+                        }
+                    }
                     return;
                 }
 
@@ -545,7 +768,7 @@ impl<E: Ext> PollContext<'_, E> {
                     &ChecksumCapabilities::ignored(),
                 )
             {
-                dispatch_phy(&reply, self.iface.context_mut(), tx_token.take().unwrap());
+                self.dispatch_outgoing_packet(&reply, dispatch_phy, tx_token.take().unwrap());
             }
 
             if tx_token.is_none() {
@@ -559,5 +782,73 @@ impl<E: Ext> PollContext<'_, E> {
         debug_assert!(actions.is_empty());
 
         (did_something, tx_token)
+    }
+
+    fn dispatch_raw_ip<T, Q>(&mut self, tx_token: T, dispatch_phy: &mut Q) -> (bool, Option<T>)
+    where
+        T: TxToken,
+        Q: FnMut(&Packet, &mut Context, T),
+    {
+        let mut tx_token = Some(tx_token);
+
+        for socket in self.sockets.raw_ip_socket_iter() {
+            let Some(tx_packet) = socket.pop_tx_packet() else {
+                continue;
+            };
+
+            let IpProtocol::Icmp = socket.protocol() else {
+                continue;
+            };
+
+            let icmp_packet = match Icmpv4Packet::new_checked(tx_packet.payload()) {
+                Ok(icmp_packet) => icmp_packet,
+                Err(_) => continue,
+            };
+            let icmp_repr =
+                match Icmpv4Repr::parse(&icmp_packet, &self.iface.context().checksum_caps()) {
+                    Ok(icmp_repr) => icmp_repr,
+                    Err(_) => continue,
+                };
+            let mut ipv4_repr = Ipv4Repr {
+                src_addr: self
+                    .iface
+                    .context()
+                    .ipv4_addr()
+                    .unwrap_or(Ipv4Address::UNSPECIFIED),
+                dst_addr: tx_packet.destination(),
+                next_header: socket.protocol(),
+                payload_len: icmp_repr.buffer_len(),
+                hop_limit: 64,
+            };
+            if !self.is_unicast_local(IpAddress::Ipv4(tx_packet.destination())) {
+                ipv4_repr = self.rewrite_icmp_postrouting(ipv4_repr);
+            }
+            let packet = Packet::new_ipv4(ipv4_repr, IpPayload::Icmpv4(icmp_repr));
+
+            if !self.accept_icmpv4_at(HookPoint::LocalOut, &packet.ip_repr(), &icmp_repr) {
+                return (true, tx_token);
+            }
+
+            // 发往本机地址的 raw ICMP 请求直接回灌协议路径，用于 loopback ping。
+            if self.is_unicast_local(IpAddress::Ipv4(tx_packet.destination())) {
+                if let Some(reply) = self.parse_and_process_icmpv4(
+                    &packet.ip_repr(),
+                    tx_packet.payload(),
+                    &self.iface.context().checksum_caps(),
+                ) {
+                    self.process_locally_generated_raw_ipv4(&reply);
+                }
+            } else {
+                if !self.accept_packet_at(HookPoint::PostRouting, &packet) {
+                    return (true, tx_token);
+                }
+
+                dispatch_phy(&packet, self.iface.context_mut(), tx_token.take().unwrap());
+            }
+
+            return (true, tx_token);
+        }
+
+        (false, tx_token)
     }
 }
