@@ -6,6 +6,14 @@
 项目成员：俞俊升、童旭光、孙威  
 指导教师：宋姗姗、郭佳妮
 
+## 演示视频
+
+> **视频文件较大，无法上传完整视频至平台。可通过以下地址观看项目演示视频：**
+>
+> **【操作演示视频（Rust OS 网络栈功能扩展与 Linux 兼容性增强---Proj12）】**
+>
+> https://www.bilibili.com/video/BV1LpTw6DETN/?share_source=copy_web&vd_source=9d6745e0ab38139840865d59e701a2f0
+
 ## 项目背景
 
 星绽操作系统（Asterinas）是一个以 Rust 为主要实现语言、面向 Linux ABI 兼容目标的操作系统内核。其网络能力基于 smoltcp 和内部 `aster-bigtcp` 抽象构建，具有结构清晰、资源可控和安全性较强等特点。
@@ -143,14 +151,13 @@
 | `stage-records/` | 新增 | 阶段记录、测试证据和日志摘要 |
 | `tools/raw_socket/` | 新增 | raw socket 阶段测试和证据采集脚本 |
 
-## 操作命令
+## 测试与演示命令
 
-### 进入官方编译环境
+本节按录屏和现场演示顺序组织命令，目标是可以从上到下线性复制运行。命令位置分为三类：宿主机、官方 Podman 编译环境、Asterinas guest。
 
+### 1. 进入官方编译环境
 
-
-### 测试流程
-进入官方编译环境
+在宿主机项目根目录执行：
 
 ```bash
 sudo podman run --rm -it --privileged \
@@ -160,12 +167,13 @@ sudo podman run --rm -it --privileged \
   docker.io/asterinas/asterinas:0.18.0-20260603
 ```
 
-进入容器后：
+进入容器后切换到项目目录：
 
 ```bash
 cd /root/asterinas
 ```
-#### 1. 构建环境与完整回归测试
+
+### 2. 构建内核与完整回归测试
 
 进入官方 Podman 编译环境后，先构建内核：
 
@@ -186,7 +194,7 @@ All test in /test/network passed.
 All regression tests passed.
 ```
 
-#### 2. 指标一：Raw Socket 与 ping
+### 3. 指标一：Raw Socket 与 ping
 
 先从完整 regression 日志中观察 raw socket 与 ping 相关测试项：
 
@@ -206,7 +214,9 @@ test_nonblocking_empty_receive
 test_ping_loopback summary: raw socket ping command passed
 ```
 
-如果需要在 NixOS guest 中手动展示 ping 命令，可使用显式 loopback 源地址触发 raw ICMP 路径：
+上述 `PASS` 表示 Asterinas 已经支持 ICMP raw socket 创建、完整 IPv4 ICMP 报文收发、Echo Request/Reply 闭环、`IP_HDRINCL` 基础路径、非阻塞空读，以及命令级 `ping` 验证。
+
+如果需要在 NixOS guest 中手动展示 `iputils ping`，可使用显式 loopback 源地址触发稳定的 raw ICMP 路径：
 
 ```bash
 ping -c 1 -W 1 -I 127.0.0.1 127.0.0.1
@@ -214,7 +224,7 @@ ping -c 1 -W 1 -I 127.0.0.1 127.0.0.1
 
 看到 `1 packets transmitted, 1 received, 0% packet loss`。
 
-#### 3. 指标二：Linux Socket 兼容
+### 4. 指标二：Linux Socket 兼容
 
 先从完整 regression 日志中观察指标二单点回归和聚合回归：
 
@@ -236,6 +246,8 @@ tcp_reuseaddr
 linux_socket_compat
 ```
 
+上述 `PASS` 表示 `0.0.0.0` 通配监听、`getsockname()`、未绑定 `listen()`、loopback、顺序 `accept()`、readiness、`SO_REUSEADDR` 和聚合服务路径均已通过回归测试。
+
 然后在宿主机项目根目录运行 Ubuntu / 原始 Asterinas / 当前 Asterinas 三方共同语义对比：
 
 ```bash
@@ -249,6 +261,8 @@ scripts/compare-linux-socket-compat.sh all
 | Ubuntu 24.04 | PASS | 131 | 0 |
 | 原始 Asterinas | FAIL | 112 | 19 |
 | 当前 Asterinas | PASS | 131 | 0 |
+
+该结果表示同一套 Linux socket 共同语义测试在 Ubuntu 上通过、在原始 Asterinas 上失败、在当前 Asterinas 上通过，可以直接体现兼容修复效果。
 
 最后构建包含 Python、Flask 和 demo 源码的 NixOS 镜像：
 
@@ -303,7 +317,9 @@ http://127.0.0.1:18080
 
 网页中依次点击指标二相关按钮，可以观察 `0.0.0.0` 监听、Echo 请求、64 KiB 响应、请求信息等服务路径均返回 `PASS`。
 
-#### 4. 指标三：netfilter / iptables
+其中，页面中的指标二 `PASS` 表示真实 Flask 服务可以在 Asterinas 中绑定 `0.0.0.0`，并通过 QEMU 端口映射被宿主机访问，普通响应、大响应和请求信息读取均正常。
+
+### 5. 指标三：netfilter / iptables
 
 先从完整 regression 日志中观察 netfilter / iptables 相关测试项：
 
@@ -323,6 +339,8 @@ test_run_userspace_iptables_nat_control_plane
 test_run_userspace_iptables_nat_postrouting_data_path
 ```
 
+上述 `PASS` 表示 netfilter 规则控制面、ACCEPT/DROP、iptables shim、TCP/UDP 端口匹配、nat 表控制面和 POSTROUTING NAT smoke 路径均已进入回归测试并通过。
+
 在已经启动 Flask 服务的 Asterinas guest 中，先清空 OUTPUT 规则并查看规则状态：
 
 ```bash
@@ -335,6 +353,8 @@ cat /proc/netfilter_rules
 ```bash
 curl -v http://127.0.0.1:18080
 ```
+
+此时服务可访问，表示没有 DROP 规则影响 8080 端口响应。
 
 然后在 guest 中添加规则，阻断 Flask 从 8080 端口发出的 TCP 响应，并查看规则日志：
 
@@ -349,6 +369,8 @@ cat /proc/netfilter_rules
 curl -v --max-time 3 http://127.0.0.1:18080
 ```
 
+此时超时或无法拿到 HTTP 响应，表示 netfilter 规则已经作用到真实服务的数据路径。
+
 恢复 Web 访问时，在 guest 中清空 OUTPUT 规则并再次查看规则状态：
 
 ```bash
@@ -362,7 +384,7 @@ cat /proc/netfilter_rules
 curl -v http://127.0.0.1:18080
 ```
 
-
+服务重新可访问，表示规则清空后数据路径恢复正常。
 
 ## 创新贡献
 
