@@ -11,7 +11,7 @@ use aster_bigtcp::{
 };
 
 use super::{
-    common::get_ephemeral_endpoint,
+    common::{get_ephemeral_endpoint, get_iface_to_bind},
     options::{IpOptionSet, SetIpLevelOption},
     raw_observer::RawIpObserver,
 };
@@ -43,6 +43,8 @@ use crate::{
 pub struct RawSocket {
     protocol: Protocol,
     raw_sockets: Vec<BigtcpRawIpSocket>,
+    local_endpoint: RwLock<Option<IpEndpoint>>,
+    remote_endpoint: RwLock<Option<IpEndpoint>>,
     is_nonblocking: AtomicBool,
     ip_options: RwLock<IpOptionSet>,
     pollee: Pollee,
@@ -68,6 +70,8 @@ impl RawSocket {
         Ok(Arc::new(Self {
             protocol,
             raw_sockets,
+            local_endpoint: RwLock::new(None),
+            remote_endpoint: RwLock::new(None),
             is_nonblocking: AtomicBool::new(is_nonblocking),
             ip_options: RwLock::new(IpOptionSet::new_raw()),
             pollee,
@@ -120,11 +124,24 @@ impl RawSocket {
             warn!("sending raw socket control message is not supported");
         }
 
-        let Some(SocketAddr::IPv4(destination, _)) = addr else {
-            return_errno_with_message!(
-                Errno::EDESTADDRREQ,
-                "raw IPv4 sockets require an IPv4 destination address"
-            );
+        let destination = match addr {
+            Some(SocketAddr::IPv4(destination, _)) => destination,
+            Some(_) => {
+                return_errno_with_message!(
+                    Errno::EAFNOSUPPORT,
+                    "raw IPv4 sockets require an IPv4 destination address"
+                )
+            }
+            None => {
+                let endpoint = self.remote_endpoint.read().ok_or_else(|| {
+                    Error::with_message(
+                        Errno::EDESTADDRREQ,
+                        "raw IPv4 sockets require an IPv4 destination address",
+                    )
+                })?;
+                let IpAddress::Ipv4(destination) = endpoint.addr;
+                destination
+            }
         };
 
         if !matches!(self.protocol, Protocol::IPPROTO_ICMP) {
@@ -151,7 +168,10 @@ impl RawSocket {
         };
 
         let remote_endpoint = IpEndpoint::new(IpAddress::Ipv4(destination), 0);
-        let local_endpoint = get_ephemeral_endpoint(&remote_endpoint);
+        let local_endpoint = self
+            .local_endpoint
+            .read()
+            .unwrap_or_else(|| get_ephemeral_endpoint(&remote_endpoint));
         let IpAddress::Ipv4(local_addr) = local_endpoint.addr;
 
         let raw_socket = self
@@ -193,8 +213,47 @@ impl SocketPrivate for RawSocket {
 }
 
 impl Socket for RawSocket {
+    fn bind(&self, socket_addr: SocketAddr) -> Result<()> {
+        let endpoint: IpEndpoint = socket_addr.try_into()?;
+
+        if get_iface_to_bind(&endpoint.addr).is_none() {
+            return_errno_with_message!(
+                Errno::EADDRNOTAVAIL,
+                "the address is not available from the local machine"
+            );
+        }
+
+        // Linux raw socket bind() 只固定本地 IPv4 地址，端口字段对 ICMP raw socket 无意义。
+        *self.local_endpoint.write() = Some(IpEndpoint::new(endpoint.addr, 0));
+        Ok(())
+    }
+
+    fn connect(&self, socket_addr: SocketAddr) -> Result<()> {
+        let SocketAddr::IPv4(destination, _) = socket_addr else {
+            return_errno_with_message!(
+                Errno::EAFNOSUPPORT,
+                "raw IPv4 sockets only support IPv4 peers"
+            );
+        };
+
+        // Linux raw socket connect() 会保存默认对端；iputils ping 会先走这条路径，
+        // 随后用 send()/write() 发送不带目标地址的 ICMP 报文。
+        *self.remote_endpoint.write() = Some(IpEndpoint::new(IpAddress::Ipv4(destination), 0));
+        Ok(())
+    }
+
     fn addr(&self) -> Result<SocketAddr> {
-        let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), 0);
+        let endpoint = self
+            .local_endpoint
+            .read()
+            .unwrap_or_else(|| IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), 0));
+        Ok(endpoint.into())
+    }
+
+    fn peer_addr(&self) -> Result<SocketAddr> {
+        let endpoint = self.remote_endpoint.read().ok_or_else(|| {
+            Error::with_message(Errno::ENOTCONN, "the raw socket is not connected")
+        })?;
         Ok(endpoint.into())
     }
 
@@ -296,12 +355,12 @@ fn check_raw_socket_privilege() -> Result<()> {
         posix_thread.credentials()
     };
 
-    if credentials.effective_capset().contains(CapSet::NET_RAW) {
+    if credentials.euid().is_root() || credentials.effective_capset().contains(CapSet::NET_RAW) {
         return Ok(());
     }
 
     return_errno_with_message!(
         Errno::EACCES,
-        "only threads with CAP_NET_RAW can create raw sockets"
+        "only root or threads with CAP_NET_RAW can create raw sockets"
     );
 }

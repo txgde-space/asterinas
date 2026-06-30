@@ -3,6 +3,7 @@
   fio = pkgsHostTarget.fio.overrideAttrs (_: { configureFlags = [ "--esx" ]; });
   hackbench = callPackage ./hackbench.nix { };
   iperf3 = pkgsHostTarget.iperf3;
+  iputils = pkgsHostTarget.iputils;
   lmbench = callPackage ./lmbench.nix { };
   memcached = pkgsHostTarget.memcached;
   nginx = pkgsHostTarget.nginx;
@@ -29,6 +30,7 @@
       cp -r ${fio}/bin/fio $out/bin/
       cp -r ${hackbench}/bin/hackbench $out/bin/
       cp -r ${iperf3}/bin/iperf3 $out/bin/
+      cp -r ${iputils}/bin/ping $out/bin/
       cp -r ${memcached}/bin/memcached $out/bin/
       cp -r ${nginx}/bin/nginx $out/bin/
       cp -r ${pythonSocketDemo}/bin/python3 $out/bin/

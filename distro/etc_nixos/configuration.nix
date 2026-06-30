@@ -31,14 +31,22 @@ in {
 
   # List packages installed in system profile.
   # You can use https://search.nixos.org/ to find more packages (and options).
-  environment.systemPackages = with pkgs; [ hello-asterinas pythonSocketDemo ];
+  environment.systemPackages = with pkgs; [ hello-asterinas iputils pythonSocketDemo ];
 
-  # 在默认 NixOS 镜像中放入 Flask demo，保持和 initramfs demo 一致的手动运行路径。
+  # 在默认 NixOS 镜像中暴露 Flask demo。这里只创建稳定符号链接，
+  # 避免每次 Stage 2 启动时递归复制文件触发 ext2 目录更新路径。
   system.activationScripts.flaskSocketDemo = ''
     mkdir -p /benchmark/bin /benchmark/flask_socket_demo
-    ln -sfn ${pythonSocketDemo}/bin/python3 /benchmark/bin/python3
-    cp -r ${flaskSocketDemoSrc}/. /benchmark/flask_socket_demo/
-    chmod +x /benchmark/flask_socket_demo/*.py /benchmark/flask_socket_demo/*.sh
+    if [ ! -e /benchmark/bin/python3 ]; then
+      ln -s ${pythonSocketDemo}/bin/python3 /benchmark/bin/python3
+    fi
+    if [ ! -e /benchmark/flask_socket_demo/app.py ]; then
+      ln -s ${flaskSocketDemoSrc}/app.py /benchmark/flask_socket_demo/app.py
+      ln -s ${flaskSocketDemoSrc}/probe.py /benchmark/flask_socket_demo/probe.py
+      ln -s ${flaskSocketDemoSrc}/run.sh /benchmark/flask_socket_demo/run.sh
+      ln -s ${flaskSocketDemoSrc}/ui.sh /benchmark/flask_socket_demo/ui.sh
+      ln -s ${flaskSocketDemoSrc}/bench_result.yaml /benchmark/flask_socket_demo/bench_result.yaml
+    fi
   '';
 
   system.nixos.distroName = "Asterinas NixOS";

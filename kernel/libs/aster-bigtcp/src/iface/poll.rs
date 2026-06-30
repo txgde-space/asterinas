@@ -240,11 +240,17 @@ impl<E: Ext> PollContext<'_, E> {
         let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
 
         let mut bytes = vec![0; ip_repr.buffer_len()];
-        ip_repr.emit(&mut bytes, &self.iface.context().checksum_caps());
+        // raw socket 交付给用户态的是完整 IPv4 报文，不能暴露 loopback/offload
+        // 路径中的“忽略校验和”内部表示，否则 iputils ping 会判定 BAD CHECKSUM。
+        let checksum_caps = ChecksumCapabilities::default();
+        let mut user_visible_caps = self.iface.context().caps.clone();
+        user_visible_caps.checksum = checksum_caps.clone();
+
+        ip_repr.emit(&mut bytes, &checksum_caps);
         packet.emit_payload(
             &ip_repr,
             &mut bytes[ip_repr.header_len()..],
-            &self.iface.context().caps,
+            &user_visible_caps,
         );
 
         if !self.accept_ipv4_at(HookPoint::LocalIn, ipv4_repr) {

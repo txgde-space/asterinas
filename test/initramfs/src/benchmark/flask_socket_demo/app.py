@@ -5,11 +5,101 @@
 import argparse
 import os
 import socket
+import struct
+import time
 
 from flask import Flask, jsonify, request
 
 
 app = Flask(__name__)
+
+NETFILTER_RULES_PATH = "/proc/netfilter_rules"
+RAW_ICMP_TARGET = "127.0.0.1"
+RAW_ICMP_IDENT = 0x4660
+RAW_ICMP_SEQUENCE = 1
+RAW_ICMP_TIMEOUT_SECONDS = 2.0
+
+
+def internet_checksum(data):
+    if len(data) % 2:
+        data += b"\x00"
+
+    checksum = 0
+    for index in range(0, len(data), 2):
+        checksum += (data[index] << 8) + data[index + 1]
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+
+    return (~checksum) & 0xFFFF
+
+
+def raw_icmp_echo():
+    payload = b"asterinas-flask-raw-icmp"
+    header = struct.pack("!BBHHH", 8, 0, 0, RAW_ICMP_IDENT, RAW_ICMP_SEQUENCE)
+    checksum = internet_checksum(header + payload)
+    packet = struct.pack("!BBHHH", 8, 0, checksum, RAW_ICMP_IDENT, RAW_ICMP_SEQUENCE) + payload
+
+    with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as raw_socket:
+        raw_socket.settimeout(RAW_ICMP_TIMEOUT_SECONDS)
+        raw_socket.sendto(packet, (RAW_ICMP_TARGET, 0))
+
+        deadline = time.time() + RAW_ICMP_TIMEOUT_SECONDS
+        while time.time() < deadline:
+            try:
+                data, address = raw_socket.recvfrom(2048)
+            except socket.timeout:
+                break
+
+            if len(data) < 28:
+                continue
+
+            ip_header_len = (data[0] & 0x0F) * 4
+            icmp = data[ip_header_len : ip_header_len + 8]
+            if len(icmp) < 8:
+                continue
+
+            icmp_type, icmp_code, _, ident, sequence = struct.unpack("!BBHHH", icmp)
+            if (
+                icmp_type == 0
+                and icmp_code == 0
+                and ident == RAW_ICMP_IDENT
+                and sequence == RAW_ICMP_SEQUENCE
+            ):
+                return {
+                    "passed": True,
+                    "detail": f"raw ICMP echo reply from {address[0]}",
+                }
+
+    return {
+        "passed": False,
+        "detail": "raw ICMP echo request timed out",
+    }
+
+
+def read_netfilter_rules():
+    with open(NETFILTER_RULES_PATH, "r", encoding="utf-8") as rules:
+        return rules.read()
+
+
+def write_netfilter_command(command):
+    with open(NETFILTER_RULES_PATH, "w", encoding="utf-8") as rules:
+        rules.write(command)
+
+
+def reset_netfilter_output_rules():
+    write_netfilter_command("iptables -F OUTPUT")
+    # 回归测试默认保留一个不会影响普通 ping 的 ICMP Echo 规则，恢复它可以避免
+    # 演示页面改变后续测试环境。
+    write_netfilter_command(
+        "iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0828 -j DROP"
+    )
+
+
+def format_netfilter_snapshot(snapshot):
+    lines = snapshot.splitlines()
+    if not lines:
+        return "(empty)"
+    return "\n".join(lines[:80])
+
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="zh-CN">
@@ -72,7 +162,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .grid {
       display: grid;
-      grid-template-columns: 320px 1fr;
+      grid-template-columns: 360px 1fr;
       gap: 16px;
       align-items: start;
     }
@@ -89,6 +179,21 @@ INDEX_HTML = r"""<!doctype html>
     .actions {
       display: grid;
       gap: 10px;
+    }
+    .group {
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+      margin-top: 12px;
+    }
+    .group:first-child {
+      border-top: 0;
+      padding-top: 0;
+      margin-top: 0;
+    }
+    .group h3 {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 14px;
     }
     button {
       width: 100%;
@@ -173,7 +278,7 @@ INDEX_HTML = r"""<!doctype html>
         <h1>Asterinas Linux Socket 兼容性服务测试</h1>
         <p class="lead">
           该页面用于展示 Flask 服务在 Asterinas 中可以监听 0.0.0.0、通过 loopback
-          与实际 IPv4 地址访问、处理普通响应和大响应，并支持服务重启验证。
+          与实际 IPv4 地址访问，并提供 raw socket ping 与 netfilter/iptables 的可视化验证入口。
         </p>
       </div>
       <div class="badge">Flask on 0.0.0.0:5000</div>
@@ -183,10 +288,23 @@ INDEX_HTML = r"""<!doctype html>
       <section>
         <h2>测试操作</h2>
         <div class="actions">
-          <button data-test="status">服务状态</button>
-          <button data-test="echo">Echo 请求</button>
-          <button data-test="large">64 KiB 响应</button>
-          <button data-test="info">请求信息</button>
+          <div class="group">
+            <h3>指标一：Raw Socket / ping</h3>
+            <button data-test="ping">Raw ICMP Echo</button>
+          </div>
+          <div class="group">
+            <h3>指标二：Linux Socket 服务兼容</h3>
+            <button data-test="status">服务状态</button>
+            <button data-test="echo">Echo 请求</button>
+            <button data-test="large">64 KiB 响应</button>
+            <button data-test="info">请求信息</button>
+          </div>
+          <div class="group">
+            <h3>指标三：netfilter / iptables</h3>
+            <button data-test="netfilterList">查看规则</button>
+            <button data-test="netfilterDropPing">DROP ping 生效</button>
+            <button data-test="netfilterReset">恢复默认规则</button>
+          </div>
           <button class="secondary" id="run-all">运行全部测试</button>
           <button class="secondary" id="clear">清空结果</button>
         </div>
@@ -203,6 +321,7 @@ INDEX_HTML = r"""<!doctype html>
           <thead>
             <tr>
               <th>测试项</th>
+              <th>指标</th>
               <th>结果</th>
               <th>说明</th>
             </tr>
@@ -216,6 +335,15 @@ INDEX_HTML = r"""<!doctype html>
 
   <script>
     const tests = {
+      ping: async () => {
+        const response = await fetch("/api/indicator1/ping");
+        const data = await response.json();
+        return {
+          ok: response.ok && data.passed,
+          detail: data.detail,
+          rawLog: data.raw_log
+        };
+      },
       status: async () => {
         const response = await fetch("/api/status");
         const data = await response.json();
@@ -247,14 +375,56 @@ INDEX_HTML = r"""<!doctype html>
           ok: response.ok && Boolean(data.host),
           detail: `host=${data.host}, remote=${data.remote_addr}`
         };
+      },
+      netfilterList: async () => {
+        const response = await fetch("/api/indicator3/rules");
+        const data = await response.json();
+        return {
+          ok: response.ok && data.passed,
+          detail: data.detail,
+          rawLog: data.raw_log
+        };
+      },
+      netfilterDropPing: async () => {
+        const response = await fetch("/api/indicator3/drop-ping");
+        const data = await response.json();
+        return {
+          ok: response.ok && data.passed,
+          detail: data.detail,
+          rawLog: data.raw_log
+        };
+      },
+      netfilterReset: async () => {
+        const response = await fetch("/api/indicator3/reset");
+        const data = await response.json();
+        return {
+          ok: response.ok && data.passed,
+          detail: data.detail,
+          rawLog: data.raw_log
+        };
       }
     };
 
     const labels = {
+      ping: "Raw ICMP Echo",
       status: "服务状态",
       echo: "Echo 请求",
       large: "64 KiB 响应",
-      info: "请求信息"
+      info: "请求信息",
+      netfilterList: "查看规则",
+      netfilterDropPing: "DROP ping 生效",
+      netfilterReset: "恢复默认规则"
+    };
+
+    const indicators = {
+      ping: "指标一",
+      status: "指标二",
+      echo: "指标二",
+      large: "指标二",
+      info: "指标二",
+      netfilterList: "指标三",
+      netfilterDropPing: "指标三",
+      netfilterReset: "指标三"
     };
 
     let total = 0;
@@ -282,7 +452,7 @@ INDEX_HTML = r"""<!doctype html>
       log.scrollTop = log.scrollHeight;
     }
 
-    function appendResult(name, ok, detail) {
+    function appendResult(name, ok, detail, rawLog = "") {
       total += 1;
       if (ok) {
         passed += 1;
@@ -294,17 +464,21 @@ INDEX_HTML = r"""<!doctype html>
       const row = document.createElement("tr");
       row.innerHTML = `
         <td>${labels[name]}</td>
+        <td>${indicators[name]}</td>
         <td class="${ok ? "status-ok" : "status-bad"}">${ok ? "PASS" : "FAIL"}</td>
         <td>${detail}</td>
       `;
       document.getElementById("results").appendChild(row);
       appendLog(`${ok ? "PASS" : "FAIL"} ${labels[name]}: ${detail}`);
+      if (rawLog) {
+        appendLog(rawLog);
+      }
     }
 
     async function runTest(name) {
       try {
         const result = await tests[name]();
-        appendResult(name, result.ok, result.detail);
+        appendResult(name, result.ok, result.detail, result.rawLog);
       } catch (error) {
         appendResult(name, false, error.message);
       }
@@ -320,7 +494,16 @@ INDEX_HTML = r"""<!doctype html>
 
     document.getElementById("run-all").addEventListener("click", async () => {
       setBusy(true);
-      for (const name of ["status", "echo", "large", "info"]) {
+      for (const name of [
+        "ping",
+        "status",
+        "echo",
+        "large",
+        "info",
+        "netfilterList",
+        "netfilterDropPing",
+        "netfilterReset"
+      ]) {
         await runTest(name);
       }
       setBusy(false);
@@ -404,6 +587,113 @@ def api_run_tests():
 
     passed = sum(1 for item in results if item["passed"])
     return jsonify(total=len(results), passed=passed, failed=len(results) - passed, results=results)
+
+
+@app.get("/api/indicator1/ping")
+def api_indicator1_ping():
+    try:
+        result = raw_icmp_echo()
+    except OSError as err:
+        result = {
+            "passed": False,
+            "detail": f"raw socket error: {err}",
+        }
+
+    return jsonify(
+        passed=result["passed"],
+        detail=result["detail"],
+        raw_log=(
+            "[指标一 Raw Socket / ping]\n"
+            f"target={RAW_ICMP_TARGET}\n"
+            f"icmp_ident=0x{RAW_ICMP_IDENT:04x}\n"
+            f"icmp_sequence={RAW_ICMP_SEQUENCE}\n"
+            f"result={'PASS' if result['passed'] else 'FAIL'}\n"
+            f"detail={result['detail']}"
+        ),
+    )
+
+
+@app.get("/api/indicator3/rules")
+def api_indicator3_rules():
+    try:
+        snapshot = read_netfilter_rules()
+    except OSError as err:
+        return jsonify(passed=False, detail=str(err)), 500
+
+    has_filter = "table filter" in snapshot
+    has_nat = "table nat" in snapshot
+    return jsonify(
+        passed=has_filter and has_nat,
+        detail=f"filter={has_filter}, nat={has_nat}",
+        raw_log=(
+            "[指标三 查看规则]\n"
+            "执行: cat /proc/netfilter_rules\n"
+            f"filter_table={'present' if has_filter else 'missing'}\n"
+            f"nat_table={'present' if has_nat else 'missing'}\n"
+            "原始规则:\n"
+            f"{format_netfilter_snapshot(snapshot)}"
+        ),
+    )
+
+
+@app.get("/api/indicator3/drop-ping")
+def api_indicator3_drop_ping():
+    try:
+        write_netfilter_command("iptables -F OUTPUT")
+        before = raw_icmp_echo()
+        write_netfilter_command("iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP")
+        dropped = raw_icmp_echo()
+        reset_netfilter_output_rules()
+        restored = raw_icmp_echo()
+    except OSError as err:
+        return jsonify(passed=False, detail=str(err)), 500
+
+    passed = before["passed"] and not dropped["passed"] and restored["passed"]
+    return jsonify(
+        passed=passed,
+        detail=(
+            f"before={'通' if before['passed'] else '不通'}, "
+            f"after_drop={'已阻断' if not dropped['passed'] else '仍然通'}, "
+            f"after_restore={'通' if restored['passed'] else '不通'}"
+        ),
+        raw_log=(
+            "[指标三 DROP ping 生效]\n"
+            "执行: iptables -F OUTPUT\n"
+            f"加规则前 raw ICMP: {'PASS/通' if before['passed'] else 'FAIL/不通'} "
+            f"({before['detail']})\n\n"
+            "执行: iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP\n"
+            f"DROP 后 raw ICMP: {'BLOCKED/不通' if not dropped['passed'] else 'UNEXPECTED PASS/仍然通'} "
+            f"({dropped['detail']})\n\n"
+            "执行: 恢复默认 OUTPUT 规则\n"
+            f"恢复后 raw ICMP: {'PASS/通' if restored['passed'] else 'FAIL/不通'} "
+            f"({restored['detail']})\n\n"
+            f"结论: {'DROP 规则成功阻断 ICMP Echo Request' if passed else 'DROP 规则未按预期生效'}"
+        ),
+    )
+
+
+@app.get("/api/indicator3/reset")
+def api_indicator3_reset():
+    try:
+        reset_netfilter_output_rules()
+        snapshot = read_netfilter_rules()
+    except OSError as err:
+        return jsonify(passed=False, detail=str(err)), 500
+
+    restored = "icmp-echo-ident 0x0828" in snapshot
+    return jsonify(
+        passed=restored,
+        detail=f"default_drop_rule={'present' if restored else 'missing'}",
+        raw_log=(
+            "[指标三 恢复默认规则]\n"
+            "执行: iptables -F OUTPUT\n"
+            "执行: iptables -A OUTPUT -p icmp --icmp-type echo-request "
+            "--icmp-id 0x0828 -j DROP\n"
+            f"default_drop_rule={'present' if restored else 'missing'}\n"
+            "原始规则:\n"
+            f"{format_netfilter_snapshot(snapshot)}"
+        ),
+    )
 
 
 @app.get("/health")

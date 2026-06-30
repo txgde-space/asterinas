@@ -195,7 +195,7 @@ test_receive_local_port_unreachable
 test_send_loopback_echo_request
 test_send_hdrincl_loopback_echo_request
 test_nonblocking_empty_receive
-test_ping_loopback summary: ping command passed
+test_ping_loopback summary: raw socket ping command passed
 ```
 
 ### 运行指标二网络兼容测试
@@ -318,6 +318,44 @@ test_run_userspace_iptables_nat_control_plane
 test_run_userspace_iptables_nat_postrouting_data_path
 All test in /test/network passed.
 All regression tests passed.
+```
+
+也可以在 NixOS guest 中手动演示 netfilter 规则对真实服务流量的影响。先后台启动 Flask 服务：
+
+```bash
+/benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080 &
+```
+
+宿主机通过 QEMU `hostfwd` 访问服务：
+
+```bash
+curl -v http://127.0.0.1:18080
+```
+
+在 guest 中安装 OUTPUT 过滤规则，阻断 Flask 从 8080 端口发出的 TCP 响应：
+
+```bash
+echo "iptables -F OUTPUT" > /proc/netfilter_rules
+echo "iptables -A OUTPUT -p tcp --sport 8080 -j DROP" > /proc/netfilter_rules
+cat /proc/netfilter_rules
+```
+
+此时宿主机再次访问同一地址，连接会超时或无法拿到 HTTP 响应，用于展示规则已经作用到服务数据路径：
+
+```bash
+curl -v --max-time 3 http://127.0.0.1:18080
+```
+
+恢复 Web 访问时清空 OUTPUT 规则：
+
+```bash
+echo "iptables -F OUTPUT" > /proc/netfilter_rules
+```
+
+如果需要恢复项目默认演示规则，可以再加回默认 ICMP 规则：
+
+```bash
+echo "iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0828 -j DROP" > /proc/netfilter_rules
 ```
 
 ## 创新贡献
