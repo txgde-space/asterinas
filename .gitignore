@@ -41,3 +41,4 @@ cachix.list
 distro/etc_nixos/_config_for_test.nix
 
 doc/
+tmp/
