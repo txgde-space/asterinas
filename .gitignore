@@ -42,3 +42,10 @@ distro/etc_nixos/_config_for_test.nix
 
 doc/
 tmp/
+
+# Local demo videos are too large for git hosting.
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
