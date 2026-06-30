@@ -147,6 +147,11 @@
 
 ### 进入官方编译环境
 
+
+
+### 测试流程
+进入官方编译环境
+
 ```bash
 sudo podman run --rm -it --privileged \
   --network=host \
@@ -160,11 +165,6 @@ sudo podman run --rm -it --privileged \
 ```bash
 cd /root/asterinas
 ```
-
-### 线性演示测试流程
-
-本节按照录屏和现场演示顺序组织命令。除特别说明外，命令均在项目根目录执行。
-
 #### 1. 构建环境与完整回归测试
 
 进入官方 Podman 编译环境后，先构建内核：
