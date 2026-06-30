@@ -161,33 +161,41 @@ sudo podman run --rm -it --privileged \
 cd /root/asterinas
 ```
 
-### 构建内核
+### 线性演示测试流程
+
+本节按照录屏和现场演示顺序组织命令。除特别说明外，命令均在项目根目录执行。
+
+#### 1. 构建环境与完整回归测试
+
+进入官方 Podman 编译环境后，先构建内核：
 
 ```bash
 make kernel
 ```
 
-### 运行完整 regression
+随后运行完整 regression，并把日志保存下来，后续三个指标都从这份日志中截取关键结果：
 
 ```bash
-AUTO_TEST=regression make run_kernel
+AUTO_TEST=regression make run_kernel 2>&1 | tee target/regression-network.log
 ```
 
-期望结果：
+最终看到：
 
 ```text
+All test in /test/network passed.
 All regression tests passed.
 ```
 
-### 运行指标一 raw socket / ping 相关测试
+#### 2. 指标一：Raw Socket 与 ping
 
-raw socket 测试已经接入 network regression，可通过完整 regression 运行：
+先从完整 regression 日志中观察 raw socket 与 ping 相关测试项：
 
 ```bash
-AUTO_TEST=regression make run_kernel
+grep -E "icmp_raw_socket|test_create_icmp_raw_socket|test_receive_local_port_unreachable|test_send_loopback_echo_request|test_send_hdrincl_loopback_echo_request|test_nonblocking_empty_receive|test_ping_loopback" \
+  target/regression-network.log
 ```
 
-重点关注日志中的：
+重点结果包括：
 
 ```text
 test_create_icmp_raw_socket
@@ -198,41 +206,43 @@ test_nonblocking_empty_receive
 test_ping_loopback summary: raw socket ping command passed
 ```
 
-### 运行指标二网络兼容测试
-
-快速编译检查：
+如果需要在 NixOS guest 中手动展示 ping 命令，可使用显式 loopback 源地址触发 raw ICMP 路径：
 
 ```bash
-scripts/test-network-compat.sh compile
+ping -c 1 -W 1 -I 127.0.0.1 127.0.0.1
 ```
 
-在官方 podman 环境中编译检查：
+看到 `1 packets transmitted, 1 received, 0% packet loss`。
+
+#### 3. 指标二：Linux Socket 兼容
+
+先从完整 regression 日志中观察指标二单点回归和聚合回归：
 
 ```bash
-scripts/test-network-compat.sh podman-compile
+grep -E "inaddr_any|getsockname_any|listen_autobind|localhost_loopback|tcp_accept_model|socket_readiness|tcp_reuseaddr|linux_socket_compat" \
+  target/regression-network.log
 ```
 
-构建内核并检查指标二相关测试：
+重点测试项包括：
 
-```bash
-scripts/test-network-compat.sh kernel
+```text
+inaddr_any
+getsockname_any
+listen_autobind
+localhost_loopback
+tcp_accept_model
+socket_readiness
+tcp_reuseaddr
+linux_socket_compat
 ```
 
-运行 Ubuntu / 原始 Asterinas / 当前 Asterinas 三方共同语义对比：
+然后在宿主机项目根目录运行 Ubuntu / 原始 Asterinas / 当前 Asterinas 三方共同语义对比：
 
 ```bash
 scripts/compare-linux-socket-compat.sh all
 ```
 
-也可以分别运行：
-
-```bash
-scripts/compare-linux-socket-compat.sh ubuntu
-scripts/compare-linux-socket-compat.sh original
-scripts/compare-linux-socket-compat.sh current
-```
-
-期望对比结果：
+对比结果：
 
 | 目标 | 结果 | 通过 | 失败 |
 |---|---:|---:|---:|
@@ -240,22 +250,7 @@ scripts/compare-linux-socket-compat.sh current
 | 原始 Asterinas | FAIL | 112 | 19 |
 | 当前 Asterinas | PASS | 131 | 0 |
 
-### 运行 Flask 服务测试
-
-自动化运行 Flask demo：
-
-```bash
-scripts/test-network-compat.sh flask-demo
-```
-
-期望日志：
-
-```text
-flask_socket_demo summary: 8 tests passed, 0 tests failed
-flask_socket_demo: service startup and request handling passed
-```
-
-手动演示方式：
+最后构建包含 Python、Flask 和 demo 源码的 NixOS 镜像：
 
 ```bash
 make nixos
@@ -267,7 +262,7 @@ make nixos
 target/nixos/asterinas.img
 ```
 
-宿主机运行 QEMU：
+宿主机运行 QEMU，并把 guest 的 8080 端口映射到宿主机 18080：
 
 ```bash
 sudo qemu-system-x86_64 \
@@ -284,13 +279,20 @@ sudo qemu-system-x86_64 \
   -device virtconsole,chardev=mux \
   -serial chardev:mux \
   -monitor chardev:mux \
+  -snapshot \
   -nographic
 ```
 
-guest 中启动 Flask：
+在 Asterinas guest 中后台启动 Flask 服务：
 
 ```bash
-/benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080
+/benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080 &
+```
+
+宿主机命令行访问：
+
+```bash
+curl -v http://127.0.0.1:18080
 ```
 
 宿主机浏览器访问：
@@ -299,15 +301,18 @@ guest 中启动 Flask：
 http://127.0.0.1:18080
 ```
 
-### 运行指标三 netfilter / iptables 测试
+网页中依次点击指标二相关按钮，可以观察 `0.0.0.0` 监听、Echo 请求、64 KiB 响应、请求信息等服务路径均返回 `PASS`。
 
-netfilter 测试已经接入 network regression：
+#### 4. 指标三：netfilter / iptables
+
+先从完整 regression 日志中观察 netfilter / iptables 相关测试项：
 
 ```bash
-AUTO_TEST=regression make run_kernel
+grep -E "netfilter|iptables|nat|test_match_netfilter|test_run_userspace_iptables" \
+  target/regression-network.log
 ```
 
-重点关注日志中的：
+重点测试项包括：
 
 ```text
 test_match_netfilter_accept_drop_targets
@@ -316,47 +321,48 @@ test_run_userspace_iptables_shim
 test_run_userspace_iptables_tcp_udp_port_matches
 test_run_userspace_iptables_nat_control_plane
 test_run_userspace_iptables_nat_postrouting_data_path
-All test in /test/network passed.
-All regression tests passed.
 ```
 
-也可以在 NixOS guest 中手动演示 netfilter 规则对真实服务流量的影响。先后台启动 Flask 服务：
+在已经启动 Flask 服务的 Asterinas guest 中，先清空 OUTPUT 规则并查看规则状态：
 
 ```bash
-/benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080 &
+echo "iptables -F OUTPUT" > /proc/netfilter_rules
+cat /proc/netfilter_rules
 ```
 
-宿主机通过 QEMU `hostfwd` 访问服务：
+宿主机确认 Web 服务可以访问：
 
 ```bash
 curl -v http://127.0.0.1:18080
 ```
 
-在 guest 中安装 OUTPUT 过滤规则，阻断 Flask 从 8080 端口发出的 TCP 响应：
+然后在 guest 中添加规则，阻断 Flask 从 8080 端口发出的 TCP 响应，并查看规则日志：
 
 ```bash
-echo "iptables -F OUTPUT" > /proc/netfilter_rules
 echo "iptables -A OUTPUT -p tcp --sport 8080 -j DROP" > /proc/netfilter_rules
 cat /proc/netfilter_rules
 ```
 
-此时宿主机再次访问同一地址，连接会超时或无法拿到 HTTP 响应，用于展示规则已经作用到服务数据路径：
+宿主机再次访问同一地址，此时连接会超时或无法拿到 HTTP 响应：
 
 ```bash
 curl -v --max-time 3 http://127.0.0.1:18080
 ```
 
-恢复 Web 访问时清空 OUTPUT 规则：
+恢复 Web 访问时，在 guest 中清空 OUTPUT 规则并再次查看规则状态：
 
 ```bash
 echo "iptables -F OUTPUT" > /proc/netfilter_rules
+cat /proc/netfilter_rules
 ```
 
-如果需要恢复项目默认演示规则，可以再加回默认 ICMP 规则：
+宿主机再次确认服务恢复：
 
 ```bash
-echo "iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0828 -j DROP" > /proc/netfilter_rules
+curl -v http://127.0.0.1:18080
 ```
+
+
 
 ## 创新贡献
 
