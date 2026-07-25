@@ -10,13 +10,17 @@ use super::{
     rule::Action,
 };
 
-const STAGE10_DROPPED_ICMP_ECHO_IDENT: u16 = 0x828;
-const MAX_OUTPUT_RULES: usize = 12;
+const MAX_FILTER_RULES: usize = 64;
 const MAX_NAT_RULES: usize = 8;
 const IPV4_MIN_HEADER_LEN: usize = 20;
 
-static OUTPUT_RULES: SpinLock<MutableOutputRules, BottomHalfDisabled> =
-    SpinLock::new(MutableOutputRules::new());
+static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
+    SpinLock::new(MutableFilterRules::new()),
+    SpinLock::new(MutableFilterRules::new()),
+    SpinLock::new(MutableFilterRules::new()),
+    SpinLock::new(MutableFilterRules::new()),
+    SpinLock::new(MutableFilterRules::new()),
+];
 static NAT_RULES: SpinLock<MutableNatRules, BottomHalfDisabled> =
     SpinLock::new(MutableNatRules::new());
 
@@ -43,8 +47,8 @@ pub(super) struct FilterTable {
 }
 
 #[derive(Debug)]
-struct MutableOutputRules {
-    rules: [Option<OutputRule>; MAX_OUTPUT_RULES],
+struct MutableFilterRules {
+    rules: [Option<OutputRule>; MAX_FILTER_RULES],
     len: usize,
 }
 
@@ -398,29 +402,11 @@ impl MutableNatRules {
     }
 }
 
-impl MutableOutputRules {
+impl MutableFilterRules {
     const fn new() -> Self {
         Self {
-            rules: [
-                Some(OutputRule::icmp_echo(
-                    Some(STAGE10_DROPPED_ICMP_ECHO_IDENT),
-                    None,
-                    None,
-                    Action::Drop,
-                )),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-            len: 1,
+            rules: [None; MAX_FILTER_RULES],
+            len: 0,
         }
     }
 
@@ -459,7 +445,7 @@ impl MutableOutputRules {
     }
 
     fn append_rule(&mut self, rule: OutputRule) -> bool {
-        if self.len == MAX_OUTPUT_RULES {
+        if self.len == MAX_FILTER_RULES {
             return false;
         }
 
@@ -544,7 +530,7 @@ impl MutableOutputRules {
     }
 }
 
-/// Describes the protocol matched by a mutable OUTPUT rule.
+/// Describes the protocol matched by a mutable IPv4 filter rule.
 ///
 /// NETFILTER_STAGE20: The table now covers ICMP Echo plus TCP/UDP port
 /// matchers, which is enough for common firewall demonstrations such as
@@ -556,7 +542,7 @@ pub enum OutputRuleProtocol {
     Udp,
 }
 
-/// Describes the terminal target selected by a mutable OUTPUT rule.
+/// Describes the terminal target selected by a mutable IPv4 filter rule.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputRuleTarget {
     Accept,
@@ -617,18 +603,16 @@ impl FilterTable {
         context: Ipv4PacketContext<'_>,
         icmp_repr: &Icmpv4Repr<'_>,
     ) -> Verdict {
-        if context.hook_point() == HookPoint::LocalOut {
-            let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
-                return Verdict::Accept;
-            };
+        let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
+            return Verdict::Accept;
+        };
 
-            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
-            if let Some(verdict) = OUTPUT_RULES
-                .lock()
-                .evaluate_matching_icmp_echo(context, *ident, packet_len)
-            {
-                return verdict;
-            }
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
+            .lock()
+            .evaluate_matching_icmp_echo(context, *ident, packet_len)
+        {
+            return verdict;
         }
 
         let Some(chain) = self.find_chain(context.hook_point()) else {
@@ -673,16 +657,14 @@ impl FilterTable {
         src_port: u16,
         dst_port: u16,
     ) -> Verdict {
-        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match OUTPUT
-        // chain semantics as ICMP rules, but match transport ports.
-        if context.hook_point() == HookPoint::LocalOut {
-            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
-            if let Some(verdict) = OUTPUT_RULES
-                .lock()
-                .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
-            {
-                return verdict;
-            }
+        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match chain
+        // semantics at INPUT, OUTPUT, and FORWARD.
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
+            .lock()
+            .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
+        {
+            return verdict;
         }
 
         let Some(chain) = self.find_chain(context.hook_point()) else {
@@ -704,39 +686,45 @@ pub(super) fn filter_table() -> &'static FilterTable {
 /// plus optional source/destination ports.
 pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::fmt::Result {
     writeln!(writer, "table filter")?;
-    writeln!(writer, "chain PREROUTING policy ACCEPT")?;
-    writeln!(writer, "chain INPUT policy ACCEPT")?;
-    writeln!(writer, "chain FORWARD policy ACCEPT")?;
-    writeln!(writer, "chain OUTPUT policy ACCEPT")?;
 
-    let output_rules = OUTPUT_RULES.lock();
-    for (index, rule) in output_rules.rules[..output_rules.len()]
-        .iter()
-        .flatten()
-        .enumerate()
-    {
+    for hook_point in [
+        HookPoint::PreRouting,
+        HookPoint::LocalIn,
+        HookPoint::Forward,
+        HookPoint::LocalOut,
+        HookPoint::PostRouting,
+    ] {
+        let rules = FILTER_RULES[hook_point.index()].lock();
         writeln!(
             writer,
-            "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
-            index,
-            rule.packets,
-            rule.bytes,
-            FormatIpv4Matcher::new(" src", rule.src_addr),
-            FormatIpv4Matcher::new(" dst", rule.dst_addr),
-            FormatProtocolMatcher(*rule),
-            FormatPortMatcher::new(" sport", rule.src_port),
-            FormatPortMatcher::new(" dport", rule.dst_port),
-            FormatAction(rule.action),
+            "chain {} policy ACCEPT",
+            FormatFilterChain(hook_point)
         )?;
+        for (index, rule) in rules.rules[..rules.len()].iter().flatten().enumerate() {
+            writeln!(
+                writer,
+                "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
+                index,
+                rule.packets,
+                rule.bytes,
+                FormatIpv4Matcher::new(" src", rule.src_addr),
+                FormatIpv4Matcher::new(" dst", rule.dst_addr),
+                FormatProtocolMatcher(*rule),
+                FormatPortMatcher::new(" sport", rule.src_port),
+                FormatPortMatcher::new(" dport", rule.dst_port),
+                FormatAction(rule.action),
+            )?;
+        }
+        writeln!(
+            writer,
+            "state stage1-{}-rule-count {}",
+            FormatFilterChain(hook_point),
+            rules.len()
+        )?;
+        if hook_point == HookPoint::LocalOut {
+            writeln!(writer, "state stage20-output-rule-count {}", rules.len())?;
+        }
     }
-
-    writeln!(writer, "chain POSTROUTING policy ACCEPT")?;
-    writeln!(
-        writer,
-        "state stage20-output-rule-count {}",
-        output_rules.len()
-    )?;
-    drop(output_rules);
 
     // NETFILTER_STAGE21: NAT rules are intentionally rendered in the same
     // procfs snapshot as the filter table so the small `iptables` shim can
@@ -779,7 +767,18 @@ pub fn append_output_icmp_echo_rule(
     dst_addr: Option<Ipv4Address>,
     target: OutputRuleTarget,
 ) -> bool {
-    OUTPUT_RULES
+    append_filter_icmp_echo_rule(HookPoint::LocalOut, ident, src_addr, dst_addr, target)
+}
+
+/// Appends an ICMP Echo filter rule to one built-in IPv4 chain.
+pub fn append_filter_icmp_echo_rule(
+    hook_point: HookPoint,
+    ident: Option<u16>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()]
         .lock()
         .append_icmp_echo(ident, src_addr, dst_addr, target)
 }
@@ -793,24 +792,60 @@ pub fn append_output_transport_rule(
     dst_port: Option<u16>,
     target: OutputRuleTarget,
 ) -> bool {
-    OUTPUT_RULES
+    append_filter_transport_rule(
+        HookPoint::LocalOut,
+        protocol,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        target,
+    )
+}
+
+/// Appends a TCP or UDP filter rule to one built-in IPv4 chain.
+pub fn append_filter_transport_rule(
+    hook_point: HookPoint,
+    protocol: OutputRuleProtocol,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()]
         .lock()
         .append_transport(protocol, src_addr, dst_addr, src_port, dst_port, target)
 }
 
 /// Deletes one OUTPUT-chain rule by index.
 pub fn delete_output_rule(index: usize) -> bool {
-    OUTPUT_RULES.lock().delete(index)
+    delete_filter_rule(HookPoint::LocalOut, index)
+}
+
+/// Deletes one rule from a built-in IPv4 filter chain.
+pub fn delete_filter_rule(hook_point: HookPoint, index: usize) -> bool {
+    FILTER_RULES[hook_point.index()].lock().delete(index)
 }
 
 /// Flushes all OUTPUT-chain rules.
 pub fn flush_output_rules() {
-    OUTPUT_RULES.lock().flush();
+    flush_filter_rules(HookPoint::LocalOut);
+}
+
+/// Flushes one built-in IPv4 filter chain.
+pub fn flush_filter_rules(hook_point: HookPoint) {
+    FILTER_RULES[hook_point.index()].lock().flush();
 }
 
 /// Clears packet and byte counters from all OUTPUT-chain rules.
 pub fn zero_output_rule_counters() {
-    OUTPUT_RULES.lock().zero_counters();
+    zero_filter_rule_counters(HookPoint::LocalOut);
+}
+
+/// Clears counters in one built-in IPv4 filter chain.
+pub fn zero_filter_rule_counters(hook_point: HookPoint) {
+    FILTER_RULES[hook_point.index()].lock().zero_counters();
 }
 
 /// Appends a NAT control-plane rule.
@@ -892,6 +927,20 @@ pub fn rewrite_ipv4_icmp_postrouting(
 struct FormatIpv4Matcher {
     label: &'static str,
     addr: Option<Ipv4Address>,
+}
+
+struct FormatFilterChain(HookPoint);
+
+impl core::fmt::Display for FormatFilterChain {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self.0 {
+            HookPoint::PreRouting => formatter.write_str("PREROUTING"),
+            HookPoint::LocalIn => formatter.write_str("INPUT"),
+            HookPoint::Forward => formatter.write_str("FORWARD"),
+            HookPoint::LocalOut => formatter.write_str("OUTPUT"),
+            HookPoint::PostRouting => formatter.write_str("POSTROUTING"),
+        }
+    }
 }
 
 impl FormatIpv4Matcher {
