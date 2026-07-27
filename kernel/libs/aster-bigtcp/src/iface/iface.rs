@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use smoltcp::wire::{Ipv4Address, Ipv4Cidr};
 
 use super::{BoundPort, InterfaceFlags, InterfaceType, port::BindPortConfig};
-use crate::{errors::BindError, ext::Ext};
+use crate::{errors::BindError, ext::Ext, forwarding::ForwardedIpv4Packet};
 
 /// A network interface.
 ///
@@ -13,12 +13,17 @@ use crate::{errors::BindError, ext::Ext};
 /// computer to a network. Network interfaces can be physical components like Ethernet ports or
 /// wireless adapters. They can also be virtual interfaces created by software, such as virtual
 /// private network (VPN) connections.
-pub trait Iface<E>: internal::IfaceInternal<E> + Send + Sync {
+pub trait Iface<E: Ext>: internal::IfaceInternal<E> + Send + Sync {
     /// Transmits or receives packets queued in the iface, and updates socket status accordingly.
     fn poll(&self);
 
     /// Returns the maximum transmission unit.
     fn mtu(&self) -> usize;
+
+    /// Queues a routed IPv4 datagram for egress from this interface.
+    fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
+        self.common().enqueue_forwarded_ipv4(packet)
+    }
 }
 
 impl<E: Ext> dyn Iface<E> {

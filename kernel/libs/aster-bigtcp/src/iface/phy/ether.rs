@@ -16,6 +16,7 @@ use smoltcp::{
 use crate::{
     device::{NotifyDevice, WithDevice},
     ext::Ext,
+    forwarding::ForwardedIpv4Packet,
     iface::{
         Iface, InterfaceFlags, ScheduleNextPoll,
         common::{IfaceCommon, InterfaceType},
@@ -84,6 +85,7 @@ where
                 &mut *device,
                 |data, iface_cx, tx_token| self.process(data, iface_cx, tx_token),
                 |pkt, iface_cx, tx_token| self.dispatch(pkt, iface_cx, tx_token),
+                |pkt, iface_cx, tx_token| self.dispatch_forwarded(pkt, iface_cx, tx_token),
             );
             device.notify_poll_end();
             self.common.sched_poll().schedule_next_poll(next_poll);
@@ -205,13 +207,42 @@ impl<D, E: Ext> EtherIface<D, E> {
         }
     }
 
+    fn dispatch_forwarded<T: TxToken>(
+        &self,
+        pkt: &ForwardedIpv4Packet,
+        iface_cx: &mut Context,
+        tx_token: T,
+    ) {
+        let ether = match self.resolve_ether_or_generate_arp_for_addr(
+            IpAddress::Ipv4(pkt.ip_repr.dst_addr),
+            iface_cx,
+        ) {
+            Ok(ether) => ether,
+            Err(Some(arp)) => {
+                Self::emit_arp(&arp, tx_token);
+                return;
+            }
+            Err(None) => return,
+        };
+
+        Self::emit_forwarded_ip(&ether, pkt, &iface_cx.caps, tx_token);
+    }
+
     fn resolve_ether_or_generate_arp(
         &self,
         pkt: &Packet,
         iface_cx: &mut Context,
     ) -> Result<EthernetRepr, Option<ArpRepr>> {
+        self.resolve_ether_or_generate_arp_for_addr(pkt.ip_repr().dst_addr(), iface_cx)
+    }
+
+    fn resolve_ether_or_generate_arp_for_addr(
+        &self,
+        dst_addr: IpAddress,
+        iface_cx: &mut Context,
+    ) -> Result<EthernetRepr, Option<ArpRepr>> {
         // Resolve the next-hop IP address.
-        let next_hop_ip = match iface_cx.route(&pkt.ip_repr().dst_addr(), iface_cx.now()) {
+        let next_hop_ip = match iface_cx.route(&dst_addr, iface_cx.now()) {
             Some(IpAddress::Ipv4(next_hop_ip)) => next_hop_ip,
             None => return Err(None),
         };
@@ -261,6 +292,26 @@ impl<D, E: Ext> EtherIface<D, E> {
                     &mut frame.payload_mut()[ip_repr.header_len()..],
                     caps,
                 );
+            },
+        );
+    }
+
+    /// Consumes the token and emits a routed packet without reparsing or
+    /// mutating its transport payload.
+    fn emit_forwarded_ip<T: TxToken>(
+        ether_repr: &EthernetRepr,
+        packet: &ForwardedIpv4Packet,
+        caps: &DeviceCapabilities,
+        tx_token: T,
+    ) {
+        tx_token.consume(
+            ether_repr.buffer_len() + packet.ip_repr.buffer_len(),
+            |buffer| {
+                let mut frame = EthernetFrame::new_unchecked(buffer);
+                ether_repr.emit(&mut frame);
+                let mut ip_packet = Ipv4Packet::new_unchecked(frame.payload_mut());
+                packet.ip_repr.emit(&mut ip_packet, &caps.checksum);
+                ip_packet.payload_mut().copy_from_slice(&packet.payload);
             },
         );
     }

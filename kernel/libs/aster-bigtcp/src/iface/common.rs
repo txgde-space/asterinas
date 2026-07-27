@@ -2,6 +2,7 @@
 
 use alloc::{
     collections::btree_map::{BTreeMap, Entry},
+    collections::vec_deque::VecDeque,
     string::String,
     sync::Arc,
     vec::Vec,
@@ -28,6 +29,7 @@ use super::{
 use crate::{
     errors::BindError,
     ext::Ext,
+    forwarding::ForwardedIpv4Packet,
     socket::{RawIpSocketBg, TcpListenerBg, UdpSocketBg},
     socket_table::SocketTable,
 };
@@ -39,6 +41,7 @@ pub struct IfaceCommon<E: Ext> {
     flags: InterfaceFlags,
 
     interface: SpinLock<PollableIface<E>, BottomHalfDisabled>,
+    forwarded_packets: SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
     used_ports: SpinLock<BTreeMap<u16, PortState>, BottomHalfDisabled>,
     sockets: SpinLock<SocketTable<E>, BottomHalfDisabled>,
     sched_poll: E::ScheduleNextPoll,
@@ -60,6 +63,7 @@ impl<E: Ext> IfaceCommon<E> {
             type_,
             flags,
             interface: SpinLock::new(PollableIface::new(interface)),
+            forwarded_packets: SpinLock::new(VecDeque::new()),
             used_ports: SpinLock::new(BTreeMap::new()),
             sockets: SpinLock::new(SocketTable::new()),
             sched_poll,
@@ -102,6 +106,21 @@ pub static INTERFACE_INDEX_ALLOCATOR: AtomicU32 = AtomicU32::new(1);
 
 // Lock order: `interface` -> `sockets`
 impl<E: Ext> IfaceCommon<E> {
+    /// Queues a routed packet for this interface.
+    ///
+    /// The queue is intentionally bounded: ingress runs in an interrupt-adjacent
+    /// path, so forwarding must not be able to consume unbounded kernel memory.
+    pub(crate) fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
+        const FORWARD_QUEUE_LIMIT: usize = 256;
+
+        let mut packets = self.forwarded_packets.lock();
+        if packets.len() >= FORWARD_QUEUE_LIMIT {
+            return false;
+        }
+        packets.push_back(packet);
+        true
+    }
+
     /// Acquires the lock to the interface.
     pub(crate) fn interface(&self) -> SpinLockGuard<'_, PollableIface<E>, BottomHalfDisabled> {
         self.interface.lock()
@@ -233,11 +252,12 @@ impl<E: Ext> IfaceCommon<E> {
 }
 
 impl<E: Ext> IfaceCommon<E> {
-    pub(super) fn poll<D, P, Q>(
+    pub(super) fn poll<D, P, Q, R>(
         &self,
         device: &mut D,
         mut process_phy: P,
         mut dispatch_phy: Q,
+        mut dispatch_forwarded_phy: R,
     ) -> Option<u64>
     where
         D: Device + ?Sized,
@@ -246,8 +266,9 @@ impl<E: Ext> IfaceCommon<E> {
                 &'cx mut Context,
                 D::TxToken<'tx>,
                 Option<(Ipv4Packet<&'pkt [u8]>, D::TxToken<'tx>)>,
-            >,
+        >,
         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
+        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
     {
         let mut interface = self.interface();
         interface.context_mut().now = get_network_timestamp();
@@ -255,8 +276,18 @@ impl<E: Ext> IfaceCommon<E> {
         let mut sockets = self.sockets.lock();
         let mut socket_actions = Vec::new();
 
-        let mut context = PollContext::new(interface.as_mut(), &sockets, &mut socket_actions);
+        let mut context = PollContext::new(
+            interface.as_mut(),
+            &sockets,
+            &mut socket_actions,
+            self.index,
+        );
         context.poll_ingress(device, &mut process_phy, &mut dispatch_phy);
+        context.poll_forwarded_egress(
+            device,
+            &self.forwarded_packets,
+            &mut dispatch_forwarded_phy,
+        );
         context.poll_egress(device, &mut dispatch_phy);
 
         // Insert new connections and remove dead connections.
