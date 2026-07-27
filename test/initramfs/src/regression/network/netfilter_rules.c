@@ -356,11 +356,11 @@ FN_TEST(read_netfilter_rules_snapshot)
 	// static filter chain/rule model without requiring an iptables ABI yet.
 	TEST_RES(strstr(buffer, "table filter") != NULL, _ret == 1);
 	TEST_RES(strstr(buffer, "chain OUTPUT policy ACCEPT") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "target DROP") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "target DROP") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
 		 _ret == 1);
-	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret == 0);
+	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret != 0);
 
 	TEST_SUCC(close(fd));
 }
@@ -381,8 +381,14 @@ FN_TEST(mutate_netfilter_output_rule_list)
 	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
 
 	// NETFILTER_STAGE14: This covers a real ordered rule-list lifecycle:
-	// append a second rule, delete the first rule by index, flush the chain,
-	// and restore the default rule for later tests.
+	// create two rules, delete the first rule by index, flush the chain, and
+	// restore the default rule for later tests. The default rule is test-owned;
+	// the production table starts empty.
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_default_command,
+		       sizeof(append_default_command) - 1),
+		 _ret == sizeof(append_default_command) - 1);
 	TEST_RES(write(fd, append_second_command, sizeof(append_second_command) - 1),
 		 _ret == sizeof(append_second_command) - 1);
 
@@ -492,7 +498,9 @@ END_TEST()
 
 FN_TEST(match_netfilter_ipv4_addresses)
 {
-	char buffer[512];
+	// Stage 1 renders all built-in filter chains, so the legacy 512-byte
+	// snapshot buffer can truncate the LocalOut compatibility counter.
+	char buffer[2048];
 	const char flush_command[] = "flush OUTPUT";
 	const char append_dst_miss_command[] =
 		"append OUTPUT dst 127.0.0.2 icmp-echo-ident 0x0830 DROP";
@@ -862,6 +870,47 @@ FN_TEST(run_userspace_iptables_tcp_udp_port_matches)
 
 	TEST_RES(run_iptables_command(iptables_flush_command), _ret == 0);
 	TEST_RES(run_iptables_command(iptables_restore_default_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_input_forward_filter_chains)
+{
+	char buffer[2048];
+	char *const input_flush_command[] = { "./iptables", "-F", "INPUT", NULL };
+	char *const forward_flush_command[] = {
+		"./iptables", "-F", "FORWARD", NULL
+	};
+	char *const input_drop_command[] = {
+		"./iptables", "-A", "INPUT", "-p", "tcp", "--dport", "8080",
+		"-j", "DROP", NULL
+	};
+	char *const forward_drop_command[] = {
+		"./iptables", "-A", "FORWARD", "-p", "udp", "--dport", "5353",
+		"-j", "DROP", NULL
+	};
+
+	// NETFILTER_STAGE1: INPUT and FORWARD rules must be independently managed
+	// even before Stage 2 enables actual multi-interface forwarding.
+	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(input_drop_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_drop_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "chain INPUT policy ACCEPT") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "chain FORWARD policy ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "tcp dport 8080 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "udp dport 5353 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage1-INPUT-rule-count 1") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage1-FORWARD-rule-count 1") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
 }
 END_TEST()
 

@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
@@ -288,6 +289,15 @@ FN_TEST(netfilter_static_drop_icmp_echo)
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
 	struct pollfd poll_fd;
+	const char flush_command[] = "iptables -F OUTPUT";
+	const char drop_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request "
+		"--icmp-id 0x0828 -j DROP";
+	int rules_fd = TEST_SUCC(open("/proc/netfilter_rules", O_RDWR));
+	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(rules_fd, drop_command, sizeof(drop_command) - 1),
+		 _ret == sizeof(drop_command) - 1);
 
 	struct icmphdr *request_header = (struct icmphdr *)request;
 	request_header->type = ICMP_ECHO;
@@ -314,6 +324,9 @@ FN_TEST(netfilter_static_drop_icmp_echo)
 	poll_fd.revents = 0;
 	TEST_RES(poll(&poll_fd, 1, 300), _ret == 0);
 
+	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_SUCC(close(rules_fd));
 	TEST_SUCC(close(raw_fd));
 }
 END_TEST()
