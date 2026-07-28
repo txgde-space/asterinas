@@ -107,10 +107,10 @@ impl<E: Ext> PollContext<'_, E> {
         dispatch_forwarded_phy: &mut Q,
     ) where
         D: Device + ?Sized,
-        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
+        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
     {
         while let Some(tx_token) = device.transmit(self.iface.context().now()) {
-            let Some(packet) = forwarded_packets.lock().pop_front() else {
+            let Some(mut packet) = forwarded_packets.lock().pop_front() else {
                 break;
             };
 
@@ -118,7 +118,22 @@ impl<E: Ext> PollContext<'_, E> {
                 continue;
             }
 
-            dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token);
+            if !packet.postrouting_nat_applied() {
+                netfilter::rewrite_forwarded_ipv4_postrouting(
+                    &mut packet.ip_repr,
+                    self.iface.context().ipv4_addr(),
+                );
+                packet.mark_postrouting_nat_applied();
+            }
+
+            if !dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token) {
+                // Ethernet ARP resolution consumed the transmit token. Keep
+                // the packet at the head of the bounded queue so that the
+                // ARP reply's receive poll can transmit this original packet
+                // instead of relying on an upper-layer retransmission.
+                forwarded_packets.lock().push_front(packet);
+                break;
+            }
         }
     }
 
@@ -222,11 +237,16 @@ impl<E: Ext> PollContext<'_, E> {
         pkt: Ipv4Packet<&'pkt [u8]>,
     ) -> Option<Packet<'pkt>> {
         // Parse the IP header. Ignore the packet if the header is ill-formed.
-        let repr = Ipv4Repr::parse(&pkt, &self.iface.context().checksum_caps()).ok()?;
+        let mut repr = Ipv4Repr::parse(&pkt, &self.iface.context().checksum_caps()).ok()?;
 
         if !self.accept_ipv4_at(HookPoint::PreRouting, &repr) {
             return None;
         }
+
+        // NAT PREROUTING runs before the local-delivery versus forwarding
+        // decision. This permits DNAT to select a routed backend and permits
+        // a tracked reply addressed to the router to re-enter forwarding.
+        netfilter::rewrite_forwarded_ipv4_prerouting(&mut repr);
 
         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
             if !self.accept_ipv4_at(HookPoint::Forward, &repr)

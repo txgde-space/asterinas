@@ -268,7 +268,7 @@ impl<E: Ext> IfaceCommon<E> {
                 Option<(Ipv4Packet<&'pkt [u8]>, D::TxToken<'tx>)>,
         >,
         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
-        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
+        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
     {
         let mut interface = self.interface();
         interface.context_mut().now = get_network_timestamp();

@@ -76,11 +76,12 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
                     });
                 },
                 |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
-                    tx_token.consume(pkt.ip_repr.buffer_len(), |buffer| {
+                    tx_token.consume(pkt.buffer_len(), |buffer| {
                         let mut ip_packet = Ipv4Packet::new_unchecked(buffer);
                         pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
                         ip_packet.payload_mut().copy_from_slice(&pkt.payload);
                     });
+                    true
                 },
             );
             self.common.sched_poll().schedule_next_poll(next_poll);
