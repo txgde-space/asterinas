@@ -10,6 +10,7 @@
 #  - BOOT_METHOD: "qemu-direct", "grub-rescue-iso" or "grub-qcow2";
 #  - BOOT_PROTOCOL: "multiboot", "multiboot2", "linux-legacy32", "linux-efi-pe64" or "linux-efi-handover64";
 #  - NETDEV: "user" or "tap";
+#  - MULTI_NET: "on" to attach a second user-mode network (development only);
 #  - VHOST: "off" or "on";
 #  - VSOCK: "off" or "on";
 #  - CONSOLE: "hvc0" to enable virtio console;
@@ -21,6 +22,7 @@ OVMF=${OVMF:-"on"}
 VHOST=${VHOST:-"off"}
 VSOCK=${VSOCK:-"off"}
 NETDEV=${NETDEV:-"user"}
+MULTI_NET=${MULTI_NET:-"off"}
 CONSOLE=${CONSOLE:-"hvc0"}
 
 SSH_RAND_PORT=${SSH_PORT:-$(shuf -i 1024-65535 -n 1)}
@@ -47,6 +49,21 @@ elif [ "$NETDEV" = "tap" ]; then
 else 
     echo "Invalid netdev" 1>&2
     NETDEV_ARGS="-nic none"
+fi
+
+# Two user-mode backends are sufficient to exercise device enumeration and
+# interface naming. They are not a forwarding end-to-end topology; Stage 2's
+# router acceptance test will use isolated TAP-backed endpoints.
+if [ "$MULTI_NET" = "on" ]; then
+    if [ "$NETDEV" != "user" ]; then
+        echo "MULTI_NET=on currently requires NETDEV=user" 1>&2
+        exit 1
+    fi
+    if [ "$1" = "tdx" ] || [ "$1" = "microvm" ]; then
+        echo "MULTI_NET=on currently supports the normal QEMU scheme only" 1>&2
+        exit 1
+    fi
+    NETDEV_ARGS="$NETDEV_ARGS -netdev user,id=net02,net=10.0.3.0/24,dhcpstart=10.0.3.15"
 fi
 
 if [ "$CONSOLE" = "hvc0" ]; then
@@ -114,6 +131,10 @@ if [ "$1" = "iommu" ]; then
     # TODO: Add support for enabling IOMMU on AMD platforms
 fi
 
+if [ "$MULTI_NET" = "on" ]; then
+    MULTI_NET_DEVICE_ARGS="-device virtio-net-pci,netdev=net02,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA"
+fi
+
 if [ "$1" = "microvm" ]; then
     QEMU_ARGS="\
         $COMMON_QEMU_ARGS \
@@ -136,6 +157,7 @@ else
         -object rng-random,id=rng0,filename=/dev/urandom \
         -device virtio-rng-pci,bus=pcie.0,addr=0x8,disable-legacy=on,disable-modern=off,rng=rng0,event_idx=off,indirect_desc=off,queue_reset=off$IOMMU_DEV_EXTRA \
         -device virtio-net-pci,netdev=net01,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA \
+        $MULTI_NET_DEVICE_ARGS \
         -device virtio-serial-pci,disable-legacy=on,disable-modern=off$IOMMU_DEV_EXTRA \
         $CONSOLE_ARGS \
         $IOMMU_EXTRA_ARGS \
