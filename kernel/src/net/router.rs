@@ -20,6 +20,9 @@ static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE4_TCP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE4_UDP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE4_TCP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 
 aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
 aster_cmdline::define_flag_param!(
@@ -31,6 +34,15 @@ aster_cmdline::define_flag_param!(
     "netfilter.stage3_icmp_forward_drop",
     STAGE3_ICMP_FORWARD_DROP_TEST
 );
+aster_cmdline::define_flag_param!(
+    "netfilter.stage4_tcp_masquerade",
+    STAGE4_TCP_MASQUERADE_TEST
+);
+aster_cmdline::define_flag_param!(
+    "netfilter.stage4_udp_masquerade",
+    STAGE4_UDP_MASQUERADE_TEST
+);
+aster_cmdline::define_flag_param!("netfilter.stage4_tcp_dnat", STAGE4_TCP_DNAT_TEST);
 
 /// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
 pub fn init() {
@@ -85,6 +97,61 @@ pub fn init() {
         );
         if installed {
             println!("netfilter-stage3: ICMP FORWARD DROP acceptance rule installed");
+        }
+    }
+
+    // Stage 4 uses explicit boot flags because the TAP acceptance setup does
+    // not yet have an interactive guest-side rule-management ABI. These are
+    // intentionally ordinary TCP/UDP NAT rules, so the same table API will be
+    // used by the later iptables-compatible control plane.
+    if STAGE4_TCP_MASQUERADE_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PostRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Tcp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+            Some(9000),
+            aster_bigtcp::netfilter::NatRuleTarget::Masquerade,
+            None,
+            None,
+        );
+        if installed {
+            println!("netfilter-stage4: TCP MASQUERADE acceptance rule installed");
+        }
+    }
+
+    if STAGE4_UDP_MASQUERADE_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PostRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Udp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+            Some(9001),
+            aster_bigtcp::netfilter::NatRuleTarget::Masquerade,
+            None,
+            None,
+        );
+        if installed {
+            println!("netfilter-stage4: UDP MASQUERADE acceptance rule installed");
+        }
+    }
+
+    if STAGE4_TCP_DNAT_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PreRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Tcp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 2, 15)),
+            None,
+            Some(9002),
+            aster_bigtcp::netfilter::NatRuleTarget::Dnat,
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            Some(9002),
+        );
+        if installed {
+            println!("netfilter-stage4: TCP DNAT acceptance rule installed");
         }
     }
 }
