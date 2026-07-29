@@ -19,8 +19,10 @@ pub use table::{
     NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,
     append_filter_icmp_echo_rule, append_filter_transport_rule, append_output_icmp_echo_rule,
     append_output_transport_rule, delete_filter_rule, delete_output_rule, flush_filter_rules,
-    flush_nat_rules, flush_output_rules, rewrite_ipv4_icmp_postrouting,
+    flush_nat_rules, flush_output_rules, insert_filter_icmp_echo_rule,
+    insert_filter_transport_rule, rewrite_ipv4_icmp_postrouting,
     rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting,
     rewrite_forwarded_ipv4_postrouting, rewrite_forwarded_ipv4_prerouting,
-    write_filter_table_snapshot, zero_filter_rule_counters, zero_output_rule_counters,
+    set_filter_chain_policy, write_filter_table_snapshot, zero_filter_rule_counters,
+    zero_output_rule_counters,
 };
