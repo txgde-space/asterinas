@@ -93,7 +93,9 @@ enum NetfilterCommand {
     Append(AppendOutputRule),
     Insert(AppendOutputRule, usize),
     AppendNat(AppendNatRule),
+    InsertNat(AppendNatRule, usize),
     DeleteOutputRule(aster_bigtcp::netfilter::HookPoint, usize),
+    DeleteNatRule(aster_bigtcp::netfilter::NatRuleChain, usize),
     FlushOutput(aster_bigtcp::netfilter::HookPoint),
     FlushNat(Option<aster_bigtcp::netfilter::NatRuleChain>),
     SetFilterPolicy(
@@ -101,6 +103,7 @@ enum NetfilterCommand {
         aster_bigtcp::netfilter::OutputRuleTarget,
     ),
     ZeroOutputCounters(aster_bigtcp::netfilter::HookPoint),
+    ZeroNatCounters(Option<aster_bigtcp::netfilter::NatRuleChain>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +120,7 @@ struct AppendOutputRule {
     dst_addr: Option<aster_bigtcp::wire::Ipv4Address>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    conntrack_state: Option<aster_bigtcp::netfilter::ConntrackState>,
     target: aster_bigtcp::netfilter::OutputRuleTarget,
 }
 
@@ -137,6 +141,7 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
         NetfilterCommand::Append(rule) => apply_append_rule(rule),
         NetfilterCommand::Insert(rule, index) => apply_insert_rule(rule, index),
         NetfilterCommand::AppendNat(rule) => apply_append_nat_rule(rule),
+        NetfilterCommand::InsertNat(rule, index) => apply_insert_nat_rule(rule, index),
         NetfilterCommand::DeleteOutputRule(chain, index) => {
             if !aster_bigtcp::netfilter::delete_filter_rule(chain, index) {
                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
@@ -152,12 +157,23 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
             aster_bigtcp::netfilter::flush_nat_rules(chain);
             Ok(())
         }
+        NetfilterCommand::DeleteNatRule(chain, index) => {
+            if !aster_bigtcp::netfilter::delete_nat_rule(chain, index) {
+                return_errno_with_message!(Errno::EINVAL, "no such NAT rule");
+            }
+
+            Ok(())
+        }
         NetfilterCommand::SetFilterPolicy(chain, target) => {
             aster_bigtcp::netfilter::set_filter_chain_policy(chain, target);
             Ok(())
         }
         NetfilterCommand::ZeroOutputCounters(chain) => {
             aster_bigtcp::netfilter::zero_filter_rule_counters(chain);
+            Ok(())
+        }
+        NetfilterCommand::ZeroNatCounters(chain) => {
+            aster_bigtcp::netfilter::zero_nat_rule_counters(chain);
             Ok(())
         }
     }
@@ -183,6 +199,7 @@ fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
                 rule.dst_addr,
                 rule.src_port,
                 rule.dst_port,
+                rule.conntrack_state,
                 rule.target,
             )
         }
@@ -217,6 +234,7 @@ fn apply_insert_rule(rule: AppendOutputRule, index: usize) -> Result<()> {
                 rule.dst_addr,
                 rule.src_port,
                 rule.dst_port,
+                rule.conntrack_state,
                 rule.target,
             )
         }
@@ -242,6 +260,28 @@ fn apply_append_nat_rule(rule: AppendNatRule) -> Result<()> {
         rule.to_port,
     ) {
         return_errno_with_message!(Errno::ENOSPC, "netfilter NAT rule table is full");
+    }
+
+    Ok(())
+}
+
+fn apply_insert_nat_rule(rule: AppendNatRule, index: usize) -> Result<()> {
+    if !aster_bigtcp::netfilter::insert_nat_rule(
+        rule.chain,
+        index,
+        rule.protocol,
+        rule.src_addr,
+        rule.dst_addr,
+        rule.src_port,
+        rule.dst_port,
+        rule.target,
+        rule.to_addr,
+        rule.to_port,
+    ) {
+        return_errno_with_message!(
+            Errno::ENOSPC,
+            "netfilter NAT rule table is full or index is invalid"
+        );
     }
 
     Ok(())
@@ -278,7 +318,11 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
         },
         IptablesTable::Nat => match operation {
             "-A" => parse_iptables_nat_append_command(words).map(NetfilterCommand::AppendNat),
+            "-I" => parse_iptables_nat_insert_command(words)
+                .map(|(rule, index)| NetfilterCommand::InsertNat(rule, index)),
+            "-D" => parse_iptables_nat_delete_command(words),
             "-F" => parse_iptables_nat_flush_command(words).map(NetfilterCommand::FlushNat),
+            "-Z" => parse_iptables_nat_flush_command(words).map(NetfilterCommand::ZeroNatCounters),
             _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables NAT operation"),
         },
     }
@@ -350,6 +394,8 @@ fn parse_iptables_filter_rule(
     let mut dst_addr = None;
     let mut src_port = None;
     let mut dst_port = None;
+    let mut conntrack_module = false;
+    let mut conntrack_state = None;
     let mut target = None;
 
     while let Some(word) = words.next() {
@@ -364,7 +410,9 @@ fn parse_iptables_filter_rule(
                 let Some(module) = words.next() else {
                     return_errno_with_message!(Errno::EINVAL, "missing iptables module");
                 };
-                if module != "icmp" && module != "tcp" && module != "udp" {
+                if module == "conntrack" {
+                    conntrack_module = true;
+                } else if module != "icmp" && module != "tcp" && module != "udp" {
                     return_errno_with_message!(Errno::EINVAL, "unsupported iptables module");
                 }
             }
@@ -410,6 +458,12 @@ fn parse_iptables_filter_rule(
                 };
                 dst_port = Some(parse_u16(value)?);
             }
+            "--ctstate" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing conntrack state");
+                };
+                conntrack_state = Some(parse_conntrack_state(value)?);
+            }
             "-j" | "--jump" => {
                 let Some(value) = words.next() else {
                     return_errno_with_message!(Errno::EINVAL, "missing iptables target");
@@ -426,6 +480,9 @@ fn parse_iptables_filter_rule(
     let Some(protocol) = protocol else {
         return_errno_with_message!(Errno::EINVAL, "missing iptables protocol");
     };
+    if conntrack_state.is_some() && !conntrack_module {
+        return_errno_with_message!(Errno::EINVAL, "--ctstate requires -m conntrack");
+    }
 
     match protocol {
         aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
@@ -437,6 +494,12 @@ fn parse_iptables_filter_rule(
             }
             if src_port.is_some() || dst_port.is_some() {
                 return_errno_with_message!(Errno::EINVAL, "ICMP rules cannot match ports");
+            }
+            if conntrack_state.is_some() {
+                return_errno_with_message!(
+                    Errno::EINVAL,
+                    "conntrack state matching is currently limited to TCP and UDP"
+                );
             }
         }
         aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
@@ -455,6 +518,7 @@ fn parse_iptables_filter_rule(
         dst_addr,
         src_port,
         dst_port,
+        conntrack_state,
         target,
     })
 }
@@ -477,7 +541,34 @@ fn parse_iptables_nat_append_command(
     mut words: core::str::SplitWhitespace<'_>,
 ) -> Result<AppendNatRule> {
     let chain = parse_nat_chain(&mut words)?;
+    parse_iptables_nat_rule(chain, words)
+}
 
+fn parse_iptables_nat_insert_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<(AppendNatRule, usize)> {
+    let chain = parse_nat_chain(&mut words)?;
+    let index = match words.clone().next() {
+        Some(value) if !value.starts_with('-') => {
+            let _ = words.next();
+            let one_based = value
+                .parse::<usize>()
+                .map_err(|_| Error::with_message(Errno::EINVAL, "invalid NAT insert position"))?;
+            if one_based == 0 {
+                return_errno_with_message!(Errno::EINVAL, "NAT insert position is one-based");
+            }
+            one_based - 1
+        }
+        _ => 0,
+    };
+
+    parse_iptables_nat_rule(chain, words).map(|rule| (rule, index))
+}
+
+fn parse_iptables_nat_rule(
+    chain: aster_bigtcp::netfilter::NatRuleChain,
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<AppendNatRule> {
     let mut protocol = None;
     let mut src_addr = None;
     let mut dst_addr = None;
@@ -562,6 +653,27 @@ fn parse_iptables_nat_append_command(
         to_addr,
         to_port,
     })
+}
+
+fn parse_iptables_nat_delete_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<NetfilterCommand> {
+    let chain = parse_nat_chain(&mut words)?;
+    let Some(index) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing NAT rule number");
+    };
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing NAT delete tokens");
+    }
+
+    let index = index
+        .parse::<usize>()
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid NAT rule number"))?;
+    if index == 0 {
+        return_errno_with_message!(Errno::EINVAL, "NAT rule number is one-based");
+    }
+
+    Ok(NetfilterCommand::DeleteNatRule(chain, index - 1))
 }
 
 fn parse_iptables_delete_command(
@@ -710,6 +822,7 @@ fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
                     dst_addr,
                     src_port: None,
                     dst_port: None,
+                    conntrack_state: None,
                     target: parse_rule_target(target)?,
                 });
             }
@@ -759,6 +872,17 @@ fn parse_rule_protocol(value: &str) -> Result<aster_bigtcp::netfilter::OutputRul
         "tcp" => Ok(aster_bigtcp::netfilter::OutputRuleProtocol::Tcp),
         "udp" => Ok(aster_bigtcp::netfilter::OutputRuleProtocol::Udp),
         _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables protocol"),
+    }
+}
+
+fn parse_conntrack_state(value: &str) -> Result<aster_bigtcp::netfilter::ConntrackState> {
+    match value {
+        "NEW" => Ok(aster_bigtcp::netfilter::ConntrackState::New),
+        "ESTABLISHED" => Ok(aster_bigtcp::netfilter::ConntrackState::Established),
+        _ => return_errno_with_message!(
+            Errno::EINVAL,
+            "only conntrack states NEW and ESTABLISHED are supported"
+        ),
     }
 }
 

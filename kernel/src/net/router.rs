@@ -23,6 +23,7 @@ static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE4_TCP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE4_UDP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE4_TCP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE6_TCP_CONNTRACK_POLICY_TEST: AtomicBool = AtomicBool::new(false);
 
 aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
 aster_cmdline::define_flag_param!(
@@ -43,6 +44,10 @@ aster_cmdline::define_flag_param!(
     STAGE4_UDP_MASQUERADE_TEST
 );
 aster_cmdline::define_flag_param!("netfilter.stage4_tcp_dnat", STAGE4_TCP_DNAT_TEST);
+aster_cmdline::define_flag_param!(
+    "netfilter.stage6_tcp_conntrack_policy",
+    STAGE6_TCP_CONNTRACK_POLICY_TEST
+);
 
 /// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
 pub fn init() {
@@ -152,6 +157,50 @@ pub fn init() {
         );
         if installed {
             println!("netfilter-stage4: TCP DNAT acceptance rule installed");
+        }
+    }
+
+    if STAGE6_TCP_CONNTRACK_POLICY_TEST.load(Ordering::Relaxed) {
+        // The policy is intentionally DROP: a successful bidirectional TCP
+        // exchange proves that the outbound SYN matched NEW and the reply
+        // tuple was promoted to ESTABLISHED before FORWARD evaluation.
+        aster_bigtcp::netfilter::set_filter_chain_policy(
+            aster_bigtcp::netfilter::HookPoint::Forward,
+            aster_bigtcp::netfilter::OutputRuleTarget::Drop,
+        );
+        let new_rule = aster_bigtcp::netfilter::append_filter_transport_rule(
+            aster_bigtcp::netfilter::HookPoint::Forward,
+            aster_bigtcp::netfilter::OutputRuleProtocol::Tcp,
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+            Some(9000),
+            Some(aster_bigtcp::netfilter::ConntrackState::New),
+            aster_bigtcp::netfilter::OutputRuleTarget::Accept,
+        );
+        let established_rule = aster_bigtcp::netfilter::append_filter_transport_rule(
+            aster_bigtcp::netfilter::HookPoint::Forward,
+            aster_bigtcp::netfilter::OutputRuleProtocol::Tcp,
+            None,
+            None,
+            None,
+            None,
+            Some(aster_bigtcp::netfilter::ConntrackState::Established),
+            aster_bigtcp::netfilter::OutputRuleTarget::Accept,
+        );
+        let nat_rule = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PostRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Tcp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+            Some(9000),
+            aster_bigtcp::netfilter::NatRuleTarget::Masquerade,
+            None,
+            None,
+        );
+        if new_rule && established_rule && nat_rule {
+            println!("netfilter-stage6: TCP NEW/ESTABLISHED FORWARD policy installed");
         }
     }
 }
