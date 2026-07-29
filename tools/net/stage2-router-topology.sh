@@ -364,6 +364,12 @@ print("stage4 TCP DNAT application reply passed")
     echo "netfilter-stage4: stateful TCP DNAT passed"
 }
 
+test_tcp_conntrack_policy() {
+    echo "Testing TCP NEW/ESTABLISHED FORWARD policy through Asterinas..."
+    test_tcp_masquerade
+    echo "netfilter-stage6: TCP conntrack NEW/ESTABLISHED policy passed"
+}
+
 require_stage4_dependencies() {
     if ! topology_is_ready; then
         echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
@@ -413,7 +419,7 @@ teardown() {
 }
 
 usage() {
-    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
+    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|test-tcp-conntrack|show|teardown}" >&2
 }
 
 require_root
@@ -426,6 +432,7 @@ case "${1:-}" in
     test-tcp-nat) test_tcp_masquerade ;;
     test-udp-nat) test_udp_masquerade ;;
     test-tcp-dnat) test_tcp_dnat ;;
+    test-tcp-conntrack) test_tcp_conntrack_policy ;;
     show) show ;;
     teardown) teardown ;;
     *) usage; exit 2 ;;
