@@ -83,6 +83,11 @@ impl<E: Ext> dyn Iface<E> {
         self.common().prefix_len()
     }
 
+    /// Gets the configured IPv4 next-hop gateway, if any.
+    pub fn ipv4_gateway(&self) -> Option<Ipv4Address> {
+        self.common().ipv4_gateway()
+    }
+
     /// Gets the broadcast address of the iface, if any.
     pub fn broadcast_addr(&self) -> Option<Ipv4Address> {
         let cidr = {

@@ -30,7 +30,7 @@ use crate::{
     errors::BindError,
     ext::Ext,
     forwarding::ForwardedIpv4Packet,
-    socket::{RawIpSocketBg, TcpListenerBg, UdpSocketBg},
+    socket::{RawIpSocketBg, RawIpv4TxPacket, TcpListenerBg, UdpSocketBg},
     socket_table::SocketTable,
 };
 
@@ -39,6 +39,7 @@ pub struct IfaceCommon<E: Ext> {
     name: String,
     type_: InterfaceType,
     flags: InterfaceFlags,
+    gateway: Option<Ipv4Address>,
 
     interface: SpinLock<PollableIface<E>, BottomHalfDisabled>,
     forwarded_packets: SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
@@ -52,6 +53,7 @@ impl<E: Ext> IfaceCommon<E> {
         name: String,
         type_: InterfaceType,
         flags: InterfaceFlags,
+        gateway: Option<Ipv4Address>,
         interface: smoltcp::iface::Interface,
         sched_poll: E::ScheduleNextPoll,
     ) -> Self {
@@ -62,6 +64,7 @@ impl<E: Ext> IfaceCommon<E> {
             name,
             type_,
             flags,
+            gateway,
             interface: SpinLock::new(PollableIface::new(interface)),
             forwarded_packets: SpinLock::new(VecDeque::new()),
             used_ports: SpinLock::new(BTreeMap::new()),
@@ -92,6 +95,10 @@ impl<E: Ext> IfaceCommon<E> {
 
     pub(super) fn prefix_len(&self) -> Option<u8> {
         self.interface.lock().prefix_len()
+    }
+
+    pub(super) fn ipv4_gateway(&self) -> Option<Ipv4Address> {
+        self.gateway
     }
 
     pub(super) fn sched_poll(&self) -> &E::ScheduleNextPoll {
@@ -252,12 +259,13 @@ impl<E: Ext> IfaceCommon<E> {
 }
 
 impl<E: Ext> IfaceCommon<E> {
-    pub(super) fn poll<D, P, Q, R>(
+    pub(super) fn poll<D, P, Q, R, S>(
         &self,
         device: &mut D,
         mut process_phy: P,
         mut dispatch_phy: Q,
         mut dispatch_forwarded_phy: R,
+        mut dispatch_raw_phy: S,
     ) -> Option<u64>
     where
         D: Device + ?Sized,
@@ -269,6 +277,7 @@ impl<E: Ext> IfaceCommon<E> {
         >,
         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
         R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+        S: FnMut(&RawIpv4TxPacket, &mut Context, D::TxToken<'_>),
     {
         let mut interface = self.interface();
         interface.context_mut().now = get_network_timestamp();
@@ -288,7 +297,7 @@ impl<E: Ext> IfaceCommon<E> {
             &self.forwarded_packets,
             &mut dispatch_forwarded_phy,
         );
-        context.poll_egress(device, &mut dispatch_phy);
+        context.poll_egress(device, &mut dispatch_phy, &mut dispatch_raw_phy);
 
         // Insert new connections and remove dead connections.
         for action in socket_actions.into_iter() {

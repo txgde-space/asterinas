@@ -9,6 +9,7 @@ use aster_bigtcp::{
 use crate::{
     net::{
         iface::{BoundPort, Iface, iter_all_ifaces, loopback_iface},
+        router::lookup_ipv4_iface,
         socket::util::check_port_privilege,
     },
     prelude::*,
@@ -42,13 +43,13 @@ pub(super) fn get_iface_to_bind(ip_addr: &IpAddress) -> Option<Arc<Iface>> {
 fn get_ephemeral_iface(remote_ip_addr: &IpAddress) -> Arc<Iface> {
     let IpAddress::Ipv4(remote_ipv4_addr) = remote_ip_addr;
     if let Some(iface) = iter_all_ifaces().find(|iface| {
-        if let Some(iface_ipv4_addr) = iface.ipv4_addr() {
-            iface_ipv4_addr == *remote_ipv4_addr
-        } else {
-            false
-        }
+        iface.ipv4_addr().is_some_and(|address| address == *remote_ipv4_addr)
     }) {
         return iface.clone();
+    }
+
+    if let Some(iface) = lookup_ipv4_iface(*remote_ipv4_addr, None) {
+        return iface;
     }
 
     // FIXME: 当前先选择第一个可提供 IPv4 服务的接口；后续应按路由表选择默认接口。
