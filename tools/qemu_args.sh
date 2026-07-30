@@ -25,14 +25,75 @@ VSOCK=${VSOCK:-"off"}
 NETDEV=${NETDEV:-"user"}
 MULTI_NET=${MULTI_NET:-"off"}
 CONSOLE=${CONSOLE:-"hvc0"}
+NETFILTER_DEMO_SOCKET=${NETFILTER_DEMO_SOCKET:-"stage-records/demo/netfilter-demo-step.sock"}
+NETFILTER_DEMO_SERIAL_LOG=${NETFILTER_DEMO_SERIAL_LOG:-"stage-records/demo/netfilter-demo-step-serial.log"}
 
-SSH_RAND_PORT=${SSH_PORT:-$(shuf -i 1024-65535 -n 1)}
-NGINX_RAND_PORT=${NGINX_PORT:-$(shuf -i 1024-65535 -n 1)}
-REDIS_RAND_PORT=${REDIS_PORT:-$(shuf -i 1024-65535 -n 1)}
-IPERF_RAND_PORT=${IPERF_PORT:-$(shuf -i 1024-65535 -n 1)}
-LMBENCH_TCP_LAT_RAND_PORT=${LMBENCH_TCP_LAT_PORT:-$(shuf -i 1024-65535 -n 1)}
-LMBENCH_TCP_BW_RAND_PORT=${LMBENCH_TCP_BW_PORT:-$(shuf -i 1024-65535 -n 1)}
-MEMCACHED_RAND_PORT=${MEMCACHED_PORT:-$(shuf -i 1024-65535 -n 1)}
+USED_HOSTFWD_PORTS=""
+
+host_port_is_unavailable() {
+    local port=$1
+
+    case " $USED_HOSTFWD_PORTS " in
+        *" $port "*) return 0 ;;
+    esac
+
+    if command -v ss >/dev/null 2>&1 &&
+        ss -H -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)${port}$"; then
+        return 0
+    fi
+
+    return 1
+}
+
+reserve_hostfwd_port() {
+    local port=$1
+
+    if host_port_is_unavailable "$port"; then
+        echo "Host forwarding port $port is already reserved or listening." >&2
+        exit 1
+    fi
+    USED_HOSTFWD_PORTS="$USED_HOSTFWD_PORTS $port"
+}
+
+choose_hostfwd_port() {
+    local variable=$1
+    local port
+
+    while :; do
+        port=$(shuf -i 1024-65535 -n 1)
+        if ! host_port_is_unavailable "$port"; then
+            USED_HOSTFWD_PORTS="$USED_HOSTFWD_PORTS $port"
+            printf -v "$variable" '%s' "$port"
+            return
+        fi
+    done
+}
+
+assign_hostfwd_port() {
+    local variable=$1
+    local override_name=$2
+    local override_value=${!override_name:-}
+
+    if [ -n "$override_value" ]; then
+        if ! [[ "$override_value" =~ ^[0-9]+$ ]] ||
+            [ "$override_value" -lt 1024 ] || [ "$override_value" -gt 65535 ]; then
+            echo "$override_name must be a TCP port in the range 1024-65535" >&2
+            exit 1
+        fi
+        reserve_hostfwd_port "$override_value"
+        printf -v "$variable" '%s' "$override_value"
+    else
+        choose_hostfwd_port "$variable"
+    fi
+}
+
+assign_hostfwd_port SSH_RAND_PORT SSH_PORT
+assign_hostfwd_port NGINX_RAND_PORT NGINX_PORT
+assign_hostfwd_port REDIS_RAND_PORT REDIS_PORT
+assign_hostfwd_port IPERF_RAND_PORT IPERF_PORT
+assign_hostfwd_port LMBENCH_TCP_LAT_RAND_PORT LMBENCH_TCP_LAT_PORT
+assign_hostfwd_port LMBENCH_TCP_BW_RAND_PORT LMBENCH_TCP_BW_PORT
+assign_hostfwd_port MEMCACHED_RAND_PORT MEMCACHED_PORT
 
 # Optional QEMU arguments. Opt in them manually if needed.
 # QEMU_OPT_ARG_DUMP_PACKETS="-object filter-dump,id=filter0,netdev=net01,file=virtio-net.pcap"
@@ -81,7 +142,18 @@ if [ "$MULTI_NET" = "on" ]; then
     NETDEV_ARGS="$NETDEV_ARGS -netdev user,id=net02,net=10.0.3.0/24,dhcpstart=10.0.3.15"
 fi
 
-if [ "$CONSOLE" = "hvc0" ]; then
+if [ "$AUTO_TEST" = "demo-step" ]; then
+    # The interactive demo owns a dedicated serial socket. The host dashboard
+    # writes command lines (next/reset/scenario <name>) to this socket while
+    # QEMU keeps a complete serial transcript in a shared repository path.
+    mkdir -p "$(dirname "$NETFILTER_DEMO_SOCKET")" "$(dirname "$NETFILTER_DEMO_SERIAL_LOG")"
+    rm -f "$NETFILTER_DEMO_SOCKET" "$NETFILTER_DEMO_SERIAL_LOG"
+    if [ "$CONSOLE" = "hvc0" ]; then
+        CONSOLE_ARGS="-chardev socket,id=demo_serial,path=$NETFILTER_DEMO_SOCKET,server=on,wait=off,logfile=$NETFILTER_DEMO_SERIAL_LOG -device virtconsole,chardev=demo_serial"
+    else
+        CONSOLE_ARGS="-chardev socket,id=demo_serial,path=$NETFILTER_DEMO_SOCKET,server=on,wait=off,logfile=$NETFILTER_DEMO_SERIAL_LOG -serial chardev:demo_serial"
+    fi
+elif [ "$CONSOLE" = "hvc0" ]; then
     # Kernel logs are printed to all consoles. Redirect serial output to a file to avoid duplicate logs.
     CONSOLE_ARGS="-device virtconsole,chardev=mux -serial file:qemu-serial.log"
 else
