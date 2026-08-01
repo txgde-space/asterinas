@@ -110,11 +110,13 @@ fn new_loopback() -> Arc<Iface> {
     use aster_bigtcp::{
         device::{Loopback, Medium},
         iface::IpIface,
-        wire::{Ipv4Address, Ipv4Cidr},
+        wire::{Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr},
     };
 
     const LOOPBACK_ADDRESS: Ipv4Address = Ipv4Address::new(127, 0, 0, 1);
     const LOOPBACK_ADDRESS_PREFIX_LEN: u8 = 8; // mask: 255.0.0.0
+    const LOOPBACK_IPV6_ADDRESS: Ipv6Address = Ipv6Address::new(0, 0, 0, 0, 0, 0, 0, 1);
+    const LOOPBACK_IPV6_PREFIX_LEN: u8 = 128;
 
     struct Wrapper(Mutex<Loopback>);
 
@@ -140,6 +142,10 @@ fn new_loopback() -> Arc<Iface> {
     IpIface::new(
         Wrapper(Mutex::new(Loopback::new(Medium::Ip))),
         Ipv4Cidr::new(LOOPBACK_ADDRESS, LOOPBACK_ADDRESS_PREFIX_LEN),
+        Some(Ipv6Cidr::new(
+            LOOPBACK_IPV6_ADDRESS,
+            LOOPBACK_IPV6_PREFIX_LEN,
+        )),
         "lo".to_owned(),
         PollScheduler::new(),
         InterfaceType::LOOPBACK,
@@ -150,7 +156,7 @@ fn new_loopback() -> Arc<Iface> {
 fn new_virtio(device_name: &str, index: usize) -> Option<Arc<Iface>> {
     use aster_bigtcp::{
         iface::EtherIface,
-        wire::{EthernetAddress, Ipv4Address, Ipv4Cidr},
+        wire::{EthernetAddress, Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr},
     };
     use aster_network::AnyNetworkDevice;
 
@@ -161,6 +167,26 @@ fn new_virtio(device_name: &str, index: usize) -> Option<Arc<Iface>> {
     let subnet = u8::try_from(index.checked_add(2)?).ok()?;
     let virtio_address = Ipv4Address::new(10, 0, subnet, 15);
     let virtio_gateway = Ipv4Address::new(10, 0, subnet, 2);
+    let virtio_ipv6_address = Ipv6Address::new(
+        0xfd00,
+        0,
+        0,
+        u16::from(subnet),
+        0,
+        0,
+        0,
+        0x15,
+    );
+    let virtio_ipv6_gateway = Ipv6Address::new(
+        0xfd00,
+        0,
+        0,
+        u16::from(subnet),
+        0,
+        0,
+        0,
+        2,
+    );
 
     let virtio_net = aster_network::get_device(device_name)?;
 
@@ -193,6 +219,8 @@ fn new_virtio(device_name: &str, index: usize) -> Option<Arc<Iface>> {
         EthernetAddress(ether_addr),
         Ipv4Cidr::new(virtio_address, VIRTIO_ADDRESS_PREFIX_LEN),
         virtio_gateway,
+        Ipv6Cidr::new(virtio_ipv6_address, 64),
+        virtio_ipv6_gateway,
         alloc::format!("eth{index}"),
         PollScheduler::new(),
         flags,
