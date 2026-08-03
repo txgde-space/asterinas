@@ -2,6 +2,8 @@
 
 /* Interactive presentation walkthrough for the Stage8 netfilter demo. */
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +11,8 @@
 #include <unistd.h>
 
 #define RULES_PATH "/proc/netfilter_rules"
+#define CONTROL_COMMAND_SIZE 384
+#define CONTROL_ARG_MAX 16
 
 struct demo_step {
 	const char *id;
@@ -94,6 +98,136 @@ static void emit_step(const struct demo_step *step, const char *status)
 static int run_iptables(const char *name, char *const argv[])
 {
 	return run_action(name, argv);
+}
+
+static int write_netfilter_command(const char *command)
+{
+	const size_t command_len = strlen(command);
+	int fd = open(RULES_PATH, O_WRONLY);
+	ssize_t written;
+
+	if (fd < 0)
+		return errno;
+	written = write(fd, command, command_len);
+	close(fd);
+	return written == (ssize_t)command_len ? 0 : (errno != 0 ? errno : EIO);
+}
+
+static int is_rule_command(const char *command, const char **family)
+{
+	if (strncmp(command, "iptables ", 9) == 0) {
+		*family = "ipv4";
+		return 1;
+	}
+	if (strncmp(command, "ip6tables ", 10) == 0) {
+		*family = "ipv6";
+		return 1;
+	}
+	return 0;
+}
+
+static int run_manual_rule_command(const char *command)
+{
+	static unsigned long sequence;
+	const char *family;
+	char copy[CONTROL_COMMAND_SIZE];
+	char *saveptr = NULL;
+	char *program;
+	char *operation;
+	char label[48];
+	int rc;
+
+	if (strlen(command) >= sizeof(copy) || !is_rule_command(command, &family))
+		return EINVAL;
+	strcpy(copy, command);
+	program = strtok_r(copy, " \t", &saveptr);
+	operation = strtok_r(NULL, " \t", &saveptr);
+	if (program == NULL || operation == NULL)
+		return EINVAL;
+
+	/* Listing is read-only and is represented by the same snapshot used by
+	 * the dashboard. All mutating operations go through the real procfs
+	 * iptables/ip6tables parser. */
+	if (strcmp(operation, "-L") == 0 || strcmp(operation, "--list") == 0)
+		rc = 0;
+	else
+		rc = write_netfilter_command(command);
+
+	sequence++;
+	snprintf(label, sizeof(label), "manual-%lu", sequence);
+	fprintf(stderr, "NETFILTER_DEMO control=rule family=%s rc=%d id=%lu\n",
+		family, rc, sequence);
+	fflush(stderr);
+	if (rc == 0)
+		emit_snapshot(label);
+	return rc;
+}
+
+static int parse_probe_number(const char *text, int minimum, int maximum,
+				      int *value)
+{
+	char *end = NULL;
+	long parsed;
+
+	errno = 0;
+	parsed = strtol(text, &end, 10);
+	if (errno != 0 || end == text || *end != '\0' || parsed < minimum ||
+	    parsed > maximum)
+		return EINVAL;
+	*value = (int)parsed;
+	return 0;
+}
+
+static int run_probe_command(const char *command)
+{
+	char copy[CONTROL_COMMAND_SIZE];
+	char *argv[CONTROL_ARG_MAX];
+	char *saveptr = NULL;
+	char *token;
+	char count_text[16];
+	char timeout_text[16];
+	const char *family;
+	const char *target;
+	int count;
+	int timeout;
+	int argc = 0;
+	int rc;
+
+	if (strlen(command) >= sizeof(copy))
+		return EINVAL;
+	strcpy(copy, command);
+	while ((token = strtok_r(argc == 0 ? copy : NULL, " \t", &saveptr)) != NULL) {
+		if (argc == CONTROL_ARG_MAX - 1)
+			return E2BIG;
+		argv[argc++] = token;
+	}
+	if (argc != 4 ||
+	    (strcmp(argv[0], "ping4") != 0 && strcmp(argv[0], "ping6") != 0))
+		return EINVAL;
+	family = strcmp(argv[0], "ping6") == 0 ? "ipv6" : "ipv4";
+	target = argv[1];
+	if (strlen(target) == 0 || strlen(target) > 64 ||
+	    strpbrk(target, "\r\n \t\"'"))
+		return EINVAL;
+	if (parse_probe_number(argv[2], 1, 5, &count) != 0 ||
+	    parse_probe_number(argv[3], 1, 5, &timeout) != 0)
+		return EINVAL;
+
+	snprintf(count_text, sizeof(count_text), "%d", count);
+	snprintf(timeout_text, sizeof(timeout_text), "%d", timeout);
+	{
+		char *probe_argv[] = {
+			"/bin/ping", strcmp(argv[0], "ping6") == 0 ? "-6" : "-4",
+			"-n", "-c", count_text, "-W", timeout_text, (char *)target,
+			NULL,
+		};
+		rc = run_program(probe_argv);
+	}
+	fprintf(stderr,
+		"NETFILTER_DEMO probe=ping family=%s target=%s count=%d timeout=%d rc=%d\n",
+		family, target, count, timeout, rc);
+	fflush(stderr);
+	return rc;
 }
 
 static int reset_rules(void)
@@ -267,7 +401,8 @@ static int read_command(char *buffer, size_t size)
 int main(void)
 {
 	size_t next = 0;
-	char command[96];
+	char command[CONTROL_COMMAND_SIZE];
+	int complete_emitted = 0;
 
 	fprintf(stderr,
 		"NETFILTER_DEMO topology left=10.0.2.2 router-left=10.0.2.15 "
@@ -275,20 +410,36 @@ int main(void)
 	if (reset_rules() != 0)
 		return 1;
 
-	while (next < sizeof(STEPS) / sizeof(STEPS[0])) {
-		const struct demo_step *step = &STEPS[next];
+	while (1) {
+		const struct demo_step *step =
+			next < sizeof(STEPS) / sizeof(STEPS[0]) ? &STEPS[next] : NULL;
 
-		emit_step(step, "waiting");
-		fprintf(stderr, "NETFILTER_DEMO prompt=next step=%s\n", step->id);
+		if (step != NULL) {
+			emit_step(step, "waiting");
+			fprintf(stderr, "NETFILTER_DEMO prompt=next step=%s\n", step->id);
+		} else if (!complete_emitted) {
+			if (reset_rules() != 0)
+				return 1;
+			fprintf(stderr, "NETFILTER_DEMO complete=1\n");
+			fprintf(stderr,
+				"NETFILTER_DEMO prompt=manual commands=rule,ping,snapshot,reset,quit\n");
+			complete_emitted = 1;
+		}
 		fflush(stderr);
 		if (read_command(command, sizeof(command)) != 0)
 			return 1;
-		if (command[0] == '\0' || strcmp(command, "next") == 0 ||
-		    strcmp(command, "n") == 0) {
+		if (step != NULL &&
+		    (command[0] == '\0' || strcmp(command, "next") == 0 ||
+		     strcmp(command, "n") == 0)) {
 			emit_step(step, "running");
 			if (run_step(next) != 0) {
 				emit_step(step, "fail");
-				return 1;
+				fprintf(stderr,
+					"NETFILTER_DEMO recovery=manual step=%s "
+					"hint=reset-or-rule-command\n",
+					step->id);
+				fflush(stderr);
+				continue;
 			}
 			emit_step(step, "done");
 			next++;
@@ -298,11 +449,22 @@ int main(void)
 			if (reset_rules() != 0)
 				return 1;
 			next = 0;
+			complete_emitted = 0;
+			fprintf(stderr, "NETFILTER_DEMO complete=0\n");
+			fflush(stderr);
 			continue;
 		}
 		if (strncmp(command, "scenario ", 9) == 0) {
-			if (reset_rules() != 0 || run_scenario(command + 9) != 0)
+			if (reset_rules() != 0)
 				return 1;
+			if (run_scenario(command + 9) != 0) {
+				fprintf(stderr,
+					"NETFILTER_DEMO recovery=manual scenario=%s "
+					"hint=use-rule-or-ping-controls\n",
+					command + 9);
+				fflush(stderr);
+				continue;
+			}
 			if (strcmp(command + 9, "all") == 0) {
 				next = sizeof(STEPS) / sizeof(STEPS[0]);
 			} else {
@@ -314,14 +476,33 @@ int main(void)
 			}
 			continue;
 		}
+		if (strncmp(command, "iptables ", 9) == 0 ||
+		    strncmp(command, "ip6tables ", 10) == 0) {
+			if (run_manual_rule_command(command) != 0)
+				fprintf(stderr,
+					"NETFILTER_DEMO control-error=rule command=invalid\n");
+			fflush(stderr);
+			continue;
+		}
+		if (strncmp(command, "ping4 ", 6) == 0 ||
+		    strncmp(command, "ping6 ", 6) == 0) {
+			if (run_probe_command(command) != 0)
+				fprintf(stderr,
+					"NETFILTER_DEMO control-error=ping command=invalid\n");
+			fflush(stderr);
+			continue;
+		}
+		if (strcmp(command, "snapshot") == 0) {
+			emit_snapshot("manual-request");
+			continue;
+		}
+		if (strcmp(command, "quit") == 0 || strcmp(command, "exit") == 0)
+			break;
 		fprintf(stderr, "NETFILTER_DEMO error=unknown-command command=%s\n",
 			command);
 		fflush(stderr);
 	}
 
-	if (reset_rules() != 0)
-		return 1;
-	fprintf(stderr, "NETFILTER_DEMO complete=1\n");
 	fprintf(stderr, "Interactive Netfilter demo finished.\n");
 	return 0;
 }
