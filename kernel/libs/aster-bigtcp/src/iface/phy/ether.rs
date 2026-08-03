@@ -225,6 +225,28 @@ impl<D, E: Ext> EtherIface<D, E> {
             return;
         };
 
+        let is_local = iface_cx
+            .ipv6_addr()
+            .is_some_and(|local| destination == local);
+        let hook_point = if is_local {
+            crate::netfilter::HookPoint::LocalIn
+        } else {
+            crate::netfilter::HookPoint::Forward
+        };
+        let icmpv6_type = (packet[6] == ICMPV6_PROTO && payload_len != 0)
+            .then_some(packet[IPV6_HEADER_LEN]);
+        let context = crate::netfilter::Ipv6PacketContext::new(
+            hook_point,
+            source,
+            destination,
+            packet[6],
+            icmpv6_type,
+            payload_len,
+        );
+        if !crate::netfilter::evaluate_ipv6(context).is_accept() {
+            return;
+        }
+
         // A non-local unicast frame is a routed datagram. Keep extension
         // headers and opaque transport payloads intact; IPv6 forwarding only
         // decrements Hop Limit before handing the packet to the platform
