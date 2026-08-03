@@ -212,7 +212,7 @@ impl<D, E: Ext> EtherIface<D, E> {
         pkt: &ForwardedIpv4Packet,
         iface_cx: &mut Context,
         tx_token: T,
-    ) {
+    ) -> bool {
         let ether = match self.resolve_ether_or_generate_arp_for_addr(
             IpAddress::Ipv4(pkt.ip_repr.dst_addr),
             iface_cx,
@@ -220,12 +220,13 @@ impl<D, E: Ext> EtherIface<D, E> {
             Ok(ether) => ether,
             Err(Some(arp)) => {
                 Self::emit_arp(&arp, tx_token);
-                return;
+                return false;
             }
-            Err(None) => return,
+            Err(None) => return true,
         };
 
         Self::emit_forwarded_ip(&ether, pkt, &iface_cx.caps, tx_token);
+        true
     }
 
     fn resolve_ether_or_generate_arp(
@@ -253,9 +254,10 @@ impl<D, E: Ext> EtherIface<D, E> {
         } else if let Some(next_hop_ether) = self.arp_table.lock().get(&next_hop_ip) {
             *next_hop_ether
         } else {
-            // If the next-hop Ethernet address cannot be resolved, we drop the original packet and
-            // send an ARP packet instead. The upper layer should be responsible for detecting the
-            // packet loss and retrying later to see if the Ethernet address is ready.
+            // If the next-hop Ethernet address cannot be resolved, ask for it.
+            // Forwarded packets are requeued by the caller after the ARP frame
+            // consumes this transmit token, so they can be sent after the ARP
+            // reply is processed instead of depending on upper-layer retries.
             return Err(Some(ArpRepr::EthernetIpv4 {
                 operation: ArpOperation::Request,
                 source_hardware_addr: self.ether_addr,
@@ -305,7 +307,7 @@ impl<D, E: Ext> EtherIface<D, E> {
         tx_token: T,
     ) {
         tx_token.consume(
-            ether_repr.buffer_len() + packet.ip_repr.buffer_len(),
+            ether_repr.buffer_len() + packet.buffer_len(),
             |buffer| {
                 let mut frame = EthernetFrame::new_unchecked(buffer);
                 ether_repr.emit(&mut frame);

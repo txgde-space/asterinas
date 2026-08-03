@@ -3,6 +3,9 @@
 Status: **passed** in the VMware Ubuntu/KVM validation environment on
 2026-07-29. Stage 2 may begin; its acceptance evidence must remain separate.
 
+The cross-stage [bug and fix index](../BUGS.md) includes Stage 1 entry S1-001;
+the detailed failure and repair evidence remains in this directory.
+
 ## Acceptance outcome
 
 | Check | Result |

@@ -1,0 +1,135 @@
+diff --git a/kernel/libs/aster-bigtcp/src/iface/common.rs b/kernel/libs/aster-bigtcp/src/iface/common.rs
+index aa12173..dbfd6ed 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/common.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/common.rs
+@@ -268,7 +268,7 @@ impl<E: Ext> IfaceCommon<E> {
+                 Option<(Ipv4Packet<&'pkt [u8]>, D::TxToken<'tx>)>,
+         >,
+         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
+-        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
++        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+     {
+         let mut interface = self.interface();
+         interface.context_mut().now = get_network_timestamp();
+diff --git a/kernel/libs/aster-bigtcp/src/iface/poll.rs b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+index 86b0d05..7005e57 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/poll.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+@@ -107,7 +107,7 @@ impl<E: Ext> PollContext<'_, E> {
+         dispatch_forwarded_phy: &mut Q,
+     ) where
+         D: Device + ?Sized,
+-        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
++        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+     {
+         while let Some(tx_token) = device.transmit(self.iface.context().now()) {
+             let Some(packet) = forwarded_packets.lock().pop_front() else {
+@@ -118,7 +118,14 @@ impl<E: Ext> PollContext<'_, E> {
+                 continue;
+             }
+ 
+-            dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token);
++            if !dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token) {
++                // Ethernet ARP resolution consumed the transmit token. Keep
++                // the packet at the head of the bounded queue so that the
++                // ARP reply's receive poll can transmit this original packet
++                // instead of relying on an upper-layer retransmission.
++                forwarded_packets.lock().push_front(packet);
++                break;
++            }
+         }
+     }
+ 
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+index 2df66bf..9616a04 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+@@ -212,7 +212,7 @@ impl<D, E: Ext> EtherIface<D, E> {
+         pkt: &ForwardedIpv4Packet,
+         iface_cx: &mut Context,
+         tx_token: T,
+-    ) {
++    ) -> bool {
+         let ether = match self.resolve_ether_or_generate_arp_for_addr(
+             IpAddress::Ipv4(pkt.ip_repr.dst_addr),
+             iface_cx,
+@@ -220,12 +220,13 @@ impl<D, E: Ext> EtherIface<D, E> {
+             Ok(ether) => ether,
+             Err(Some(arp)) => {
+                 Self::emit_arp(&arp, tx_token);
+-                return;
++                return false;
+             }
+-            Err(None) => return,
++            Err(None) => return true,
+         };
+ 
+         Self::emit_forwarded_ip(&ether, pkt, &iface_cx.caps, tx_token);
++        true
+     }
+ 
+     fn resolve_ether_or_generate_arp(
+@@ -253,9 +254,10 @@ impl<D, E: Ext> EtherIface<D, E> {
+         } else if let Some(next_hop_ether) = self.arp_table.lock().get(&next_hop_ip) {
+             *next_hop_ether
+         } else {
+-            // If the next-hop Ethernet address cannot be resolved, we drop the original packet and
+-            // send an ARP packet instead. The upper layer should be responsible for detecting the
+-            // packet loss and retrying later to see if the Ethernet address is ready.
++            // If the next-hop Ethernet address cannot be resolved, ask for it.
++            // Forwarded packets are requeued by the caller after the ARP frame
++            // consumes this transmit token, so they can be sent after the ARP
++            // reply is processed instead of depending on upper-layer retries.
+             return Err(Some(ArpRepr::EthernetIpv4 {
+                 operation: ArpOperation::Request,
+                 source_hardware_addr: self.ether_addr,
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+index 9624747..20bf0bd 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+@@ -81,6 +81,7 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
+                         pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
+                         ip_packet.payload_mut().copy_from_slice(&pkt.payload);
+                     });
++                    true
+                 },
+             );
+             self.common.sched_poll().schedule_next_poll(next_poll);
+diff --git a/tools/net/stage2-router-topology.sh b/tools/net/stage2-router-topology.sh
+index ac469a3..d5a9611 100755
+--- a/tools/net/stage2-router-topology.sh
++++ b/tools/net/stage2-router-topology.sh
+@@ -96,13 +96,29 @@ test_forwarding() {
+         exit 1
+     fi
+ 
+-    echo "Testing left-to-right ICMP through Asterinas..."
+-    ip netns exec "$LEFT_NS" ping -n -c 4 -W 2 10.0.3.2
+-    echo "Testing right-to-left ICMP through Asterinas..."
+-    ip netns exec "$RIGHT_NS" ping -n -c 4 -W 2 10.0.2.2
++    run_ping "$LEFT_NS" 10.0.3.2 "left-to-right"
++    run_ping "$RIGHT_NS" 10.0.2.2 "right-to-left"
+     echo "netfilter-stage2c: bidirectional IPv4 forwarding passed"
+ }
+ 
++run_ping() {
++    local namespace=$1
++    local destination=$2
++    local direction=$3
++    local output
++
++    echo "Testing $direction ICMP through Asterinas..."
++    if ! output=$(ip netns exec "$namespace" ping -n -c 4 -W 2 "$destination" 2>&1); then
++        printf '%s\n' "$output"
++        return 1
++    fi
++    printf '%s\n' "$output"
++    if ! grep -q ' 0% packet loss' <<<"$output"; then
++        echo "Stage 2C requires zero packet loss; $direction did not meet acceptance." >&2
++        return 1
++    fi
++}
++
+ show() {
+     ip -br link show "$LEFT_BR" "$RIGHT_BR" "$LEFT_TAP" "$RIGHT_TAP"
+     ip -n "$LEFT_NS" -br addr show

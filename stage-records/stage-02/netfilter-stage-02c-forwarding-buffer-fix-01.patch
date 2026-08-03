@@ -1,0 +1,46 @@
+diff --git a/kernel/libs/aster-bigtcp/src/forwarding.rs b/kernel/libs/aster-bigtcp/src/forwarding.rs
+index 8f07730..d659dd7 100644
+--- a/kernel/libs/aster-bigtcp/src/forwarding.rs
++++ b/kernel/libs/aster-bigtcp/src/forwarding.rs
+@@ -27,6 +27,15 @@ impl ForwardedIpv4Packet {
+         debug_assert_eq!(ip_repr.payload_len, payload.len());
+         Self { ip_repr, payload }
+     }
++
++    /// Returns the bytes required to serialize this complete IPv4 datagram.
++    ///
++    /// `Ipv4Repr::buffer_len` describes the IPv4 header alone. The forwarding
++    /// path keeps the transport payload separately, so transmitters must add
++    /// both lengths before obtaining a device buffer.
++    pub fn buffer_len(&self) -> usize {
++        self.ip_repr.buffer_len().saturating_add(self.payload.len())
++    }
+ }
+ 
+ /// Result of asking the platform forwarding policy to route a packet.
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+index 5560989..2df66bf 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+@@ -305,7 +305,7 @@ impl<D, E: Ext> EtherIface<D, E> {
+         tx_token: T,
+     ) {
+         tx_token.consume(
+-            ether_repr.buffer_len() + packet.ip_repr.buffer_len(),
++            ether_repr.buffer_len() + packet.buffer_len(),
+             |buffer| {
+                 let mut frame = EthernetFrame::new_unchecked(buffer);
+                 ether_repr.emit(&mut frame);
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+index b54e7af..9624747 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+@@ -76,7 +76,7 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
+                     });
+                 },
+                 |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
+-                    tx_token.consume(pkt.ip_repr.buffer_len(), |buffer| {
++                    tx_token.consume(pkt.buffer_len(), |buffer| {
+                         let mut ip_packet = Ipv4Packet::new_unchecked(buffer);
+                         pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
+                         ip_packet.payload_mut().copy_from_slice(&pkt.payload);

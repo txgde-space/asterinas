@@ -1,0 +1,187 @@
+diff --git a/tools/net/stage2-router-topology.sh b/tools/net/stage2-router-topology.sh
+new file mode 100755
+index 0000000..ac469a3
+--- /dev/null
++++ b/tools/net/stage2-router-topology.sh
+@@ -0,0 +1,136 @@
++#!/usr/bin/env bash
++
++# SPDX-License-Identifier: MPL-2.0
++
++# Creates only the isolated host-side topology used by Stage 2C forwarding
++# acceptance. QEMU owns the two TAP file descriptors, while the endpoint
++# namespaces provide two independent IPv4 hosts.
++
++set -euo pipefail
++
++LEFT_NS=as2left
++RIGHT_NS=as2right
++LEFT_BR=as2br0
++RIGHT_BR=as2br1
++LEFT_TAP=as2tap0
++RIGHT_TAP=as2tap1
++LEFT_HOST_VETH=as2h0
++RIGHT_HOST_VETH=as2h1
++LEFT_NS_VETH=as2e0
++RIGHT_NS_VETH=as2e1
++
++require_root() {
++    if [ "$(id -u)" -ne 0 ]; then
++        echo "Run this script on the Ubuntu host with sudo." >&2
++        exit 1
++    fi
++}
++
++any_resource_exists() {
++    ip link show "$LEFT_BR" >/dev/null 2>&1 ||
++        ip link show "$RIGHT_BR" >/dev/null 2>&1 ||
++        ip link show "$LEFT_TAP" >/dev/null 2>&1 ||
++        ip link show "$RIGHT_TAP" >/dev/null 2>&1 ||
++        ip netns list | awk '{print $1}' | grep -qx "$LEFT_NS" ||
++        ip netns list | awk '{print $1}' | grep -qx "$RIGHT_NS"
++}
++
++topology_is_ready() {
++    ip link show "$LEFT_BR" >/dev/null 2>&1 &&
++        ip link show "$RIGHT_BR" >/dev/null 2>&1 &&
++        ip link show "$LEFT_TAP" >/dev/null 2>&1 &&
++        ip link show "$RIGHT_TAP" >/dev/null 2>&1 &&
++        ip netns list | awk '{print $1}' | grep -qx "$LEFT_NS" &&
++        ip netns list | awk '{print $1}' | grep -qx "$RIGHT_NS"
++}
++
++setup() {
++    if any_resource_exists; then
++        echo "Stage 2C topology resources already exist; run '$0 teardown' first." >&2
++        exit 1
++    fi
++
++    ip link add name "$LEFT_BR" type bridge
++    ip link add name "$RIGHT_BR" type bridge
++    ip link set "$LEFT_BR" up
++    ip link set "$RIGHT_BR" up
++
++    ip tuntap add dev "$LEFT_TAP" mode tap user root
++    ip tuntap add dev "$RIGHT_TAP" mode tap user root
++    ip link set "$LEFT_TAP" master "$LEFT_BR"
++    ip link set "$RIGHT_TAP" master "$RIGHT_BR"
++    ip link set "$LEFT_TAP" up
++    ip link set "$RIGHT_TAP" up
++
++    ip netns add "$LEFT_NS"
++    ip link add "$LEFT_HOST_VETH" type veth peer name "$LEFT_NS_VETH"
++    ip link set "$LEFT_NS_VETH" netns "$LEFT_NS"
++    ip link set "$LEFT_HOST_VETH" master "$LEFT_BR"
++    ip link set "$LEFT_HOST_VETH" up
++    ip -n "$LEFT_NS" link set lo up
++    ip -n "$LEFT_NS" link set "$LEFT_NS_VETH" name eth0
++    ip -n "$LEFT_NS" addr add 10.0.2.2/24 dev eth0
++    ip -n "$LEFT_NS" link set eth0 up
++    ip -n "$LEFT_NS" route add default via 10.0.2.15
++
++    ip netns add "$RIGHT_NS"
++    ip link add "$RIGHT_HOST_VETH" type veth peer name "$RIGHT_NS_VETH"
++    ip link set "$RIGHT_NS_VETH" netns "$RIGHT_NS"
++    ip link set "$RIGHT_HOST_VETH" master "$RIGHT_BR"
++    ip link set "$RIGHT_HOST_VETH" up
++    ip -n "$RIGHT_NS" link set lo up
++    ip -n "$RIGHT_NS" link set "$RIGHT_NS_VETH" name eth0
++    ip -n "$RIGHT_NS" addr add 10.0.3.2/24 dev eth0
++    ip -n "$RIGHT_NS" link set eth0 up
++    ip -n "$RIGHT_NS" route add default via 10.0.3.15
++
++    echo "netfilter-stage2c: isolated TAP topology ready"
++    echo "left endpoint:  $LEFT_NS (10.0.2.2 via 10.0.2.15)"
++    echo "right endpoint: $RIGHT_NS (10.0.3.2 via 10.0.3.15)"
++    echo "QEMU TAPs: $LEFT_TAP, $RIGHT_TAP"
++}
++
++test_forwarding() {
++    if ! topology_is_ready; then
++        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
++        exit 1
++    fi
++
++    echo "Testing left-to-right ICMP through Asterinas..."
++    ip netns exec "$LEFT_NS" ping -n -c 4 -W 2 10.0.3.2
++    echo "Testing right-to-left ICMP through Asterinas..."
++    ip netns exec "$RIGHT_NS" ping -n -c 4 -W 2 10.0.2.2
++    echo "netfilter-stage2c: bidirectional IPv4 forwarding passed"
++}
++
++show() {
++    ip -br link show "$LEFT_BR" "$RIGHT_BR" "$LEFT_TAP" "$RIGHT_TAP"
++    ip -n "$LEFT_NS" -br addr show
++    ip -n "$RIGHT_NS" -br addr show
++    ip -n "$LEFT_NS" route show
++    ip -n "$RIGHT_NS" route show
++}
++
++teardown() {
++    # These names are fixed and owned solely by this acceptance harness.
++    ip netns del "$LEFT_NS" 2>/dev/null || true
++    ip netns del "$RIGHT_NS" 2>/dev/null || true
++    ip link del "$LEFT_TAP" 2>/dev/null || true
++    ip link del "$RIGHT_TAP" 2>/dev/null || true
++    ip link del "$LEFT_BR" 2>/dev/null || true
++    ip link del "$RIGHT_BR" 2>/dev/null || true
++    echo "netfilter-stage2c: isolated TAP topology removed"
++}
++
++usage() {
++    echo "Usage: $0 {setup|test|show|teardown}" >&2
++}
++
++require_root
++case "${1:-}" in
++    setup) setup ;;
++    test) test_forwarding ;;
++    show) show ;;
++    teardown) teardown ;;
++    *) usage; exit 2 ;;
++esac
+diff --git a/tools/qemu_args.sh b/tools/qemu_args.sh
+index 215955f..7684be1 100755
+--- a/tools/qemu_args.sh
++++ b/tools/qemu_args.sh
+@@ -9,8 +9,9 @@
+ #  - OVMF: "on" or "off";
+ #  - BOOT_METHOD: "qemu-direct", "grub-rescue-iso" or "grub-qcow2";
+ #  - BOOT_PROTOCOL: "multiboot", "multiboot2", "linux-legacy32", "linux-efi-pe64" or "linux-efi-handover64";
+-#  - NETDEV: "user" or "tap";
++#  - NETDEV: "user", "tap", or "router-tap";
+ #  - MULTI_NET: "on" to attach a second user-mode network (development only);
++#  - ROUTER_TAP0, ROUTER_TAP1: host TAP names for NETDEV=router-tap;
+ #  - VHOST: "off" or "on";
+ #  - VSOCK: "off" or "on";
+ #  - CONSOLE: "hvc0" to enable virtio console;
+@@ -46,6 +47,20 @@ elif [ "$NETDEV" = "tap" ]; then
+     QEMU_IFDOWN_SCRIPT_PATH=$THIS_SCRIPT_DIR/net/qemu-ifdown.sh
+     NETDEV_ARGS="-netdev tap,id=net01,script=$QEMU_IFUP_SCRIPT_PATH,downscript=$QEMU_IFDOWN_SCRIPT_PATH,vhost=$VHOST"
+     VIRTIO_NET_FEATURES=",csum=off,guest_csum=off,ctrl_guest_offloads=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,guest_ufo=off,host_tso4=off,host_tso6=off,host_ecn=off,host_ufo=off,mrg_rxbuf=off,ctrl_vq=off,ctrl_rx=off,ctrl_vlan=off,ctrl_rx_extra=off,guest_announce=off,ctrl_mac_addr=off,host_ufo=off,guest_uso4=off,guest_uso6=off,host_uso=off"
++elif [ "$NETDEV" = "router-tap" ]; then
++    if [ -z "$ROUTER_TAP0" ] || [ -z "$ROUTER_TAP1" ]; then
++        echo "NETDEV=router-tap requires ROUTER_TAP0 and ROUTER_TAP1" 1>&2
++        exit 1
++    fi
++    if [ "$1" = "tdx" ] || [ "$1" = "microvm" ]; then
++        echo "NETDEV=router-tap currently supports the normal QEMU scheme only" 1>&2
++        exit 1
++    fi
++    # The acceptance harness owns TAP lifecycle.  Do not let QEMU run the
++    # normal single-TAP ifup/down scripts, which would attach these endpoints
++    # to the host's default bridge instead of the isolated router bridges.
++    NETDEV_ARGS="-netdev tap,id=net01,ifname=$ROUTER_TAP0,script=no,downscript=no,vhost=$VHOST -netdev tap,id=net02,ifname=$ROUTER_TAP1,script=no,downscript=no,vhost=$VHOST"
++    VIRTIO_NET_FEATURES=",csum=off,guest_csum=off,ctrl_guest_offloads=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,guest_ufo=off,host_tso4=off,host_tso6=off,host_ecn=off,host_ufo=off,mrg_rxbuf=off,ctrl_vq=off,ctrl_rx=off,ctrl_vlan=off,ctrl_rx_extra=off,guest_announce=off,ctrl_mac_addr=off,host_ufo=off,guest_uso4=off,guest_uso6=off,host_uso=off"
+ else 
+     echo "Invalid netdev" 1>&2
+     NETDEV_ARGS="-nic none"
+@@ -131,7 +146,7 @@ if [ "$1" = "iommu" ]; then
+     # TODO: Add support for enabling IOMMU on AMD platforms
+ fi
+ 
+-if [ "$MULTI_NET" = "on" ]; then
++if [ "$MULTI_NET" = "on" ] || [ "$NETDEV" = "router-tap" ]; then
+     MULTI_NET_DEVICE_ARGS="-device virtio-net-pci,netdev=net02,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA"
+ fi
+ 

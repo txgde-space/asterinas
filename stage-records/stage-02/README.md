@@ -6,6 +6,9 @@ existing regression suite with multi-NIC and forwarding enabled on 2026-07-30.
 This preserves existing kernel behavior but does not yet prove
 endpoint-to-endpoint forwarding, TTL/ICMP behavior, or NAT.
 
+The cross-stage [bug and fix index](../BUGS.md) includes Stage 2A, 2B, and 2C
+entries. Stage 2C's detailed, append-only evidence is in [BUGS.md](BUGS.md).
+
 ## Implemented scope
 
 - Each virtio network device receives a unique `Virtio-Net-N` registry name,
@@ -43,7 +46,8 @@ failure, handle fragmentation or MTU, or provide NAT/conntrack.
 | Two-NIC kernel boot and enumeration | Passed | `multi-nic-enumeration-2026-07-29.log` line 445 reports `netfilter-stage2a: multi-nic enumeration passed`; line 475 reports `Successfully booted.` |
 | Stage 2B forwarding pipeline build and boot | Passed | `forwarding-pipeline-boot-2026-07-30.log`: release build completed in 1m 08s, kernel emitted `netfilter-stage2b: ipv4 forwarding pipeline enabled`, then `Successfully booted.` |
 | Stage 2B complete existing regression | Passed | `forwarding-pipeline-regression-2026-07-30.log`: Stage 2B marker at line 285; network suite passed at line 5445; complete regression passed at line 21123. |
-| Full Stage 2 IPv4 forwarding | Not yet accepted | Requires a full regression run and then an isolated endpoint topology proving bidirectional forwarding, `FORWARD`, TTL, and ICMP-error behavior. |
+| Stage 2C real bidirectional reachability | Passed | TAP endpoint tests reached 4/4, 0% loss in both directions; TTL 63 confirms a forwarding hop. |
+| Full Stage 2 IPv4 forwarding | Passed for the implemented direct-route scope | Full regression and isolated TAP forwarding passed. Static routes, fragmentation, MTU handling, and distinct ICMP errors remain out of scope. |
 
 The accepted command was:
 
@@ -168,3 +172,72 @@ and its evidence are ready for one local commit. The subsequent router
 acceptance will replace user-net with isolated TAP-backed endpoint networks and
 prove bidirectional forwarding, `FORWARD` filtering, TTL expiry, route-miss
 behavior, and `POSTROUTING` behavior.
+
+## Stage 2C: Isolated TAP Router Acceptance (passed)
+
+Stage 2C adds a reproducible host-side topology rather than treating QEMU
+user-net as a router test. It creates two Linux network namespaces and two
+bridges, with an Asterinas virtio-net device attached to each bridge:
+
+```text
+as2left (10.0.2.2) -- as2br0 -- as2tap0 -- Asterinas eth0 (10.0.2.15)
+as2right (10.0.3.2) -- as2br1 -- as2tap1 -- Asterinas eth1 (10.0.3.15)
+```
+
+The endpoint default routes point at the Asterinas addresses, so a successful
+bidirectional ping must traverse the kernel forwarding path. The topology uses
+fixed `as2*` resource names and the teardown command removes only those names.
+
+Run the topology commands on the Ubuntu host, outside the Podman container:
+
+```bash
+cd "$HOME/桌面/asterinas"
+sudo ./tools/net/stage2-router-topology.sh setup
+```
+
+In a separate terminal, start the container and keep QEMU running with its
+default interactive init process:
+
+```bash
+sudo podman run --rm -it --privileged --network=host -v /dev:/dev \
+  -v "$PWD:/root/asterinas" \
+  -e HTTP_PROXY=http://192.168.255.1:7897 \
+  -e HTTPS_PROXY=http://192.168.255.1:7897 \
+  -e ALL_PROXY=http://192.168.255.1:7897 \
+  docker.io/asterinas/asterinas:0.18.0-20260603
+
+cd /root/asterinas
+NETDEV=router-tap ROUTER_TAP0=as2tap0 ROUTER_TAP1=as2tap1 \
+CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 \
+EXTRA_KCMD_ARGS='--kcmd-args="netfilter.ipv4_forward=on"' \
+make run_kernel
+```
+
+After the kernel has started, run this in a third Ubuntu-host terminal:
+
+```bash
+cd "$HOME/桌面/asterinas"
+sudo ./tools/net/stage2-router-topology.sh test
+```
+
+Stop QEMU with `Ctrl-C`, then remove the exact test resources:
+
+```bash
+sudo ./tools/net/stage2-router-topology.sh teardown
+```
+
+The Stage 2C acceptance requires both directional ping commands to have **0%
+packet loss** and the script's `netfilter-stage2c: bidirectional IPv4
+forwarding passed` marker. The final VMware rerun met those conditions: both
+directions received 4/4 replies and observed TTL 63. The earlier ARP retry
+loss is retained in the bug ledger; it does not invalidate the final accepted
+run. Stage 2C itself does not claim static routes, fragmentation, MTU handling,
+or distinct ICMP error generation.
+
+## Defect evidence
+
+The append-only [bug and fix ledger](BUGS.md) records every encountered Stage
+2 defect, including the raw failure log, trigger, root cause, repair locations,
+patch checksum, validation result, and eventual commit SHA. In particular,
+S2C-001 documents the first real forwarding-path panic and the pending buffer
+length repair; it must not be represented as a successful router acceptance.

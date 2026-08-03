@@ -1,0 +1,442 @@
+diff --git a/kernel/libs/aster-bigtcp/src/forwarding.rs b/kernel/libs/aster-bigtcp/src/forwarding.rs
+index d659dd7..9f9740d 100644
+--- a/kernel/libs/aster-bigtcp/src/forwarding.rs
++++ b/kernel/libs/aster-bigtcp/src/forwarding.rs
+@@ -20,12 +20,17 @@ use smoltcp::wire::Ipv4Repr;
+ pub struct ForwardedIpv4Packet {
+     pub ip_repr: Ipv4Repr,
+     pub payload: Vec<u8>,
++    postrouting_nat_applied: bool,
+ }
+ 
+ impl ForwardedIpv4Packet {
+     pub fn new(ip_repr: Ipv4Repr, payload: Vec<u8>) -> Self {
+         debug_assert_eq!(ip_repr.payload_len, payload.len());
+-        Self { ip_repr, payload }
++        Self {
++            ip_repr,
++            payload,
++            postrouting_nat_applied: false,
++        }
+     }
+ 
+     /// Returns the bytes required to serialize this complete IPv4 datagram.
+@@ -36,6 +41,19 @@ impl ForwardedIpv4Packet {
+     pub fn buffer_len(&self) -> usize {
+         self.ip_repr.buffer_len().saturating_add(self.payload.len())
+     }
++
++    /// Returns whether POSTROUTING NAT has already been evaluated.
++    ///
++    /// The egress queue may retain a packet while Ethernet resolves ARP. NAT
++    /// must run once per forwarded datagram rather than once per retry.
++    pub fn postrouting_nat_applied(&self) -> bool {
++        self.postrouting_nat_applied
++    }
++
++    /// Marks this packet after its POSTROUTING NAT decision is made.
++    pub fn mark_postrouting_nat_applied(&mut self) {
++        self.postrouting_nat_applied = true;
++    }
+ }
+ 
+ /// Result of asking the platform forwarding policy to route a packet.
+diff --git a/kernel/libs/aster-bigtcp/src/iface/poll.rs b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+index 7005e57..b20d557 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/poll.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+@@ -110,7 +110,7 @@ impl<E: Ext> PollContext<'_, E> {
+         Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+     {
+         while let Some(tx_token) = device.transmit(self.iface.context().now()) {
+-            let Some(packet) = forwarded_packets.lock().pop_front() else {
++            let Some(mut packet) = forwarded_packets.lock().pop_front() else {
+                 break;
+             };
+ 
+@@ -118,6 +118,14 @@ impl<E: Ext> PollContext<'_, E> {
+                 continue;
+             }
+ 
++            if !packet.postrouting_nat_applied() {
++                netfilter::rewrite_forwarded_ipv4_postrouting(
++                    &mut packet.ip_repr,
++                    self.iface.context().ipv4_addr(),
++                );
++                packet.mark_postrouting_nat_applied();
++            }
++
+             if !dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token) {
+                 // Ethernet ARP resolution consumed the transmit token. Keep
+                 // the packet at the head of the bounded queue so that the
+@@ -229,12 +237,17 @@ impl<E: Ext> PollContext<'_, E> {
+         pkt: Ipv4Packet<&'pkt [u8]>,
+     ) -> Option<Packet<'pkt>> {
+         // Parse the IP header. Ignore the packet if the header is ill-formed.
+-        let repr = Ipv4Repr::parse(&pkt, &self.iface.context().checksum_caps()).ok()?;
++        let mut repr = Ipv4Repr::parse(&pkt, &self.iface.context().checksum_caps()).ok()?;
+ 
+         if !self.accept_ipv4_at(HookPoint::PreRouting, &repr) {
+             return None;
+         }
+ 
++        // NAT PREROUTING runs before the local-delivery versus forwarding
++        // decision. This permits DNAT to select a routed backend and permits
++        // a tracked reply addressed to the router to re-enter forwarding.
++        netfilter::rewrite_forwarded_ipv4_prerouting(&mut repr);
++
+         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
+             if !self.accept_ipv4_at(HookPoint::Forward, &repr)
+                 || !self.accept_forwarded_transport(&repr, pkt.payload())
+diff --git a/kernel/libs/aster-bigtcp/src/netfilter/mod.rs b/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
+index c57f956..9bde79b 100644
+--- a/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
++++ b/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
+@@ -20,6 +20,7 @@ pub use table::{
+     append_filter_icmp_echo_rule, append_filter_transport_rule, append_output_icmp_echo_rule,
+     append_output_transport_rule, delete_filter_rule, delete_output_rule, flush_filter_rules,
+     flush_nat_rules, flush_output_rules, rewrite_ipv4_icmp_postrouting,
+-    rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting, write_filter_table_snapshot,
+-    zero_filter_rule_counters, zero_output_rule_counters,
++    rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting,
++    rewrite_forwarded_ipv4_postrouting, rewrite_forwarded_ipv4_prerouting,
++    write_filter_table_snapshot, zero_filter_rule_counters, zero_output_rule_counters,
+ };
+diff --git a/kernel/libs/aster-bigtcp/src/netfilter/table.rs b/kernel/libs/aster-bigtcp/src/netfilter/table.rs
+index 4c241fa..56106d6 100644
+--- a/kernel/libs/aster-bigtcp/src/netfilter/table.rs
++++ b/kernel/libs/aster-bigtcp/src/netfilter/table.rs
+@@ -12,6 +12,7 @@ use super::{
+ 
+ const MAX_FILTER_RULES: usize = 64;
+ const MAX_NAT_RULES: usize = 8;
++const MAX_NAT_ICMP_CONNECTIONS: usize = 32;
+ const IPV4_MIN_HEADER_LEN: usize = 20;
+ 
+ static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
+@@ -56,6 +57,7 @@ struct MutableFilterRules {
+ struct MutableNatRules {
+     rules: [Option<NatRule>; MAX_NAT_RULES],
+     len: usize,
++    icmp_connections: [Option<NatIcmpConnection>; MAX_NAT_ICMP_CONNECTIONS],
+ }
+ 
+ #[derive(Clone, Copy, Debug)]
+@@ -86,6 +88,21 @@ struct NatRule {
+     bytes: u64,
+ }
+ 
++/// A bounded, address-only ICMP NAT mapping.
++///
++/// This is deliberately narrower than Linux conntrack: it gives the first
++/// usable stateful NAT path to Echo traffic without pretending that TCP/UDP
++/// port and lifecycle tracking are complete. `original_*` names the packet as
++/// received before NAT, while `translated_*` names the packet emitted after
++/// PREROUTING and POSTROUTING translations.
++#[derive(Clone, Copy, Debug)]
++struct NatIcmpConnection {
++    original_src: Ipv4Address,
++    original_dst: Ipv4Address,
++    translated_src: Ipv4Address,
++    translated_dst: Ipv4Address,
++}
++
+ impl NatRule {
+     const fn new(
+         chain: NatRuleChain,
+@@ -174,6 +191,24 @@ impl NatRule {
+             && matches!(self.target, NatRuleTarget::Masquerade | NatRuleTarget::Snat)
+     }
+ 
++    fn matches_prerouting_icmp(self, ipv4_repr: &Ipv4Repr) -> bool {
++        if self.chain != NatRuleChain::PreRouting || !self.matches_common_ipv4(ipv4_repr) {
++            return false;
++        }
++
++        if self
++            .protocol
++            .is_some_and(|expected| expected != OutputRuleProtocol::Icmp)
++        {
++            return false;
++        }
++
++        self.src_port.is_none()
++            && self.dst_port.is_none()
++            && matches!(self.target, NatRuleTarget::Dnat)
++            && self.to_addr.is_some()
++    }
++
+     fn record_match(&mut self, bytes: usize) {
+         self.packets = self.packets.saturating_add(1);
+         self.bytes = self.bytes.saturating_add(bytes as u64);
+@@ -293,6 +328,7 @@ impl MutableNatRules {
+         Self {
+             rules: [None, None, None, None, None, None, None, None],
+             len: 0,
++            icmp_connections: [None; MAX_NAT_ICMP_CONNECTIONS],
+         }
+     }
+ 
+@@ -326,6 +362,13 @@ impl MutableNatRules {
+             *rule = None;
+         }
+         self.len = next_len;
++
++        // A rule flush is also a NAT state reset. Keeping mappings that were
++        // created by deleted rules would make the control plane surprising
++        // and could route reply traffic through an obsolete translation.
++        for connection in &mut self.icmp_connections {
++            *connection = None;
++        }
+     }
+ 
+     fn len(&self) -> usize {
+@@ -400,6 +443,114 @@ impl MutableNatRules {
+ 
+         ipv4_repr
+     }
++
++    fn rewrite_forwarded_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr) {
++        if ipv4_repr.next_header != smoltcp::wire::IpProtocol::Icmp {
++            return;
++        }
++
++        // Reverse translations take precedence over new DNAT rules. A reply
++        // to an SNAT/MASQUERADE address is addressed to the router itself, so
++        // this happens before local-delivery selection in the caller.
++        if let Some(connection) = self.icmp_connections.iter().flatten().find(|connection| {
++            connection.translated_dst == ipv4_repr.src_addr
++                && connection.translated_src == ipv4_repr.dst_addr
++        }) {
++            ipv4_repr.src_addr = connection.original_dst;
++            ipv4_repr.dst_addr = connection.original_src;
++            return;
++        }
++
++        let original_src = ipv4_repr.src_addr;
++        let original_dst = ipv4_repr.dst_addr;
++        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
++        let translated_dst = self.rules[..self.len]
++            .iter_mut()
++            .filter_map(Option::as_mut)
++            .find(|rule| rule.matches_prerouting_icmp(ipv4_repr))
++            .and_then(|rule| {
++                rule.record_match(packet_len);
++                rule.to_addr
++            });
++        let Some(translated_dst) = translated_dst else {
++            return;
++        };
++
++        ipv4_repr.dst_addr = translated_dst;
++        self.upsert_icmp_connection(NatIcmpConnection {
++            original_src,
++            original_dst,
++            translated_src: original_src,
++            translated_dst,
++        });
++    }
++
++    fn rewrite_forwarded_postrouting(
++        &mut self,
++        ipv4_repr: &mut Ipv4Repr,
++        masquerade_addr: Option<Ipv4Address>,
++    ) {
++        if ipv4_repr.next_header != smoltcp::wire::IpProtocol::Icmp {
++            return;
++        }
++
++        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
++        let translated_src = self.rules[..self.len]
++            .iter_mut()
++            .filter_map(Option::as_mut)
++            .find(|rule| rule.matches_postrouting_icmp(ipv4_repr))
++            .and_then(|rule| {
++                let translated_src = match rule.target {
++                    NatRuleTarget::Masquerade => masquerade_addr,
++                    NatRuleTarget::Snat => rule.to_addr,
++                    NatRuleTarget::Dnat => None,
++                };
++                translated_src.inspect(|_| rule.record_match(packet_len))
++            });
++        let Some(translated_src) = translated_src else {
++            return;
++        };
++
++        let translated_dst = ipv4_repr.dst_addr;
++        let connection = self
++            .icmp_connections
++            .iter()
++            .flatten()
++            .find(|connection| {
++                connection.translated_src == ipv4_repr.src_addr
++                    && connection.translated_dst == translated_dst
++            })
++            .copied()
++            .unwrap_or(NatIcmpConnection {
++                original_src: ipv4_repr.src_addr,
++                original_dst: translated_dst,
++                translated_src: ipv4_repr.src_addr,
++                translated_dst,
++            });
++
++        ipv4_repr.src_addr = translated_src;
++        self.upsert_icmp_connection(NatIcmpConnection {
++            translated_src,
++            translated_dst,
++            ..connection
++        });
++    }
++
++    fn upsert_icmp_connection(&mut self, connection: NatIcmpConnection) {
++        if let Some(slot) = self.icmp_connections.iter_mut().find(|slot| {
++            slot.as_ref().is_some_and(|existing| {
++                existing.original_src == connection.original_src
++                    && existing.original_dst == connection.original_dst
++            })
++        }) {
++            *slot = Some(connection);
++            return;
++        }
++
++        if let Some(slot) = self.icmp_connections.iter_mut().find(|slot| slot.is_none()) {
++            *slot = Some(connection);
++        }
++    }
+ }
+ 
+ impl MutableFilterRules {
+@@ -870,6 +1021,29 @@ pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
+     NAT_RULES.lock().flush(chain);
+ }
+ 
++/// Applies the stateful ICMP subset of NAT before an IPv4 forwarding decision.
++///
++/// This covers a DNAT rule for a new Echo flow and reverse translations for
++/// replies to previously translated flows. TCP/UDP NAT remains intentionally
++/// unsupported until transport-tuple tracking is added.
++pub fn rewrite_forwarded_ipv4_prerouting(ipv4_repr: &mut Ipv4Repr) {
++    NAT_RULES.lock().rewrite_forwarded_prerouting(ipv4_repr);
++}
++
++/// Applies the stateful ICMP subset of NAT after an egress interface is known.
++///
++/// A MASQUERADE target takes the selected interface's IPv4 address; an SNAT
++/// target takes its configured `--to-source` address. The resulting mapping
++/// is retained so the reverse Echo packet is restored at PREROUTING.
++pub fn rewrite_forwarded_ipv4_postrouting(
++    ipv4_repr: &mut Ipv4Repr,
++    masquerade_addr: Option<Ipv4Address>,
++) {
++    NAT_RULES
++        .lock()
++        .rewrite_forwarded_postrouting(ipv4_repr, masquerade_addr);
++}
++
+ /// Applies POSTROUTING NAT to an IPv4 TCP packet representation.
+ ///
+ /// NETFILTER_STAGE22: The prototype NAT data path rewrites the representation
+diff --git a/kernel/src/net/router.rs b/kernel/src/net/router.rs
+index e91a4c4..9a03084 100644
+--- a/kernel/src/net/router.rs
++++ b/kernel/src/net/router.rs
+@@ -17,14 +17,39 @@ use super::iface::iter_all_ifaces;
+ use crate::prelude::println;
+ 
+ static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
++static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
+ 
+ aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
++aster_cmdline::define_flag_param!(
++    "netfilter.stage3_icmp_masquerade",
++    STAGE3_ICMP_MASQUERADE_TEST
++);
+ 
+ /// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
+ pub fn init() {
+     if IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
+         println!("netfilter-stage2b: ipv4 forwarding pipeline enabled");
+     }
++
++    // The TAP acceptance topology cannot run an interactive userspace command
++    // in the guest. Install the same in-kernel rule that its iptables parser
++    // would create, solely when this explicit test flag is present.
++    if STAGE3_ICMP_MASQUERADE_TEST.load(Ordering::Relaxed) {
++        let installed = aster_bigtcp::netfilter::append_nat_rule(
++            aster_bigtcp::netfilter::NatRuleChain::PostRouting,
++            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Icmp),
++            Some(Ipv4Address::new(10, 0, 2, 2)),
++            Some(Ipv4Address::new(10, 0, 3, 2)),
++            None,
++            None,
++            aster_bigtcp::netfilter::NatRuleTarget::Masquerade,
++            None,
++            None,
++        );
++        if installed {
++            println!("netfilter-stage3: ICMP MASQUERADE acceptance rule installed");
++        }
++    }
+ }
+ 
+ /// Selects a directly connected egress route and queues the packet.
+diff --git a/tools/net/stage2-router-topology.sh b/tools/net/stage2-router-topology.sh
+index d5a9611..401fc55 100644
+--- a/tools/net/stage2-router-topology.sh
++++ b/tools/net/stage2-router-topology.sh
+@@ -101,6 +101,39 @@ test_forwarding() {
+     echo "netfilter-stage2c: bidirectional IPv4 forwarding passed"
+ }
+ 
++test_icmp_masquerade() {
++    if ! topology_is_ready; then
++        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
++        exit 1
++    fi
++    if ! command -v tcpdump >/dev/null 2>&1; then
++        echo "tcpdump is required for NAT packet-header acceptance." >&2
++        exit 1
++    fi
++
++    local capture
++    local capture_pid
++    capture=$(mktemp)
++    trap 'rm -f "$capture"' RETURN
++
++    # The bridge observes the packet after the router's right-hand egress.
++    # Capture one Echo request while the endpoint test independently proves
++    # the reverse mapping carried the Echo reply back to the left namespace.
++    timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp[0] == 8' >"$capture" 2>&1 &
++    capture_pid=$!
++    sleep 0.2
++
++    run_ping "$LEFT_NS" 10.0.3.2 "left-to-right MASQUERADE"
++    wait "$capture_pid"
++    cat "$capture"
++    if ! grep -Eq '10\.0\.3\.15 > 10\.0\.3\.2: ICMP echo request' "$capture"; then
++        echo "Stage 3 MASQUERADE source address was not observed on $RIGHT_BR." >&2
++        return 1
++    fi
++
++    echo "netfilter-stage3: stateful ICMP MASQUERADE passed"
++}
++
+ run_ping() {
+     local namespace=$1
+     local destination=$2
+@@ -139,13 +172,14 @@ teardown() {
+ }
+ 
+ usage() {
+-    echo "Usage: $0 {setup|test|show|teardown}" >&2
++    echo "Usage: $0 {setup|test|test-nat|show|teardown}" >&2
+ }
+ 
+ require_root
+ case "${1:-}" in
+     setup) setup ;;
+     test) test_forwarding ;;
++    test-nat) test_icmp_masquerade ;;
+     show) show ;;
+     teardown) teardown ;;
+     *) usage; exit 2 ;;

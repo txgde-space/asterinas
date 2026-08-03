@@ -1,0 +1,140 @@
+diff --git a/kernel/src/net/router.rs b/kernel/src/net/router.rs
+index 9a03084..b94108b 100644
+--- a/kernel/src/net/router.rs
++++ b/kernel/src/net/router.rs
+@@ -18,12 +18,19 @@ use crate::prelude::println;
+ 
+ static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
+ static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
++static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
++static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
+ 
+ aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
+ aster_cmdline::define_flag_param!(
+     "netfilter.stage3_icmp_masquerade",
+     STAGE3_ICMP_MASQUERADE_TEST
+ );
++aster_cmdline::define_flag_param!("netfilter.stage3_icmp_dnat", STAGE3_ICMP_DNAT_TEST);
++aster_cmdline::define_flag_param!(
++    "netfilter.stage3_icmp_forward_drop",
++    STAGE3_ICMP_FORWARD_DROP_TEST
++);
+ 
+ /// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
+ pub fn init() {
+@@ -50,6 +57,36 @@ pub fn init() {
+             println!("netfilter-stage3: ICMP MASQUERADE acceptance rule installed");
+         }
+     }
++
++    if STAGE3_ICMP_DNAT_TEST.load(Ordering::Relaxed) {
++        let installed = aster_bigtcp::netfilter::append_nat_rule(
++            aster_bigtcp::netfilter::NatRuleChain::PreRouting,
++            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Icmp),
++            Some(Ipv4Address::new(10, 0, 2, 2)),
++            Some(Ipv4Address::new(10, 0, 2, 15)),
++            None,
++            None,
++            aster_bigtcp::netfilter::NatRuleTarget::Dnat,
++            Some(Ipv4Address::new(10, 0, 3, 2)),
++            None,
++        );
++        if installed {
++            println!("netfilter-stage3: ICMP DNAT acceptance rule installed");
++        }
++    }
++
++    if STAGE3_ICMP_FORWARD_DROP_TEST.load(Ordering::Relaxed) {
++        let installed = aster_bigtcp::netfilter::append_filter_icmp_echo_rule(
++            aster_bigtcp::netfilter::HookPoint::Forward,
++            None,
++            Some(Ipv4Address::new(10, 0, 2, 2)),
++            Some(Ipv4Address::new(10, 0, 3, 2)),
++            aster_bigtcp::netfilter::OutputRuleTarget::Drop,
++        );
++        if installed {
++            println!("netfilter-stage3: ICMP FORWARD DROP acceptance rule installed");
++        }
++    }
+ }
+ 
+ /// Selects a directly connected egress route and queues the packet.
+diff --git a/tools/net/stage2-router-topology.sh b/tools/net/stage2-router-topology.sh
+index 401fc55..70d4589 100644
+--- a/tools/net/stage2-router-topology.sh
++++ b/tools/net/stage2-router-topology.sh
+@@ -134,6 +134,56 @@ test_icmp_masquerade() {
+     echo "netfilter-stage3: stateful ICMP MASQUERADE passed"
+ }
+ 
++test_icmp_dnat() {
++    if ! topology_is_ready; then
++        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
++        exit 1
++    fi
++    if ! command -v tcpdump >/dev/null 2>&1; then
++        echo "tcpdump is required for NAT packet-header acceptance." >&2
++        exit 1
++    fi
++
++    local capture
++    local capture_pid
++    capture=$(mktemp)
++    trap 'rm -f "$capture"' RETURN
++
++    # 10.0.2.15 is the virtual service address. A right-bridge capture must
++    # show that PREROUTING DNAT selected the 10.0.3.2 backend.
++    timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp[0] == 8' >"$capture" 2>&1 &
++    capture_pid=$!
++    sleep 0.2
++
++    run_ping "$LEFT_NS" 10.0.2.15 "left-to-virtual-service DNAT"
++    wait "$capture_pid"
++    cat "$capture"
++    if ! grep -Eq '10\.0\.2\.2 > 10\.0\.3\.2: ICMP echo request' "$capture"; then
++        echo "Stage 3 DNAT backend packet was not observed on $RIGHT_BR." >&2
++        return 1
++    fi
++
++    echo "netfilter-stage3: stateful ICMP DNAT passed"
++}
++
++test_icmp_forward_drop() {
++    if ! topology_is_ready; then
++        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
++        exit 1
++    fi
++
++    local output
++    echo "Testing FORWARD-chain ICMP DROP through Asterinas..."
++    output=$(ip netns exec "$LEFT_NS" ping -n -c 4 -W 1 10.0.3.2 2>&1 || true)
++    printf '%s\n' "$output"
++    if ! grep -q '100% packet loss' <<<"$output"; then
++        echo "Stage 3 FORWARD DROP did not block the matching ICMP flow." >&2
++        return 1
++    fi
++
++    echo "netfilter-stage3: FORWARD ICMP DROP passed"
++}
++
+ run_ping() {
+     local namespace=$1
+     local destination=$2
+@@ -172,7 +222,7 @@ teardown() {
+ }
+ 
+ usage() {
+-    echo "Usage: $0 {setup|test|test-nat|show|teardown}" >&2
++    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|show|teardown}" >&2
+ }
+ 
+ require_root
+@@ -180,6 +230,8 @@ case "${1:-}" in
+     setup) setup ;;
+     test) test_forwarding ;;
+     test-nat) test_icmp_masquerade ;;
++    test-dnat) test_icmp_dnat ;;
++    test-forward-drop) test_icmp_forward_drop ;;
+     show) show ;;
+     teardown) teardown ;;
+     *) usage; exit 2 ;;
