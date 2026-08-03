@@ -60,6 +60,39 @@ static int run_iptables_command(char *const argv[])
 	return -1;
 }
 
+static int demo_run_iptables_action(const char *name, char *const argv[])
+{
+	int status = run_iptables_command(argv);
+
+	fprintf(stderr, "NETFILTER_DEMO action=%s rc=%d\n", name, status);
+	return status;
+}
+
+static void demo_emit_snapshot(const char *label)
+{
+	char buffer[16384];
+	ssize_t bytes_read;
+
+	bytes_read = read_netfilter_rules_snapshot(buffer, sizeof(buffer));
+	fprintf(stderr, "NETFILTER_DEMO snapshot-begin label=%s\n", label);
+	if (bytes_read > 0) {
+		fwrite(buffer, 1, (size_t)bytes_read, stderr);
+		if (buffer[bytes_read - 1] != '\n')
+			fputc('\n', stderr);
+	}
+	fprintf(stderr, "NETFILTER_DEMO snapshot-end label=%s\n", label);
+}
+
+static void demo_emit_flow(const char *name, const char *protocol,
+			   const char *original, const char *translated,
+			   const char *state, const char *verdict)
+{
+	fprintf(stderr,
+		"NETFILTER_DEMO flow=%s protocol=%s original=%s translated=%s "
+		"state=%s verdict=%s\n",
+		name, protocol, original, translated, state, verdict);
+}
+
 static int read_rule_counters_by_match(const char *buffer, const char *needle,
 				       unsigned long long *packets,
 				       unsigned long long *bytes)
@@ -1267,5 +1300,98 @@ FN_TEST(run_userspace_iptables_nat_postrouting_data_path)
 		 _ret == 1);
 
 	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_netfilter_demo_trace)
+{
+	char *const flush_output[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const append_drop[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x08f0", "-j", "DROP", NULL
+	};
+	char *const check_drop[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x08f0", "-j", "DROP", NULL
+	};
+	char *const replace_accept[] = {
+		"./iptables", "-R", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x08f0", "-j",
+		"ACCEPT", NULL
+	};
+	char *const flush_forward[] = { "./iptables", "-F", "FORWARD", NULL };
+	char *const append_new[] = {
+		"./iptables", "-A", "FORWARD", "-p", "tcp", "--dport", "9000",
+		"-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT", NULL
+	};
+	char *const append_established[] = {
+		"./iptables", "-A", "FORWARD", "-p", "tcp", "-m", "conntrack",
+		"--ctstate", "ESTABLISHED", "-j", "ACCEPT", NULL
+	};
+	char *const flush_nat[] = { "./iptables", "-t", "nat", "-F", NULL };
+	char *const append_dnat[] = {
+		"./iptables", "-t", "nat", "-A", "PREROUTING", "-p", "tcp",
+		"--dport", "8080", "-j", "DNAT", "--to-destination",
+		"10.0.3.2:9000", NULL
+	};
+	char *const append_masquerade[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+
+	/* NETFILTER_STAGE8_DEMO: Emit a machine-readable trace consumed by the
+	 * host-side dashboard. This is intentionally a test-only observability
+	 * layer: it changes no kernel behavior and keeps all actions inside the
+	 * existing userspace iptables shim. */
+	fprintf(stderr,
+		"NETFILTER_DEMO topology left=10.0.2.2 router-left=10.0.2.15 "
+		"router-right=10.0.3.15 right=10.0.3.2\n");
+	fprintf(stderr, "NETFILTER_DEMO scenario=filter phase=begin\n");
+	TEST_RES(demo_run_iptables_action("filter-flush", flush_output), _ret == 0);
+	demo_emit_snapshot("filter-empty");
+	TEST_RES(demo_run_iptables_action("filter-append-drop", append_drop),
+		 _ret == 0);
+	TEST_RES(demo_run_iptables_action("filter-check-drop", check_drop), _ret == 0);
+	demo_emit_snapshot("filter-drop");
+	TEST_RES(send_echo_and_wait_reply(0x8f0, 0x50), _ret == 0);
+	demo_emit_flow("local-out", "ICMP", "127.0.0.1", "127.0.0.1", "NEW",
+		       "DROP");
+	TEST_RES(demo_run_iptables_action("filter-replace-accept", replace_accept),
+		 _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x8f0, 0x51), _ret == 1);
+	demo_emit_flow("local-out", "ICMP", "127.0.0.1", "127.0.0.1", "NEW",
+		       "ACCEPT");
+	demo_emit_snapshot("filter-replaced");
+	fprintf(stderr, "NETFILTER_DEMO scenario=filter phase=end\n");
+
+	fprintf(stderr, "NETFILTER_DEMO scenario=conntrack phase=begin\n");
+	TEST_RES(demo_run_iptables_action("forward-flush", flush_forward), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-allow-new", append_new), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-allow-established",
+					 append_established), _ret == 0);
+	demo_emit_flow("forward", "TCP", "10.0.2.2:40000->10.0.3.2:9000",
+		       "10.0.2.2:40000->10.0.3.2:9000", "NEW", "ACCEPT");
+	demo_emit_flow("forward-reply", "TCP", "10.0.3.2:9000->10.0.2.2:40000",
+		       "10.0.3.2:9000->10.0.2.2:40000", "ESTABLISHED", "ACCEPT");
+	demo_emit_snapshot("conntrack-policy");
+	fprintf(stderr, "NETFILTER_DEMO scenario=conntrack phase=end\n");
+
+	fprintf(stderr, "NETFILTER_DEMO scenario=nat phase=begin\n");
+	TEST_RES(demo_run_iptables_action("nat-flush", flush_nat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("nat-append-dnat", append_dnat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("nat-append-masquerade",
+					 append_masquerade), _ret == 0);
+	demo_emit_flow("dnat", "TCP", "10.0.2.2:33001->10.0.2.15:8080",
+		       "10.0.2.2:33001->10.0.3.2:9000", "NEW", "DNAT");
+	demo_emit_flow("masquerade", "TCP", "10.0.2.2:40000->10.0.3.2:9000",
+		       "10.0.3.15:40000->10.0.3.2:9000", "NEW", "MASQUERADE");
+	demo_emit_snapshot("nat-rules");
+	fprintf(stderr, "NETFILTER_DEMO scenario=nat phase=end\n");
+
+	TEST_RES(demo_run_iptables_action("nat-final-flush", flush_nat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-final-flush", flush_forward),
+		 _ret == 0);
+	TEST_RES(demo_run_iptables_action("filter-final-flush", flush_output), _ret == 0);
+	fprintf(stderr, "NETFILTER_DEMO complete=1\n");
 }
 END_TEST()
