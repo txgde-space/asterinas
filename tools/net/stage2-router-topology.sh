@@ -4,7 +4,9 @@
 
 # Creates only the isolated host-side topology used by Stage 2C forwarding
 # acceptance. QEMU owns the two TAP file descriptors, while the endpoint
-# namespaces provide two independent IPv4 hosts.
+# namespaces provide two independent IPv4 hosts.  Stage 10C also assigns a
+# same-link ULA address on each endpoint so the guest's Ethernet/NDP path can
+# be tested without pretending that IPv6 forwarding is already implemented.
 
 set -euo pipefail
 
@@ -18,6 +20,10 @@ LEFT_HOST_VETH=as2h0
 RIGHT_HOST_VETH=as2h1
 LEFT_NS_VETH=as2e0
 RIGHT_NS_VETH=as2e1
+LEFT_IPV6=fd00:0:0:2::2
+LEFT_ROUTER_IPV6=fd00:0:0:2::15
+RIGHT_IPV6=fd00:0:0:3::2
+RIGHT_ROUTER_IPV6=fd00:0:0:3::15
 
 require_root() {
     if [ "$(id -u)" -ne 0 ]; then
@@ -70,8 +76,10 @@ setup() {
     ip -n "$LEFT_NS" link set lo up
     ip -n "$LEFT_NS" link set "$LEFT_NS_VETH" name eth0
     ip -n "$LEFT_NS" addr add 10.0.2.2/24 dev eth0
+    ip -n "$LEFT_NS" -6 addr add "$LEFT_IPV6/64" dev eth0
     ip -n "$LEFT_NS" link set eth0 up
     ip -n "$LEFT_NS" route add default via 10.0.2.15
+    ip -n "$LEFT_NS" -6 route add default via "$LEFT_ROUTER_IPV6"
 
     ip netns add "$RIGHT_NS"
     ip link add "$RIGHT_HOST_VETH" type veth peer name "$RIGHT_NS_VETH"
@@ -81,13 +89,67 @@ setup() {
     ip -n "$RIGHT_NS" link set lo up
     ip -n "$RIGHT_NS" link set "$RIGHT_NS_VETH" name eth0
     ip -n "$RIGHT_NS" addr add 10.0.3.2/24 dev eth0
+    ip -n "$RIGHT_NS" -6 addr add "$RIGHT_IPV6/64" dev eth0
     ip -n "$RIGHT_NS" link set eth0 up
     ip -n "$RIGHT_NS" route add default via 10.0.3.15
+    ip -n "$RIGHT_NS" -6 route add default via "$RIGHT_ROUTER_IPV6"
 
     echo "netfilter-stage2c: isolated TAP topology ready"
     echo "left endpoint:  $LEFT_NS (10.0.2.2 via 10.0.2.15)"
     echo "right endpoint: $RIGHT_NS (10.0.3.2 via 10.0.3.15)"
+    echo "IPv6 peers:     $LEFT_IPV6 / $RIGHT_IPV6 (same-link guest addresses $LEFT_ROUTER_IPV6 / $RIGHT_ROUTER_IPV6)"
     echo "QEMU TAPs: $LEFT_TAP, $RIGHT_TAP"
+}
+
+test_ipv6_ethernet() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+
+    local output
+    echo "Testing IPv6 NDP + ICMPv6 echo on the left Ethernet link..."
+    if ! output=$(ip netns exec "$LEFT_NS" ping -6 -n -c 4 -W 2 "$LEFT_ROUTER_IPV6" 2>&1); then
+        printf '%s\n' "$output"
+        return 1
+    fi
+    printf '%s\n' "$output"
+    if ! grep -q ' 0% packet loss' <<<"$output"; then
+        echo "Stage 10C requires zero packet loss for same-link ICMPv6." >&2
+        return 1
+    fi
+    echo "netfilter-stage10c: IPv6 NDP + Ethernet ICMPv6 echo passed"
+}
+
+test_ipv6_forwarding() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+
+    local left_output right_output
+    echo "Testing bidirectional IPv6 forwarding through Asterinas..."
+    if ! left_output=$(ip netns exec "$LEFT_NS" ping -6 -n -c 4 -W 2 "$RIGHT_IPV6" 2>&1); then
+        printf '%s\n' "$left_output"
+        return 1
+    fi
+    printf '%s\n' "$left_output"
+    if ! grep -q ' 0% packet loss' <<<"$left_output"; then
+        echo "Stage 10D left-to-right IPv6 forwarding did not meet acceptance." >&2
+        return 1
+    fi
+
+    if ! right_output=$(ip netns exec "$RIGHT_NS" ping -6 -n -c 4 -W 2 "$LEFT_IPV6" 2>&1); then
+        printf '%s\n' "$right_output"
+        return 1
+    fi
+    printf '%s\n' "$right_output"
+    if ! grep -q ' 0% packet loss' <<<"$right_output"; then
+        echo "Stage 10D right-to-left IPv6 forwarding did not meet acceptance." >&2
+        return 1
+    fi
+
+    echo "netfilter-stage10d: bidirectional IPv6 forwarding passed"
 }
 
 test_forwarding() {
@@ -364,12 +426,6 @@ print("stage4 TCP DNAT application reply passed")
     echo "netfilter-stage4: stateful TCP DNAT passed"
 }
 
-test_tcp_conntrack_policy() {
-    echo "Testing TCP NEW/ESTABLISHED FORWARD policy through Asterinas..."
-    test_tcp_masquerade
-    echo "netfilter-stage6: TCP conntrack NEW/ESTABLISHED policy passed"
-}
-
 require_stage4_dependencies() {
     if ! topology_is_ready; then
         echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
@@ -405,6 +461,10 @@ show() {
     ip -n "$RIGHT_NS" -br addr show
     ip -n "$LEFT_NS" route show
     ip -n "$RIGHT_NS" route show
+    ip -n "$LEFT_NS" -6 addr show
+    ip -n "$RIGHT_NS" -6 addr show
+    ip -n "$LEFT_NS" -6 route show
+    ip -n "$RIGHT_NS" -6 route show
 }
 
 teardown() {
@@ -419,20 +479,21 @@ teardown() {
 }
 
 usage() {
-    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|test-tcp-conntrack|show|teardown}" >&2
+    echo "Usage: $0 {setup|test|test-ipv6|test-ipv6-forward|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
 }
 
 require_root
 case "${1:-}" in
     setup) setup ;;
     test) test_forwarding ;;
+    test-ipv6) test_ipv6_ethernet ;;
+    test-ipv6-forward) test_ipv6_forwarding ;;
     test-nat) test_icmp_masquerade ;;
     test-dnat) test_icmp_dnat ;;
     test-forward-drop) test_icmp_forward_drop ;;
     test-tcp-nat) test_tcp_masquerade ;;
     test-udp-nat) test_udp_masquerade ;;
     test-tcp-dnat) test_tcp_dnat ;;
-    test-tcp-conntrack) test_tcp_conntrack_policy ;;
     show) show ;;
     teardown) teardown ;;
     *) usage; exit 2 ;;
