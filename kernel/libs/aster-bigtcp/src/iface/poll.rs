@@ -207,19 +207,49 @@ impl<E: Ext> PollContext<'_, E> {
             return None;
         }
 
-        // raw socket 观察完整 IPv4 包，匹配协议号后进入 raw 接收队列。
-        self.process_raw_ipv4(&repr, pkt.as_ref());
-
         let checksum_caps = self.iface.context().checksum_caps();
-        match repr.next_header {
+        let next_header = repr.next_header;
+        let ip_repr = IpRepr::Ipv4(repr);
+        let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
+        match next_header {
             IpProtocol::Tcp => {
-                self.parse_and_process_tcp(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
+                let tcp_pkt = TcpPacket::new_checked(pkt.payload()).ok()?;
+                let tcp_repr = TcpRepr::parse(
+                    &tcp_pkt,
+                    &ip_repr.src_addr(),
+                    &ip_repr.dst_addr(),
+                    &checksum_caps,
+                )
+                .ok()?;
+                if !self.accept_tcp_at(HookPoint::LocalIn, &ip_repr, &tcp_repr) {
+                    return None;
+                }
+                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
+                self.parse_and_process_tcp(&ip_repr, pkt.payload(), &checksum_caps)
             }
             IpProtocol::Udp => {
-                self.parse_and_process_udp(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
+                let udp_pkt = UdpPacket::new_checked(pkt.payload()).ok()?;
+                let udp_repr = UdpRepr::parse(
+                    &udp_pkt,
+                    &ip_repr.src_addr(),
+                    &ip_repr.dst_addr(),
+                    &checksum_caps,
+                )
+                .ok()?;
+                if !self.accept_udp_at(HookPoint::LocalIn, &ip_repr, &udp_repr) {
+                    return None;
+                }
+                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
+                self.parse_and_process_udp(&ip_repr, pkt.payload(), &checksum_caps)
             }
             IpProtocol::Icmp => {
-                self.parse_and_process_icmpv4(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
+                let icmp_packet = Icmpv4Packet::new_checked(pkt.payload()).ok()?;
+                let icmp_repr = Icmpv4Repr::parse(&icmp_packet, &checksum_caps).ok()?;
+                if !self.accept_icmpv4_at(HookPoint::LocalIn, &ip_repr, &icmp_repr) {
+                    return None;
+                }
+                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
+                self.parse_and_process_icmpv4(&ip_repr, pkt.payload(), &checksum_caps)
             }
             _ => None,
         }

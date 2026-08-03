@@ -18,6 +18,19 @@ pub enum HookPoint {
     PostRouting,
 }
 
+impl HookPoint {
+    /// Returns the stable index used by the built-in IPv4 filter chains.
+    pub const fn index(self) -> usize {
+        match self {
+            Self::PreRouting => 0,
+            Self::LocalIn => 1,
+            Self::Forward => 2,
+            Self::LocalOut => 3,
+            Self::PostRouting => 4,
+        }
+    }
+}
+
 /// Describes the result of evaluating netfilter rules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verdict {

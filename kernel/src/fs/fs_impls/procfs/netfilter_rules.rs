@@ -9,6 +9,10 @@ use crate::{
         vfs::inode::Inode,
     },
     prelude::*,
+    process::{
+        credentials::capabilities::CapSet,
+        posix_thread::AsPosixThread,
+    },
 };
 
 /// Represents the inode at `/proc/netfilter_rules`.
@@ -39,6 +43,8 @@ impl FileOps for NetfilterRulesFileOps {
     fn write_at(&self, _offset: usize, reader: &mut VmReader) -> Result<usize> {
         const MAX_COMMAND_LEN: usize = 320;
 
+        check_netfilter_admin()?;
+
         let (command, bytes_read) = reader.read_cstring_until_end(MAX_COMMAND_LEN)?;
         let command = command
             .to_str()
@@ -52,17 +58,21 @@ impl FileOps for NetfilterRulesFileOps {
         }
 
         if command == "flush OUTPUT" {
-            aster_bigtcp::netfilter::flush_output_rules();
+            aster_bigtcp::netfilter::flush_filter_rules(
+                aster_bigtcp::netfilter::HookPoint::LocalOut,
+            );
             return Ok(bytes_read);
         }
 
         if command == "zero OUTPUT" {
-            aster_bigtcp::netfilter::zero_output_rule_counters();
+            aster_bigtcp::netfilter::zero_filter_rule_counters(
+                aster_bigtcp::netfilter::HookPoint::LocalOut,
+            );
             return Ok(bytes_read);
         }
 
         if let Some(index) = parse_delete_output_command(command)? {
-            if !aster_bigtcp::netfilter::delete_output_rule(index) {
+            if !aster_bigtcp::netfilter::delete_filter_rule(index.0, index.1) {
                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
             }
 
@@ -82,10 +92,10 @@ impl FileOps for NetfilterRulesFileOps {
 enum NetfilterCommand {
     Append(AppendOutputRule),
     AppendNat(AppendNatRule),
-    DeleteOutputRule(usize),
-    FlushOutput,
+    DeleteOutputRule(aster_bigtcp::netfilter::HookPoint, usize),
+    FlushOutput(aster_bigtcp::netfilter::HookPoint),
     FlushNat(Option<aster_bigtcp::netfilter::NatRuleChain>),
-    ZeroOutputCounters,
+    ZeroOutputCounters(aster_bigtcp::netfilter::HookPoint),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,6 +105,7 @@ enum IptablesTable {
 }
 
 struct AppendOutputRule {
+    chain: aster_bigtcp::netfilter::HookPoint,
     protocol: aster_bigtcp::netfilter::OutputRuleProtocol,
     ident: Option<u16>,
     src_addr: Option<aster_bigtcp::wire::Ipv4Address>,
@@ -120,23 +131,23 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
     match command {
         NetfilterCommand::Append(rule) => apply_append_rule(rule),
         NetfilterCommand::AppendNat(rule) => apply_append_nat_rule(rule),
-        NetfilterCommand::DeleteOutputRule(index) => {
-            if !aster_bigtcp::netfilter::delete_output_rule(index) {
+        NetfilterCommand::DeleteOutputRule(chain, index) => {
+            if !aster_bigtcp::netfilter::delete_filter_rule(chain, index) {
                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
             }
 
             Ok(())
         }
-        NetfilterCommand::FlushOutput => {
-            aster_bigtcp::netfilter::flush_output_rules();
+        NetfilterCommand::FlushOutput(chain) => {
+            aster_bigtcp::netfilter::flush_filter_rules(chain);
             Ok(())
         }
         NetfilterCommand::FlushNat(chain) => {
             aster_bigtcp::netfilter::flush_nat_rules(chain);
             Ok(())
         }
-        NetfilterCommand::ZeroOutputCounters => {
-            aster_bigtcp::netfilter::zero_output_rule_counters();
+        NetfilterCommand::ZeroOutputCounters(chain) => {
+            aster_bigtcp::netfilter::zero_filter_rule_counters(chain);
             Ok(())
         }
     }
@@ -145,7 +156,8 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
 fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
     let appended = match rule.protocol {
         aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
-            aster_bigtcp::netfilter::append_output_icmp_echo_rule(
+            aster_bigtcp::netfilter::append_filter_icmp_echo_rule(
+                rule.chain,
                 rule.ident,
                 rule.src_addr,
                 rule.dst_addr,
@@ -154,7 +166,8 @@ fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
         }
         aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
         | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
-            aster_bigtcp::netfilter::append_output_transport_rule(
+            aster_bigtcp::netfilter::append_filter_transport_rule(
+                rule.chain,
                 rule.protocol,
                 rule.src_addr,
                 rule.dst_addr,
@@ -210,9 +223,9 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
         IptablesTable::Filter => match operation {
             "-A" => parse_iptables_append_command(words).map(NetfilterCommand::Append),
             "-D" => parse_iptables_delete_command(words),
-            "-F" => parse_iptables_chain_command(words).map(|_| NetfilterCommand::FlushOutput),
+            "-F" => parse_iptables_chain_command(words).map(NetfilterCommand::FlushOutput),
             "-Z" => {
-                parse_iptables_chain_command(words).map(|_| NetfilterCommand::ZeroOutputCounters)
+                parse_iptables_chain_command(words).map(NetfilterCommand::ZeroOutputCounters)
             }
             _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables operation"),
         },
@@ -252,7 +265,7 @@ fn parse_optional_iptables_table(
 fn parse_iptables_append_command(
     mut words: core::str::SplitWhitespace<'_>,
 ) -> Result<AppendOutputRule> {
-    parse_output_chain(&mut words)?;
+    let chain = parse_filter_chain(&mut words)?;
 
     let mut protocol = None;
     let mut echo_request = false;
@@ -359,6 +372,7 @@ fn parse_iptables_append_command(
     }
 
     Ok(AppendOutputRule {
+        chain,
         protocol,
         ident,
         src_addr,
@@ -463,7 +477,7 @@ fn parse_iptables_nat_append_command(
 fn parse_iptables_delete_command(
     mut words: core::str::SplitWhitespace<'_>,
 ) -> Result<NetfilterCommand> {
-    parse_output_chain(&mut words)?;
+    let chain = parse_filter_chain(&mut words)?;
     let Some(index) = words.next() else {
         return_errno_with_message!(Errno::EINVAL, "missing iptables rule number");
     };
@@ -478,16 +492,34 @@ fn parse_iptables_delete_command(
         return_errno_with_message!(Errno::EINVAL, "iptables rule number is one-based");
     }
 
-    Ok(NetfilterCommand::DeleteOutputRule(index - 1))
+    Ok(NetfilterCommand::DeleteOutputRule(chain, index - 1))
 }
 
-fn parse_iptables_chain_command(mut words: core::str::SplitWhitespace<'_>) -> Result<()> {
-    parse_output_chain(&mut words)?;
+fn check_netfilter_admin() -> Result<()> {
+    let thread = current_thread!();
+    let posix_thread = thread
+        .as_posix_thread()
+        .ok_or_else(|| Error::with_message(Errno::EPERM, "netfilter requires a POSIX thread"))?;
+    let credentials = posix_thread.credentials();
+
+    if credentials.euid().is_root()
+        || credentials
+            .effective_capset()
+            .contains(CapSet::NET_ADMIN)
+    {
+        return Ok(());
+    }
+
+    return_errno_with_message!(Errno::EPERM, "netfilter requires CAP_NET_ADMIN");
+}
+
+fn parse_iptables_chain_command(mut words: core::str::SplitWhitespace<'_>) -> Result<aster_bigtcp::netfilter::HookPoint> {
+    let chain = parse_filter_chain(&mut words)?;
     if words.next().is_some() {
         return_errno_with_message!(Errno::EINVAL, "trailing iptables chain command tokens");
     }
 
-    Ok(())
+    Ok(chain)
 }
 
 fn parse_iptables_nat_flush_command(
@@ -505,15 +537,17 @@ fn parse_iptables_nat_flush_command(
     Ok(Some(chain))
 }
 
-fn parse_output_chain(words: &mut core::str::SplitWhitespace<'_>) -> Result<()> {
+fn parse_filter_chain(words: &mut core::str::SplitWhitespace<'_>) -> Result<aster_bigtcp::netfilter::HookPoint> {
     let Some(chain) = words.next() else {
         return_errno_with_message!(Errno::EINVAL, "missing iptables chain");
     };
-    if chain != "OUTPUT" {
-        return_errno_with_message!(Errno::EINVAL, "only OUTPUT chain is supported");
-    }
 
-    Ok(())
+    match chain {
+        "INPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalIn),
+        "FORWARD" => Ok(aster_bigtcp::netfilter::HookPoint::Forward),
+        "OUTPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalOut),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported filter chain"),
+    }
 }
 
 fn parse_nat_chain(
@@ -579,6 +613,7 @@ fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
                 }
 
                 return Ok(AppendOutputRule {
+                    chain: aster_bigtcp::netfilter::HookPoint::LocalOut,
                     protocol: aster_bigtcp::netfilter::OutputRuleProtocol::Icmp,
                     ident: Some(parse_hex_u16(ident)?),
                     src_addr,
@@ -593,7 +628,9 @@ fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
     }
 }
 
-fn parse_delete_output_command(command: &str) -> Result<Option<usize>> {
+fn parse_delete_output_command(
+    command: &str,
+) -> Result<Option<(aster_bigtcp::netfilter::HookPoint, usize)>> {
     const PREFIX: &str = "delete OUTPUT ";
 
     let Some(index) = command.strip_prefix(PREFIX) else {
@@ -602,7 +639,7 @@ fn parse_delete_output_command(command: &str) -> Result<Option<usize>> {
 
     index
         .parse::<usize>()
-        .map(Some)
+        .map(|index| Some((aster_bigtcp::netfilter::HookPoint::LocalOut, index)))
         .map_err(|_| Error::with_message(Errno::EINVAL, "invalid delete index"))
 }
 
