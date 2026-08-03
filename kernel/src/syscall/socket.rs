@@ -56,15 +56,18 @@ pub fn sys_socket(domain: i32, type_: i32, protocol: i32, ctx: &Context) -> Resu
             }
         }
         (CSocketAddrFamily::AF_INET, SockType::SOCK_RAW) => {
-            let protocol = Protocol::try_from(protocol)?;
-            debug!("protocol = {:?}", protocol);
-            // 当前 raw socket 最小实现只开放 IPv4 ICMP，避免未验证协议被误暴露。
-            match protocol {
-                Protocol::IPPROTO_ICMP => {
-                    RawSocket::new(is_nonblocking, protocol)? as Arc<dyn FileLike>
-                }
-                _ => return_errno_with_message!(Errno::EPROTONOSUPPORT, "unsupported raw protocol"),
+            // Raw IPv4 sockets use the protocol number verbatim.  Do not run
+            // it through the `Protocol` enum: that enum intentionally lists
+            // only the well-known values and would reject applications that
+            // use an experimental or private protocol number.
+            if !(1..=255).contains(&protocol) {
+                return_errno_with_message!(
+                    Errno::EPROTONOSUPPORT,
+                    "raw IPv4 protocol must be in the range 1..=255"
+                );
             }
+            debug!("raw IPv4 protocol = {}", protocol);
+            RawSocket::new(is_nonblocking, protocol)? as Arc<dyn FileLike>
         }
         (CSocketAddrFamily::AF_NETLINK, SockType::SOCK_RAW | SockType::SOCK_DGRAM) => {
             let netlink_family = StandardNetlinkProtocol::try_from(protocol as u32);

@@ -17,6 +17,7 @@ use crate::{
     device::{NotifyDevice, WithDevice},
     ext::Ext,
     forwarding::ForwardedIpv4Packet,
+    socket::RawIpv4TxPacket,
     iface::{
         Iface, InterfaceFlags, ScheduleNextPoll,
         common::{IfaceCommon, InterfaceType},
@@ -58,7 +59,14 @@ impl<D: WithDevice, E: Ext> EtherIface<D, E> {
             interface
         });
 
-        let common = IfaceCommon::new(name, InterfaceType::ETHER, flags, interface, sched_poll);
+        let common = IfaceCommon::new(
+            name,
+            InterfaceType::ETHER,
+            flags,
+            Some(gateway),
+            interface,
+            sched_poll,
+        );
 
         Arc::new(Self {
             driver,
@@ -86,6 +94,7 @@ where
                 |data, iface_cx, tx_token| self.process(data, iface_cx, tx_token),
                 |pkt, iface_cx, tx_token| self.dispatch(pkt, iface_cx, tx_token),
                 |pkt, iface_cx, tx_token| self.dispatch_forwarded(pkt, iface_cx, tx_token),
+                |pkt, iface_cx, tx_token| self.dispatch_raw(pkt, iface_cx, tx_token),
             );
             device.notify_poll_end();
             self.common.sched_poll().schedule_next_poll(next_poll);
@@ -229,6 +238,27 @@ impl<D, E: Ext> EtherIface<D, E> {
         true
     }
 
+    fn dispatch_raw<T: TxToken>(
+        &self,
+        pkt: &RawIpv4TxPacket,
+        iface_cx: &mut Context,
+        tx_token: T,
+    ) {
+        let ether = match self.resolve_ether_or_generate_arp_for_addr(
+            IpAddress::Ipv4(pkt.destination()),
+            iface_cx,
+        ) {
+            Ok(ether) => ether,
+            Err(Some(arp)) => {
+                Self::emit_arp(&arp, tx_token);
+                return;
+            }
+            Err(None) => return,
+        };
+
+        Self::emit_raw_ip(&ether, pkt, &iface_cx.caps, tx_token);
+    }
+
     fn resolve_ether_or_generate_arp(
         &self,
         pkt: &Packet,
@@ -316,6 +346,19 @@ impl<D, E: Ext> EtherIface<D, E> {
                 ip_packet.payload_mut().copy_from_slice(&packet.payload);
             },
         );
+    }
+
+    fn emit_raw_ip<T: TxToken>(
+        ether_repr: &EthernetRepr,
+        packet: &RawIpv4TxPacket,
+        caps: &DeviceCapabilities,
+        tx_token: T,
+    ) {
+        tx_token.consume(ether_repr.buffer_len() + packet.buffer_len(), |buffer| {
+            let mut frame = EthernetFrame::new_unchecked(buffer);
+            ether_repr.emit(&mut frame);
+            packet.emit_ipv4(frame.payload_mut(), &caps.checksum);
+        });
     }
 
     /// Consumes the token and emits an ARP packet.
