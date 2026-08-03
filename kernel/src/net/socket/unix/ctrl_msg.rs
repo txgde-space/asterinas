@@ -215,8 +215,12 @@ impl AuxiliaryData {
         let mut cred = None;
 
         for ctrl_msg in ctrl_msgs.into_iter() {
-            let ControlMessage::Unix(unix_ctrl_msg) = ctrl_msg;
-            // TODO: What should we do if there are control messages of other protocols?
+            let ControlMessage::Unix(unix_ctrl_msg) = ctrl_msg else {
+                // IPv4 ancillary data belongs to IPv4 sockets and has no
+                // meaning on an AF_UNIX endpoint. Keep this path permissive.
+                warn!("ignoring non-UNIX control message on an AF_UNIX socket");
+                continue;
+            };
 
             match unix_ctrl_msg.0 {
                 Message::Files(FileMessage {

@@ -2,9 +2,11 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
+#include <linux/errqueue.h>
 #include <poll.h>
 #include <stdint.h>
 #include <string.h>
@@ -18,6 +20,195 @@ FN_TEST(create_icmp_raw_socket)
 	// RAW_SOCKET_STAGE1: This guards the ABI and CAP_NET_RAW creation path.
 	int socket_fd = TEST_SUCC(socket(AF_INET, SOCK_RAW, IPPROTO_ICMP));
 	TEST_SUCC(close(socket_fd));
+}
+END_TEST()
+
+FN_TEST(create_multi_protocol_raw_sockets)
+{
+	// RAW_SOCKET_P0: protocol numbers are no longer restricted to ICMP at
+	// socket creation.  TCP, UDP and an experimental protocol all use the same
+	// IPv4 raw-socket ABI and must retain their protocol selector.
+	const int protocols[] = { IPPROTO_TCP, IPPROTO_UDP, 143 };
+	for (size_t i = 0; i < sizeof(protocols) / sizeof(protocols[0]); i++) {
+		int socket_fd =
+			TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, protocols[i]));
+		TEST_SUCC(close(socket_fd));
+	}
+}
+END_TEST()
+
+FN_TEST(send_loopback_raw_udp_payload)
+{
+	const unsigned char payload[] = "stage-p0-raw-udp";
+	unsigned char packet[512];
+	struct sockaddr_in destination = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	struct sockaddr_in source;
+	socklen_t source_len = sizeof(source);
+	struct pollfd poll_fd = { 0 };
+	int ttl = 31;
+	// The existing IP_TOS ABI preserves the ECN low bits; use an ECN-zero
+	// value here so the wire-level assertion tests the DSCP/TOS propagation.
+	int tos = 0x2c;
+
+	int raw_fd =
+		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
+	TEST_SUCC(setsockopt(raw_fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl)));
+	TEST_SUCC(setsockopt(raw_fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)));
+	TEST_RES(sendto(raw_fd, payload, sizeof(payload), 0,
+			(const struct sockaddr *)&destination,
+			sizeof(destination)),
+		 _ret == (ssize_t)sizeof(payload));
+
+	poll_fd.fd = raw_fd;
+	poll_fd.events = POLLIN;
+	TEST_RES(poll(&poll_fd, 1, 1000),
+		 _ret == 1 && (poll_fd.revents & POLLIN));
+
+	ssize_t packet_len =
+		TEST_SUCC(recvfrom(raw_fd, packet, sizeof(packet), 0,
+				   (struct sockaddr *)&source, &source_len));
+	TEST_RES(packet_len, _ret >= (ssize_t)sizeof(struct iphdr) +
+					   (ssize_t)sizeof(payload));
+	if (packet_len >= (ssize_t)sizeof(struct iphdr) + (ssize_t)sizeof(payload)) {
+		struct iphdr *ip_header = (struct iphdr *)packet;
+		size_t ip_header_len = ip_header->ihl * 4;
+		TEST_RES(ip_header->protocol, _ret == IPPROTO_UDP);
+		TEST_RES(ip_header->ttl, _ret == ttl);
+		TEST_RES(ip_header->tos, _ret == tos);
+		TEST_RES(memcmp(packet + ip_header_len, payload, sizeof(payload)),
+			 _ret == 0);
+	}
+	TEST_RES(source.sin_family, _ret == AF_INET);
+	TEST_RES(source.sin_addr.s_addr, _ret == htonl(INADDR_LOOPBACK));
+	TEST_SUCC(close(raw_fd));
+}
+END_TEST()
+
+FN_TEST(sendmsg_raw_udp_ancillary_options)
+{
+	const unsigned char payload[] = "stage9d-raw-ancillary";
+	unsigned char packet[512];
+	unsigned char control[CMSG_SPACE(sizeof(int)) * 2] = { 0 };
+	struct sockaddr_in destination = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	struct sockaddr_in source;
+	socklen_t source_len = sizeof(source);
+	struct pollfd poll_fd = { 0 };
+	struct iovec iov = {
+		.iov_base = (void *)payload,
+		.iov_len = sizeof(payload),
+	};
+	struct msghdr message = {
+		.msg_name = &destination,
+		.msg_namelen = sizeof(destination),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control,
+		.msg_controllen = sizeof(control),
+	};
+	const int ancillary_ttl = 43;
+	const int ancillary_tos = 0x2c;
+
+	struct cmsghdr *cmsg = (struct cmsghdr *)control;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(ancillary_ttl));
+	cmsg->cmsg_level = IPPROTO_IP;
+	cmsg->cmsg_type = IP_TTL;
+	memcpy(CMSG_DATA(cmsg), &ancillary_ttl, sizeof(ancillary_ttl));
+
+	cmsg = (struct cmsghdr *)(control + CMSG_SPACE(sizeof(ancillary_ttl)));
+	cmsg->cmsg_len = CMSG_LEN(sizeof(ancillary_tos));
+	cmsg->cmsg_level = IPPROTO_IP;
+	cmsg->cmsg_type = IP_TOS;
+	memcpy(CMSG_DATA(cmsg), &ancillary_tos, sizeof(ancillary_tos));
+
+	int raw_sender =
+		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
+	int raw_receiver =
+		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
+
+	// RAW_SOCKET_STAGE9D: sendmsg ancillary data overrides the socket-level
+	// defaults for one IPv4 raw packet without changing later sends.
+	TEST_RES(sendmsg(raw_sender, &message, 0),
+		 _ret == (ssize_t)sizeof(payload));
+
+	poll_fd.fd = raw_receiver;
+	poll_fd.events = POLLIN;
+	TEST_RES(poll(&poll_fd, 1, 1000),
+		 _ret == 1 && (poll_fd.revents & POLLIN));
+
+	ssize_t packet_len =
+		TEST_SUCC(recvfrom(raw_receiver, packet, sizeof(packet), 0,
+				   (struct sockaddr *)&source, &source_len));
+	TEST_RES(packet_len, _ret >= (ssize_t)sizeof(struct iphdr) +
+					   (ssize_t)sizeof(payload));
+	if (packet_len >= (ssize_t)sizeof(struct iphdr) + (ssize_t)sizeof(payload)) {
+		struct iphdr *ip_header = (struct iphdr *)packet;
+		size_t ip_header_len = ip_header->ihl * 4;
+		TEST_RES(ip_header->protocol, _ret == IPPROTO_UDP);
+		TEST_RES(ip_header->ttl, _ret == ancillary_ttl);
+		TEST_RES(ip_header->tos, _ret == ancillary_tos);
+		TEST_RES(memcmp(packet + ip_header_len, payload, sizeof(payload)),
+			 _ret == 0);
+	}
+	TEST_RES(source.sin_family, _ret == AF_INET);
+	TEST_SUCC(close(raw_receiver));
+	TEST_SUCC(close(raw_sender));
+}
+END_TEST()
+
+FN_TEST(raw_ip_recverr_local_error_queue)
+{
+	char payload[1] = { 0 };
+	unsigned char control[CMSG_SPACE(sizeof(struct sock_extended_err))] = { 0 };
+	struct sockaddr_in destination = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_ANY),
+	};
+	struct iovec iov = {
+		.iov_base = payload,
+		.iov_len = sizeof(payload),
+	};
+	struct msghdr message = {
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+		.msg_control = control,
+		.msg_controllen = sizeof(control),
+	};
+	int recverr = 1;
+	int raw_fd =
+		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
+
+	// RAW_SOCKET_STAGE9E: IP_RECVERR retains a local routing failure, exposes
+	// POLLERR, and returns the fixed sock_extended_err cmsg via MSG_ERRQUEUE.
+	TEST_SUCC(setsockopt(raw_fd, IPPROTO_IP, IP_RECVERR, &recverr,
+			     sizeof(recverr)));
+	TEST_ERRNO(sendto(raw_fd, payload, sizeof(payload), 0,
+			  (const struct sockaddr *)&destination,
+			  sizeof(destination)), ENETUNREACH);
+	struct pollfd error_poll = {
+		.fd = raw_fd,
+		.events = POLLERR,
+	};
+	TEST_RES(poll(&error_poll, 1, 0),
+		 _ret == 1 && (error_poll.revents & POLLERR));
+	TEST_RES(recvmsg(raw_fd, &message, MSG_ERRQUEUE), _ret == 0);
+	struct cmsghdr *cmsg = CMSG_FIRSTHDR(&message);
+	TEST_RES(cmsg != NULL, _ret == 1);
+	if (cmsg != NULL && cmsg->cmsg_len >= CMSG_LEN(sizeof(struct sock_extended_err))) {
+		struct sock_extended_err *extended =
+			(struct sock_extended_err *)CMSG_DATA(cmsg);
+		TEST_RES(cmsg->cmsg_level, _ret == IPPROTO_IP);
+		TEST_RES(cmsg->cmsg_type, _ret == IP_RECVERR);
+		TEST_RES(extended->ee_errno, _ret == ENETUNREACH);
+		TEST_RES(extended->ee_origin, _ret == SO_EE_ORIGIN_LOCAL);
+	}
+	TEST_ERRNO(recvmsg(raw_fd, &message, MSG_ERRQUEUE), EAGAIN);
+	TEST_SUCC(close(raw_fd));
 }
 END_TEST()
 
@@ -277,6 +468,73 @@ FN_TEST(send_hdrincl_loopback_echo_request)
 }
 END_TEST()
 
+FN_TEST(send_ipproto_raw_hdrincl_preserves_options)
+{
+	unsigned char packet[sizeof(struct iphdr) + 24] = { 0 };
+	unsigned char received[512];
+	const char payload[] = "stage-p1-hdrincl-udp";
+	struct sockaddr_in destination = {
+		.sin_family = AF_INET,
+		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+	};
+	struct sockaddr_in source;
+	socklen_t source_len = sizeof(source);
+	struct pollfd poll_fd = { 0 };
+	int hdrincl = 1;
+
+	struct iphdr *ip_header = (struct iphdr *)packet;
+	ip_header->version = 4;
+	ip_header->ihl = 5;
+	ip_header->tos = 0x2e;
+	ip_header->tot_len = htons(sizeof(packet));
+	ip_header->ttl = 37;
+	ip_header->protocol = IPPROTO_UDP;
+	ip_header->saddr = htonl(INADDR_LOOPBACK);
+	ip_header->daddr = htonl(INADDR_LOOPBACK);
+	memcpy(packet + sizeof(*ip_header), payload, sizeof(payload));
+	ip_header->check = internet_checksum(ip_header, sizeof(*ip_header));
+
+	// IPPROTO_RAW is send-only and selects the protocol from IP_HDRINCL.
+	int raw_sender = TEST_SUCC(
+		socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_RAW));
+	int raw_receiver =
+		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
+	TEST_SUCC(setsockopt(raw_sender, IPPROTO_IP, IP_HDRINCL, &hdrincl,
+			     sizeof(hdrincl)));
+
+	TEST_RES(sendto(raw_sender, packet, sizeof(packet), 0,
+			(const struct sockaddr *)&destination,
+			sizeof(destination)),
+		 _ret == (ssize_t)sizeof(packet));
+
+	poll_fd.fd = raw_receiver;
+	poll_fd.events = POLLIN;
+	TEST_RES(poll(&poll_fd, 1, 1000),
+		 _ret == 1 && (poll_fd.revents & POLLIN));
+
+	ssize_t packet_len =
+		TEST_SUCC(recvfrom(raw_receiver, received, sizeof(received), 0,
+				   (struct sockaddr *)&source, &source_len));
+	TEST_RES(packet_len, _ret == (ssize_t)sizeof(packet));
+	if (packet_len == (ssize_t)sizeof(packet)) {
+		struct iphdr *received_header = (struct iphdr *)received;
+		size_t ip_header_len = received_header->ihl * 4;
+		TEST_RES(received_header->protocol, _ret == IPPROTO_UDP);
+		TEST_RES(received_header->tos, _ret == 0x2e);
+		TEST_RES(received_header->ttl, _ret == 37);
+		TEST_RES(received_header->saddr,
+			 _ret == htonl(INADDR_LOOPBACK));
+		TEST_RES(received_header->daddr,
+			 _ret == htonl(INADDR_LOOPBACK));
+		TEST_RES(memcmp(received + ip_header_len, payload, sizeof(payload)),
+			 _ret == 0);
+	}
+	TEST_RES(source.sin_family, _ret == AF_INET);
+	TEST_SUCC(close(raw_receiver));
+	TEST_SUCC(close(raw_sender));
+}
+END_TEST()
+
 FN_TEST(netfilter_static_drop_icmp_echo)
 {
 	unsigned char request[sizeof(struct icmphdr) + 20] = { 0 };
@@ -288,6 +546,15 @@ FN_TEST(netfilter_static_drop_icmp_echo)
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
 	struct pollfd poll_fd;
+	const char flush_command[] = "iptables -F OUTPUT";
+	const char drop_command[] =
+		"iptables -A OUTPUT -p icmp --icmp-type echo-request "
+		"--icmp-id 0x0828 -j DROP";
+	int rules_fd = TEST_SUCC(open("/proc/netfilter_rules", O_RDWR));
+	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(rules_fd, drop_command, sizeof(drop_command) - 1),
+		 _ret == sizeof(drop_command) - 1);
 
 	struct icmphdr *request_header = (struct icmphdr *)request;
 	request_header->type = ICMP_ECHO;
@@ -314,6 +581,9 @@ FN_TEST(netfilter_static_drop_icmp_echo)
 	poll_fd.revents = 0;
 	TEST_RES(poll(&poll_fd, 1, 300), _ret == 0);
 
+	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_SUCC(close(rules_fd));
 	TEST_SUCC(close(raw_fd));
 }
 END_TEST()

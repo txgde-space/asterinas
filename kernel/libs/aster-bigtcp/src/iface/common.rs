@@ -2,6 +2,7 @@
 
 use alloc::{
     collections::btree_map::{BTreeMap, Entry},
+    collections::vec_deque::VecDeque,
     string::String,
     sync::Arc,
     vec::Vec,
@@ -15,7 +16,7 @@ use ostd::sync::{SpinLock, SpinLockGuard};
 use smoltcp::{
     iface::{Context, packet::Packet},
     phy::Device,
-    wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv4Packet},
+    wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv4Packet, Ipv6Address},
 };
 
 use super::{
@@ -28,7 +29,8 @@ use super::{
 use crate::{
     errors::BindError,
     ext::Ext,
-    socket::{RawIpSocketBg, TcpListenerBg, UdpSocketBg},
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet},
+    socket::{RawIpSocketBg, RawIpv4TxPacket, TcpListenerBg, UdpSocketBg},
     socket_table::SocketTable,
 };
 
@@ -37,8 +39,12 @@ pub struct IfaceCommon<E: Ext> {
     name: String,
     type_: InterfaceType,
     flags: InterfaceFlags,
+    gateway: Option<Ipv4Address>,
+    ipv6_gateway: Option<Ipv6Address>,
 
     interface: SpinLock<PollableIface<E>, BottomHalfDisabled>,
+    forwarded_packets: SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
+    forwarded_ipv6_packets: SpinLock<VecDeque<ForwardedIpv6Packet>, BottomHalfDisabled>,
     used_ports: SpinLock<BTreeMap<u16, PortState>, BottomHalfDisabled>,
     sockets: SpinLock<SocketTable<E>, BottomHalfDisabled>,
     sched_poll: E::ScheduleNextPoll,
@@ -49,6 +55,8 @@ impl<E: Ext> IfaceCommon<E> {
         name: String,
         type_: InterfaceType,
         flags: InterfaceFlags,
+        gateway: Option<Ipv4Address>,
+        ipv6_gateway: Option<Ipv6Address>,
         interface: smoltcp::iface::Interface,
         sched_poll: E::ScheduleNextPoll,
     ) -> Self {
@@ -59,7 +67,11 @@ impl<E: Ext> IfaceCommon<E> {
             name,
             type_,
             flags,
+            gateway,
+            ipv6_gateway,
             interface: SpinLock::new(PollableIface::new(interface)),
+            forwarded_packets: SpinLock::new(VecDeque::new()),
+            forwarded_ipv6_packets: SpinLock::new(VecDeque::new()),
             used_ports: SpinLock::new(BTreeMap::new()),
             sockets: SpinLock::new(SocketTable::new()),
             sched_poll,
@@ -90,6 +102,22 @@ impl<E: Ext> IfaceCommon<E> {
         self.interface.lock().prefix_len()
     }
 
+    pub(super) fn ipv4_gateway(&self) -> Option<Ipv4Address> {
+        self.gateway
+    }
+
+    pub(super) fn ipv6_addr(&self) -> Option<Ipv6Address> {
+        self.interface.lock().ipv6_addr()
+    }
+
+    pub(super) fn ipv6_prefix_len(&self) -> Option<u8> {
+        self.interface.lock().ipv6_prefix_len()
+    }
+
+    pub(super) fn ipv6_gateway(&self) -> Option<Ipv6Address> {
+        self.ipv6_gateway
+    }
+
     pub(super) fn sched_poll(&self) -> &E::ScheduleNextPoll {
         &self.sched_poll
     }
@@ -102,6 +130,33 @@ pub static INTERFACE_INDEX_ALLOCATOR: AtomicU32 = AtomicU32::new(1);
 
 // Lock order: `interface` -> `sockets`
 impl<E: Ext> IfaceCommon<E> {
+    /// Queues a routed packet for this interface.
+    ///
+    /// The queue is intentionally bounded: ingress runs in an interrupt-adjacent
+    /// path, so forwarding must not be able to consume unbounded kernel memory.
+    pub(crate) fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
+        const FORWARD_QUEUE_LIMIT: usize = 256;
+
+        let mut packets = self.forwarded_packets.lock();
+        if packets.len() >= FORWARD_QUEUE_LIMIT {
+            return false;
+        }
+        packets.push_back(packet);
+        true
+    }
+
+    /// Queues a routed IPv6 datagram for this interface.
+    pub(crate) fn enqueue_forwarded_ipv6(&self, packet: ForwardedIpv6Packet) -> bool {
+        const FORWARD_QUEUE_LIMIT: usize = 256;
+
+        let mut packets = self.forwarded_ipv6_packets.lock();
+        if packets.len() >= FORWARD_QUEUE_LIMIT {
+            return false;
+        }
+        packets.push_back(packet);
+        true
+    }
+
     /// Acquires the lock to the interface.
     pub(crate) fn interface(&self) -> SpinLockGuard<'_, PollableIface<E>, BottomHalfDisabled> {
         self.interface.lock()
@@ -233,11 +288,14 @@ impl<E: Ext> IfaceCommon<E> {
 }
 
 impl<E: Ext> IfaceCommon<E> {
-    pub(super) fn poll<D, P, Q>(
+    pub(super) fn poll<D, P, Q, R, V, S>(
         &self,
         device: &mut D,
         mut process_phy: P,
         mut dispatch_phy: Q,
+        mut dispatch_forwarded_phy: R,
+        mut dispatch_forwarded_ipv6_phy: V,
+        mut dispatch_raw_phy: S,
     ) -> Option<u64>
     where
         D: Device + ?Sized,
@@ -246,8 +304,11 @@ impl<E: Ext> IfaceCommon<E> {
                 &'cx mut Context,
                 D::TxToken<'tx>,
                 Option<(Ipv4Packet<&'pkt [u8]>, D::TxToken<'tx>)>,
-            >,
+        >,
         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
+        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+        V: FnMut(&ForwardedIpv6Packet, &mut Context, D::TxToken<'_>) -> bool,
+        S: FnMut(&RawIpv4TxPacket, &mut Context, D::TxToken<'_>),
     {
         let mut interface = self.interface();
         interface.context_mut().now = get_network_timestamp();
@@ -255,9 +316,24 @@ impl<E: Ext> IfaceCommon<E> {
         let mut sockets = self.sockets.lock();
         let mut socket_actions = Vec::new();
 
-        let mut context = PollContext::new(interface.as_mut(), &sockets, &mut socket_actions);
+        let mut context = PollContext::new(
+            interface.as_mut(),
+            &sockets,
+            &mut socket_actions,
+            self.index,
+        );
         context.poll_ingress(device, &mut process_phy, &mut dispatch_phy);
-        context.poll_egress(device, &mut dispatch_phy);
+        context.poll_forwarded_egress(
+            device,
+            &self.forwarded_packets,
+            &mut dispatch_forwarded_phy,
+        );
+        context.poll_forwarded_ipv6_egress(
+            device,
+            &self.forwarded_ipv6_packets,
+            &mut dispatch_forwarded_ipv6_phy,
+        );
+        context.poll_egress(device, &mut dispatch_phy, &mut dispatch_raw_phy);
 
         // Insert new connections and remove dead connections.
         for action in socket_actions.into_iter() {

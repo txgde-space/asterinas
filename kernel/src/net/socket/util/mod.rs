@@ -11,8 +11,10 @@ mod socket_addr;
 
 pub use linger_option::LingerOption;
 pub(super) use message_header::CControlHeader;
-pub use message_header::{ControlMessage, MessageHeader};
+pub use message_header::{
+    ControlMessage, IpControlMessage, IpExtendedError, Ipv6ControlMessage, MessageHeader,
+};
 pub(super) use port_privilege::check_port_privilege;
 pub use send_recv_flags::SendRecvFlags;
 pub use shutdown_cmd::SockShutdownCmd;
-pub use socket_addr::SocketAddr;
+pub use socket_addr::{Ipv6Address, SocketAddr};

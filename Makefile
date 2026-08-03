@@ -20,6 +20,7 @@ OSTD_TASK_STACK_SIZE_IN_PAGES ?= 64
 FEATURES ?=
 NO_DEFAULT_FEATURES ?= 0
 COVERAGE ?= 0
+EXTRA_KCMD_ARGS ?=
 
 # Specify the primary system console (supported: tty0, ttyS0, hvc0).
 # - tty0: The active virtual terminal (VT).
@@ -109,6 +110,14 @@ else ifeq ($(AUTO_TEST), regression)
 ENABLE_REGRESSION_TEST := true
 CARGO_OSDK_BUILD_ARGS += --kcmd-args="INTEL_TDX=$(INTEL_TDX)"
 CARGO_OSDK_BUILD_ARGS += --init-args="/test/run_regression_test.sh"
+else ifeq ($(AUTO_TEST), demo)
+ENABLE_REGRESSION_TEST := true
+CARGO_OSDK_BUILD_ARGS += --kcmd-args="INTEL_TDX=$(INTEL_TDX)"
+CARGO_OSDK_BUILD_ARGS += --init-args="/test/run_netfilter_demo.sh"
+else ifeq ($(AUTO_TEST), demo-step)
+ENABLE_REGRESSION_TEST := true
+CARGO_OSDK_BUILD_ARGS += --kcmd-args="INTEL_TDX=$(INTEL_TDX)"
+CARGO_OSDK_BUILD_ARGS += --init-args="/test/run_netfilter_demo_step.sh"
 else ifeq ($(AUTO_TEST), boot)
 CARGO_OSDK_BUILD_ARGS += --init-args="/test/boot_hello.sh"
 else ifeq ($(AUTO_TEST), vsock)
@@ -200,6 +209,7 @@ CARGO_OSDK_COMMON_ARGS += $(CARGO_OSDK_INITRAMFS_OPTION)
 endif
 
 CARGO_OSDK_BUILD_ARGS += $(CARGO_OSDK_COMMON_ARGS)
+CARGO_OSDK_BUILD_ARGS += $(EXTRA_KCMD_ARGS)
 CARGO_OSDK_TEST_ARGS += $(CARGO_OSDK_COMMON_ARGS)
 
 # Pass make variables to all subdirectory makes
@@ -258,7 +268,7 @@ kernel: initramfs $(CARGO_OSDK)
 # Build the kernel with an initramfs and then run it
 .PHONY: run_kernel
 run_kernel: initramfs $(CARGO_OSDK)
-	@cd kernel && cargo osdk run $(CARGO_OSDK_BUILD_ARGS)
+	@cd kernel && if [ "$(AUTO_TEST)" = "demo-step" ]; then umask 000; fi && cargo osdk run $(CARGO_OSDK_BUILD_ARGS)
 # Check the running status of auto tests from the QEMU log
 ifeq ($(AUTO_TEST), conformance)
 	@tail --lines 100 qemu.log | grep -q "^All conformance tests passed." \
@@ -266,6 +276,12 @@ ifeq ($(AUTO_TEST), conformance)
 else ifeq ($(AUTO_TEST), regression)
 	@tail --lines 100 qemu.log | grep -q "^All regression tests passed." \
 		|| (echo "Regression test failed" && exit 1)
+else ifeq ($(AUTO_TEST), demo)
+	@tail --lines 100 qemu.log | grep -q "^Netfilter demo trace passed." \
+		|| (echo "Netfilter demo failed" && exit 1)
+else ifeq ($(AUTO_TEST), demo-step)
+	@tail --lines 200 stage-records/demo/netfilter-demo-step-serial.log | grep -q "^NETFILTER_DEMO complete=1" \
+		|| (echo "Interactive Netfilter demo failed" && exit 1)
 else ifeq ($(AUTO_TEST), boot)
 	@tail --lines 100 qemu.log | grep -q "^Successfully booted." \
 		|| (echo "Boot test failed" && exit 1)
@@ -273,6 +289,27 @@ else ifeq ($(AUTO_TEST), vsock)
 	@tail --lines 100 qemu.log | grep -q "^Vsock test passed." \
 		|| (echo "Vsock test failed" && exit 1)
 endif
+
+# Boots with two virtio NICs and checks that the Stage 2A kernel-side
+# enumeration result is present in the QEMU log.
+.PHONY: stage2_multi_nic_check
+stage2_multi_nic_check:
+	@$(MAKE) --no-print-directory \
+		AUTO_TEST=boot CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
+		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.stage2_multi_nic=on"' run_kernel
+	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
+		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)
+
+# Builds and boots the Stage 2B forwarding pipeline with the explicit
+# forwarding switch enabled. It verifies configuration and initialization;
+# TAP-backed endpoint forwarding is the next acceptance milestone.
+.PHONY: stage2_forwarding_pipeline_check
+stage2_forwarding_pipeline_check:
+	@$(MAKE) --no-print-directory \
+		AUTO_TEST=boot CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
+		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.ipv4_forward=on"' run_kernel
+	@grep -q "netfilter-stage2b: ipv4 forwarding pipeline enabled" qemu.log \
+		|| (echo "Stage 2B forwarding pipeline failed to initialize" && exit 1)
 
 # Build the Asterinas NixOS ISO installer image
 iso: BOOT_PROTOCOL = linux-efi-handover64

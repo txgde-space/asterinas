@@ -104,8 +104,12 @@ const fn hash_local_remote(
     remote_port: PortNum,
 ) -> SocketHash {
     // FIXME: Deal with IPv6 addresses once IPv6 is supported.
-    let IpAddress::Ipv4(local_ipv4) = local_addr;
-    let IpAddress::Ipv4(remote_ipv4) = remote_addr;
+    let IpAddress::Ipv4(local_ipv4) = local_addr else {
+        return 0;
+    };
+    let IpAddress::Ipv4(remote_ipv4) = remote_addr else {
+        return 0;
+    };
 
     jhash_3vals(
         local_ipv4.to_bits(),
@@ -117,7 +121,9 @@ const fn hash_local_remote(
 
 const fn hash_addr_port(addr: IpAddress, port: PortNum) -> SocketHash {
     // FIXME: Deal with IPv6 addresses once IPv6 is supported.
-    let IpAddress::Ipv4(ipv4_addr) = addr;
+    let IpAddress::Ipv4(ipv4_addr) = addr else {
+        return 0;
+    };
 
     jhash_1vals(ipv4_addr.to_bits(), NET_HASHMIX) ^ (port as u32)
 }
