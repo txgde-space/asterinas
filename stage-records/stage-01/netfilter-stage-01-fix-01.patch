@@ -1,0 +1,12 @@
+diff --git a/test/initramfs/src/regression/network/netfilter_rules.c b/test/initramfs/src/regression/network/netfilter_rules.c
+--- a/test/initramfs/src/regression/network/netfilter_rules.c
++++ b/test/initramfs/src/regression/network/netfilter_rules.c
+@@ -498,5 +498,7 @@ END_TEST()
+ 
+ FN_TEST(match_netfilter_ipv4_addresses)
+ {
+-	char buffer[512];
++	// Stage 1 renders all built-in filter chains, so the legacy 512-byte
++	// snapshot buffer can truncate the LocalOut compatibility counter.
++	char buffer[2048];
+ 	const char flush_command[] = "flush OUTPUT";

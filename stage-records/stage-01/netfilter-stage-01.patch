@@ -1,0 +1,804 @@
+diff --git a/kernel/libs/aster-bigtcp/src/iface/poll.rs b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+index 2ffcc28..59d858a 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/poll.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+@@ -207,19 +207,49 @@ impl<E: Ext> PollContext<'_, E> {
+             return None;
+         }
+ 
+-        // raw socket 观察完整 IPv4 包，匹配协议号后进入 raw 接收队列。
+-        self.process_raw_ipv4(&repr, pkt.as_ref());
+-
+         let checksum_caps = self.iface.context().checksum_caps();
+-        match repr.next_header {
++        let next_header = repr.next_header;
++        let ip_repr = IpRepr::Ipv4(repr);
++        let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
++        match next_header {
+             IpProtocol::Tcp => {
+-                self.parse_and_process_tcp(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
++                let tcp_pkt = TcpPacket::new_checked(pkt.payload()).ok()?;
++                let tcp_repr = TcpRepr::parse(
++                    &tcp_pkt,
++                    &ip_repr.src_addr(),
++                    &ip_repr.dst_addr(),
++                    &checksum_caps,
++                )
++                .ok()?;
++                if !self.accept_tcp_at(HookPoint::LocalIn, &ip_repr, &tcp_repr) {
++                    return None;
++                }
++                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
++                self.parse_and_process_tcp(&ip_repr, pkt.payload(), &checksum_caps)
+             }
+             IpProtocol::Udp => {
+-                self.parse_and_process_udp(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
++                let udp_pkt = UdpPacket::new_checked(pkt.payload()).ok()?;
++                let udp_repr = UdpRepr::parse(
++                    &udp_pkt,
++                    &ip_repr.src_addr(),
++                    &ip_repr.dst_addr(),
++                    &checksum_caps,
++                )
++                .ok()?;
++                if !self.accept_udp_at(HookPoint::LocalIn, &ip_repr, &udp_repr) {
++                    return None;
++                }
++                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
++                self.parse_and_process_udp(&ip_repr, pkt.payload(), &checksum_caps)
+             }
+             IpProtocol::Icmp => {
+-                self.parse_and_process_icmpv4(&IpRepr::Ipv4(repr), pkt.payload(), &checksum_caps)
++                let icmp_packet = Icmpv4Packet::new_checked(pkt.payload()).ok()?;
++                let icmp_repr = Icmpv4Repr::parse(&icmp_packet, &checksum_caps).ok()?;
++                if !self.accept_icmpv4_at(HookPoint::LocalIn, &ip_repr, &icmp_repr) {
++                    return None;
++                }
++                self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
++                self.parse_and_process_icmpv4(&ip_repr, pkt.payload(), &checksum_caps)
+             }
+             _ => None,
+         }
+diff --git a/kernel/libs/aster-bigtcp/src/netfilter/hook.rs b/kernel/libs/aster-bigtcp/src/netfilter/hook.rs
+index 9e83fdc..88cc720 100644
+--- a/kernel/libs/aster-bigtcp/src/netfilter/hook.rs
++++ b/kernel/libs/aster-bigtcp/src/netfilter/hook.rs
+@@ -18,6 +18,19 @@ pub enum HookPoint {
+     PostRouting,
+ }
+ 
++impl HookPoint {
++    /// Returns the stable index used by the built-in IPv4 filter chains.
++    pub const fn index(self) -> usize {
++        match self {
++            Self::PreRouting => 0,
++            Self::LocalIn => 1,
++            Self::Forward => 2,
++            Self::LocalOut => 3,
++            Self::PostRouting => 4,
++        }
++    }
++}
++
+ /// Describes the result of evaluating netfilter rules.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum Verdict {
+diff --git a/kernel/libs/aster-bigtcp/src/netfilter/mod.rs b/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
+index 88072d0..c57f956 100644
+--- a/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
++++ b/kernel/libs/aster-bigtcp/src/netfilter/mod.rs
+@@ -17,8 +17,9 @@ pub use hook::{
+ };
+ pub use table::{
+     NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,
+-    append_output_icmp_echo_rule, append_output_transport_rule, delete_output_rule,
++    append_filter_icmp_echo_rule, append_filter_transport_rule, append_output_icmp_echo_rule,
++    append_output_transport_rule, delete_filter_rule, delete_output_rule, flush_filter_rules,
+     flush_nat_rules, flush_output_rules, rewrite_ipv4_icmp_postrouting,
+     rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting, write_filter_table_snapshot,
+-    zero_output_rule_counters,
++    zero_filter_rule_counters, zero_output_rule_counters,
+ };
+diff --git a/kernel/libs/aster-bigtcp/src/netfilter/table.rs b/kernel/libs/aster-bigtcp/src/netfilter/table.rs
+index afe6fc1..4c241fa 100644
+--- a/kernel/libs/aster-bigtcp/src/netfilter/table.rs
++++ b/kernel/libs/aster-bigtcp/src/netfilter/table.rs
+@@ -10,13 +10,17 @@ use super::{
+     rule::Action,
+ };
+ 
+-const STAGE10_DROPPED_ICMP_ECHO_IDENT: u16 = 0x828;
+-const MAX_OUTPUT_RULES: usize = 12;
++const MAX_FILTER_RULES: usize = 64;
+ const MAX_NAT_RULES: usize = 8;
+ const IPV4_MIN_HEADER_LEN: usize = 20;
+ 
+-static OUTPUT_RULES: SpinLock<MutableOutputRules, BottomHalfDisabled> =
+-    SpinLock::new(MutableOutputRules::new());
++static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
++    SpinLock::new(MutableFilterRules::new()),
++    SpinLock::new(MutableFilterRules::new()),
++    SpinLock::new(MutableFilterRules::new()),
++    SpinLock::new(MutableFilterRules::new()),
++    SpinLock::new(MutableFilterRules::new()),
++];
+ static NAT_RULES: SpinLock<MutableNatRules, BottomHalfDisabled> =
+     SpinLock::new(MutableNatRules::new());
+ 
+@@ -43,8 +47,8 @@ pub(super) struct FilterTable {
+ }
+ 
+ #[derive(Debug)]
+-struct MutableOutputRules {
+-    rules: [Option<OutputRule>; MAX_OUTPUT_RULES],
++struct MutableFilterRules {
++    rules: [Option<OutputRule>; MAX_FILTER_RULES],
+     len: usize,
+ }
+ 
+@@ -398,29 +402,11 @@ impl MutableNatRules {
+     }
+ }
+ 
+-impl MutableOutputRules {
++impl MutableFilterRules {
+     const fn new() -> Self {
+         Self {
+-            rules: [
+-                Some(OutputRule::icmp_echo(
+-                    Some(STAGE10_DROPPED_ICMP_ECHO_IDENT),
+-                    None,
+-                    None,
+-                    Action::Drop,
+-                )),
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-                None,
+-            ],
+-            len: 1,
++            rules: [None; MAX_FILTER_RULES],
++            len: 0,
+         }
+     }
+ 
+@@ -459,7 +445,7 @@ impl MutableOutputRules {
+     }
+ 
+     fn append_rule(&mut self, rule: OutputRule) -> bool {
+-        if self.len == MAX_OUTPUT_RULES {
++        if self.len == MAX_FILTER_RULES {
+             return false;
+         }
+ 
+@@ -544,7 +530,7 @@ impl MutableOutputRules {
+     }
+ }
+ 
+-/// Describes the protocol matched by a mutable OUTPUT rule.
++/// Describes the protocol matched by a mutable IPv4 filter rule.
+ ///
+ /// NETFILTER_STAGE20: The table now covers ICMP Echo plus TCP/UDP port
+ /// matchers, which is enough for common firewall demonstrations such as
+@@ -556,7 +542,7 @@ pub enum OutputRuleProtocol {
+     Udp,
+ }
+ 
+-/// Describes the terminal target selected by a mutable OUTPUT rule.
++/// Describes the terminal target selected by a mutable IPv4 filter rule.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+ pub enum OutputRuleTarget {
+     Accept,
+@@ -617,18 +603,16 @@ impl FilterTable {
+         context: Ipv4PacketContext<'_>,
+         icmp_repr: &Icmpv4Repr<'_>,
+     ) -> Verdict {
+-        if context.hook_point() == HookPoint::LocalOut {
+-            let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
+-                return Verdict::Accept;
+-            };
++        let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
++            return Verdict::Accept;
++        };
+ 
+-            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+-            if let Some(verdict) = OUTPUT_RULES
+-                .lock()
+-                .evaluate_matching_icmp_echo(context, *ident, packet_len)
+-            {
+-                return verdict;
+-            }
++        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
++        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
++            .lock()
++            .evaluate_matching_icmp_echo(context, *ident, packet_len)
++        {
++            return verdict;
+         }
+ 
+         let Some(chain) = self.find_chain(context.hook_point()) else {
+@@ -673,16 +657,14 @@ impl FilterTable {
+         src_port: u16,
+         dst_port: u16,
+     ) -> Verdict {
+-        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match OUTPUT
+-        // chain semantics as ICMP rules, but match transport ports.
+-        if context.hook_point() == HookPoint::LocalOut {
+-            let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
+-            if let Some(verdict) = OUTPUT_RULES
+-                .lock()
+-                .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
+-            {
+-                return verdict;
+-            }
++        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match chain
++        // semantics at INPUT, OUTPUT, and FORWARD.
++        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
++        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
++            .lock()
++            .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
++        {
++            return verdict;
+         }
+ 
+         let Some(chain) = self.find_chain(context.hook_point()) else {
+@@ -704,40 +686,46 @@ pub(super) fn filter_table() -> &'static FilterTable {
+ /// plus optional source/destination ports.
+ pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+     writeln!(writer, "table filter")?;
+-    writeln!(writer, "chain PREROUTING policy ACCEPT")?;
+-    writeln!(writer, "chain INPUT policy ACCEPT")?;
+-    writeln!(writer, "chain FORWARD policy ACCEPT")?;
+-    writeln!(writer, "chain OUTPUT policy ACCEPT")?;
+ 
+-    let output_rules = OUTPUT_RULES.lock();
+-    for (index, rule) in output_rules.rules[..output_rules.len()]
+-        .iter()
+-        .flatten()
+-        .enumerate()
+-    {
++    for hook_point in [
++        HookPoint::PreRouting,
++        HookPoint::LocalIn,
++        HookPoint::Forward,
++        HookPoint::LocalOut,
++        HookPoint::PostRouting,
++    ] {
++        let rules = FILTER_RULES[hook_point.index()].lock();
+         writeln!(
+             writer,
+-            "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
+-            index,
+-            rule.packets,
+-            rule.bytes,
+-            FormatIpv4Matcher::new(" src", rule.src_addr),
+-            FormatIpv4Matcher::new(" dst", rule.dst_addr),
+-            FormatProtocolMatcher(*rule),
+-            FormatPortMatcher::new(" sport", rule.src_port),
+-            FormatPortMatcher::new(" dport", rule.dst_port),
+-            FormatAction(rule.action),
++            "chain {} policy ACCEPT",
++            FormatFilterChain(hook_point)
++        )?;
++        for (index, rule) in rules.rules[..rules.len()].iter().flatten().enumerate() {
++            writeln!(
++                writer,
++                "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
++                index,
++                rule.packets,
++                rule.bytes,
++                FormatIpv4Matcher::new(" src", rule.src_addr),
++                FormatIpv4Matcher::new(" dst", rule.dst_addr),
++                FormatProtocolMatcher(*rule),
++                FormatPortMatcher::new(" sport", rule.src_port),
++                FormatPortMatcher::new(" dport", rule.dst_port),
++                FormatAction(rule.action),
++            )?;
++        }
++        writeln!(
++            writer,
++            "state stage1-{}-rule-count {}",
++            FormatFilterChain(hook_point),
++            rules.len()
+         )?;
++        if hook_point == HookPoint::LocalOut {
++            writeln!(writer, "state stage20-output-rule-count {}", rules.len())?;
++        }
+     }
+ 
+-    writeln!(writer, "chain POSTROUTING policy ACCEPT")?;
+-    writeln!(
+-        writer,
+-        "state stage20-output-rule-count {}",
+-        output_rules.len()
+-    )?;
+-    drop(output_rules);
+-
+     // NETFILTER_STAGE21: NAT rules are intentionally rendered in the same
+     // procfs snapshot as the filter table so the small `iptables` shim can
+     // implement `-t nat -L` without a second kernel ABI.
+@@ -779,7 +767,18 @@ pub fn append_output_icmp_echo_rule(
+     dst_addr: Option<Ipv4Address>,
+     target: OutputRuleTarget,
+ ) -> bool {
+-    OUTPUT_RULES
++    append_filter_icmp_echo_rule(HookPoint::LocalOut, ident, src_addr, dst_addr, target)
++}
++
++/// Appends an ICMP Echo filter rule to one built-in IPv4 chain.
++pub fn append_filter_icmp_echo_rule(
++    hook_point: HookPoint,
++    ident: Option<u16>,
++    src_addr: Option<Ipv4Address>,
++    dst_addr: Option<Ipv4Address>,
++    target: OutputRuleTarget,
++) -> bool {
++    FILTER_RULES[hook_point.index()]
+         .lock()
+         .append_icmp_echo(ident, src_addr, dst_addr, target)
+ }
+@@ -793,24 +792,60 @@ pub fn append_output_transport_rule(
+     dst_port: Option<u16>,
+     target: OutputRuleTarget,
+ ) -> bool {
+-    OUTPUT_RULES
++    append_filter_transport_rule(
++        HookPoint::LocalOut,
++        protocol,
++        src_addr,
++        dst_addr,
++        src_port,
++        dst_port,
++        target,
++    )
++}
++
++/// Appends a TCP or UDP filter rule to one built-in IPv4 chain.
++pub fn append_filter_transport_rule(
++    hook_point: HookPoint,
++    protocol: OutputRuleProtocol,
++    src_addr: Option<Ipv4Address>,
++    dst_addr: Option<Ipv4Address>,
++    src_port: Option<u16>,
++    dst_port: Option<u16>,
++    target: OutputRuleTarget,
++) -> bool {
++    FILTER_RULES[hook_point.index()]
+         .lock()
+         .append_transport(protocol, src_addr, dst_addr, src_port, dst_port, target)
+ }
+ 
+ /// Deletes one OUTPUT-chain rule by index.
+ pub fn delete_output_rule(index: usize) -> bool {
+-    OUTPUT_RULES.lock().delete(index)
++    delete_filter_rule(HookPoint::LocalOut, index)
++}
++
++/// Deletes one rule from a built-in IPv4 filter chain.
++pub fn delete_filter_rule(hook_point: HookPoint, index: usize) -> bool {
++    FILTER_RULES[hook_point.index()].lock().delete(index)
+ }
+ 
+ /// Flushes all OUTPUT-chain rules.
+ pub fn flush_output_rules() {
+-    OUTPUT_RULES.lock().flush();
++    flush_filter_rules(HookPoint::LocalOut);
++}
++
++/// Flushes one built-in IPv4 filter chain.
++pub fn flush_filter_rules(hook_point: HookPoint) {
++    FILTER_RULES[hook_point.index()].lock().flush();
+ }
+ 
+ /// Clears packet and byte counters from all OUTPUT-chain rules.
+ pub fn zero_output_rule_counters() {
+-    OUTPUT_RULES.lock().zero_counters();
++    zero_filter_rule_counters(HookPoint::LocalOut);
++}
++
++/// Clears counters in one built-in IPv4 filter chain.
++pub fn zero_filter_rule_counters(hook_point: HookPoint) {
++    FILTER_RULES[hook_point.index()].lock().zero_counters();
+ }
+ 
+ /// Appends a NAT control-plane rule.
+@@ -894,6 +929,20 @@ struct FormatIpv4Matcher {
+     addr: Option<Ipv4Address>,
+ }
+ 
++struct FormatFilterChain(HookPoint);
++
++impl core::fmt::Display for FormatFilterChain {
++    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        match self.0 {
++            HookPoint::PreRouting => formatter.write_str("PREROUTING"),
++            HookPoint::LocalIn => formatter.write_str("INPUT"),
++            HookPoint::Forward => formatter.write_str("FORWARD"),
++            HookPoint::LocalOut => formatter.write_str("OUTPUT"),
++            HookPoint::PostRouting => formatter.write_str("POSTROUTING"),
++        }
++    }
++}
++
+ impl FormatIpv4Matcher {
+     const fn new(label: &'static str, addr: Option<Ipv4Address>) -> Self {
+         Self { label, addr }
+diff --git a/kernel/src/fs/fs_impls/procfs/netfilter_rules.rs b/kernel/src/fs/fs_impls/procfs/netfilter_rules.rs
+index fc8e862..4e3b07f 100644
+--- a/kernel/src/fs/fs_impls/procfs/netfilter_rules.rs
++++ b/kernel/src/fs/fs_impls/procfs/netfilter_rules.rs
+@@ -9,6 +9,10 @@ use crate::{
+         vfs::inode::Inode,
+     },
+     prelude::*,
++    process::{
++        credentials::capabilities::CapSet,
++        posix_thread::AsPosixThread,
++    },
+ };
+ 
+ /// Represents the inode at `/proc/netfilter_rules`.
+@@ -39,6 +43,8 @@ impl FileOps for NetfilterRulesFileOps {
+     fn write_at(&self, _offset: usize, reader: &mut VmReader) -> Result<usize> {
+         const MAX_COMMAND_LEN: usize = 320;
+ 
++        check_netfilter_admin()?;
++
+         let (command, bytes_read) = reader.read_cstring_until_end(MAX_COMMAND_LEN)?;
+         let command = command
+             .to_str()
+@@ -52,17 +58,21 @@ impl FileOps for NetfilterRulesFileOps {
+         }
+ 
+         if command == "flush OUTPUT" {
+-            aster_bigtcp::netfilter::flush_output_rules();
++            aster_bigtcp::netfilter::flush_filter_rules(
++                aster_bigtcp::netfilter::HookPoint::LocalOut,
++            );
+             return Ok(bytes_read);
+         }
+ 
+         if command == "zero OUTPUT" {
+-            aster_bigtcp::netfilter::zero_output_rule_counters();
++            aster_bigtcp::netfilter::zero_filter_rule_counters(
++                aster_bigtcp::netfilter::HookPoint::LocalOut,
++            );
+             return Ok(bytes_read);
+         }
+ 
+         if let Some(index) = parse_delete_output_command(command)? {
+-            if !aster_bigtcp::netfilter::delete_output_rule(index) {
++            if !aster_bigtcp::netfilter::delete_filter_rule(index.0, index.1) {
+                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
+             }
+ 
+@@ -82,10 +92,10 @@ impl FileOps for NetfilterRulesFileOps {
+ enum NetfilterCommand {
+     Append(AppendOutputRule),
+     AppendNat(AppendNatRule),
+-    DeleteOutputRule(usize),
+-    FlushOutput,
++    DeleteOutputRule(aster_bigtcp::netfilter::HookPoint, usize),
++    FlushOutput(aster_bigtcp::netfilter::HookPoint),
+     FlushNat(Option<aster_bigtcp::netfilter::NatRuleChain>),
+-    ZeroOutputCounters,
++    ZeroOutputCounters(aster_bigtcp::netfilter::HookPoint),
+ }
+ 
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+@@ -95,6 +105,7 @@ enum IptablesTable {
+ }
+ 
+ struct AppendOutputRule {
++    chain: aster_bigtcp::netfilter::HookPoint,
+     protocol: aster_bigtcp::netfilter::OutputRuleProtocol,
+     ident: Option<u16>,
+     src_addr: Option<aster_bigtcp::wire::Ipv4Address>,
+@@ -120,23 +131,23 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
+     match command {
+         NetfilterCommand::Append(rule) => apply_append_rule(rule),
+         NetfilterCommand::AppendNat(rule) => apply_append_nat_rule(rule),
+-        NetfilterCommand::DeleteOutputRule(index) => {
+-            if !aster_bigtcp::netfilter::delete_output_rule(index) {
++        NetfilterCommand::DeleteOutputRule(chain, index) => {
++            if !aster_bigtcp::netfilter::delete_filter_rule(chain, index) {
+                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
+             }
+ 
+             Ok(())
+         }
+-        NetfilterCommand::FlushOutput => {
+-            aster_bigtcp::netfilter::flush_output_rules();
++        NetfilterCommand::FlushOutput(chain) => {
++            aster_bigtcp::netfilter::flush_filter_rules(chain);
+             Ok(())
+         }
+         NetfilterCommand::FlushNat(chain) => {
+             aster_bigtcp::netfilter::flush_nat_rules(chain);
+             Ok(())
+         }
+-        NetfilterCommand::ZeroOutputCounters => {
+-            aster_bigtcp::netfilter::zero_output_rule_counters();
++        NetfilterCommand::ZeroOutputCounters(chain) => {
++            aster_bigtcp::netfilter::zero_filter_rule_counters(chain);
+             Ok(())
+         }
+     }
+@@ -145,7 +156,8 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
+ fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
+     let appended = match rule.protocol {
+         aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
+-            aster_bigtcp::netfilter::append_output_icmp_echo_rule(
++            aster_bigtcp::netfilter::append_filter_icmp_echo_rule(
++                rule.chain,
+                 rule.ident,
+                 rule.src_addr,
+                 rule.dst_addr,
+@@ -154,7 +166,8 @@ fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
+         }
+         aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
+         | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
+-            aster_bigtcp::netfilter::append_output_transport_rule(
++            aster_bigtcp::netfilter::append_filter_transport_rule(
++                rule.chain,
+                 rule.protocol,
+                 rule.src_addr,
+                 rule.dst_addr,
+@@ -210,9 +223,9 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
+         IptablesTable::Filter => match operation {
+             "-A" => parse_iptables_append_command(words).map(NetfilterCommand::Append),
+             "-D" => parse_iptables_delete_command(words),
+-            "-F" => parse_iptables_chain_command(words).map(|_| NetfilterCommand::FlushOutput),
++            "-F" => parse_iptables_chain_command(words).map(NetfilterCommand::FlushOutput),
+             "-Z" => {
+-                parse_iptables_chain_command(words).map(|_| NetfilterCommand::ZeroOutputCounters)
++                parse_iptables_chain_command(words).map(NetfilterCommand::ZeroOutputCounters)
+             }
+             _ => return_errno_with_message!(Errno::EINVAL, "unsupported iptables operation"),
+         },
+@@ -252,7 +265,7 @@ fn parse_optional_iptables_table(
+ fn parse_iptables_append_command(
+     mut words: core::str::SplitWhitespace<'_>,
+ ) -> Result<AppendOutputRule> {
+-    parse_output_chain(&mut words)?;
++    let chain = parse_filter_chain(&mut words)?;
+ 
+     let mut protocol = None;
+     let mut echo_request = false;
+@@ -359,6 +372,7 @@ fn parse_iptables_append_command(
+     }
+ 
+     Ok(AppendOutputRule {
++        chain,
+         protocol,
+         ident,
+         src_addr,
+@@ -463,7 +477,7 @@ fn parse_iptables_nat_append_command(
+ fn parse_iptables_delete_command(
+     mut words: core::str::SplitWhitespace<'_>,
+ ) -> Result<NetfilterCommand> {
+-    parse_output_chain(&mut words)?;
++    let chain = parse_filter_chain(&mut words)?;
+     let Some(index) = words.next() else {
+         return_errno_with_message!(Errno::EINVAL, "missing iptables rule number");
+     };
+@@ -478,16 +492,34 @@ fn parse_iptables_delete_command(
+         return_errno_with_message!(Errno::EINVAL, "iptables rule number is one-based");
+     }
+ 
+-    Ok(NetfilterCommand::DeleteOutputRule(index - 1))
++    Ok(NetfilterCommand::DeleteOutputRule(chain, index - 1))
++}
++
++fn check_netfilter_admin() -> Result<()> {
++    let thread = current_thread!();
++    let posix_thread = thread
++        .as_posix_thread()
++        .ok_or_else(|| Error::with_message(Errno::EPERM, "netfilter requires a POSIX thread"))?;
++    let credentials = posix_thread.credentials();
++
++    if credentials.euid().is_root()
++        || credentials
++            .effective_capset()
++            .contains(CapSet::NET_ADMIN)
++    {
++        return Ok(());
++    }
++
++    return_errno_with_message!(Errno::EPERM, "netfilter requires CAP_NET_ADMIN");
+ }
+ 
+-fn parse_iptables_chain_command(mut words: core::str::SplitWhitespace<'_>) -> Result<()> {
+-    parse_output_chain(&mut words)?;
++fn parse_iptables_chain_command(mut words: core::str::SplitWhitespace<'_>) -> Result<aster_bigtcp::netfilter::HookPoint> {
++    let chain = parse_filter_chain(&mut words)?;
+     if words.next().is_some() {
+         return_errno_with_message!(Errno::EINVAL, "trailing iptables chain command tokens");
+     }
+ 
+-    Ok(())
++    Ok(chain)
+ }
+ 
+ fn parse_iptables_nat_flush_command(
+@@ -505,15 +537,17 @@ fn parse_iptables_nat_flush_command(
+     Ok(Some(chain))
+ }
+ 
+-fn parse_output_chain(words: &mut core::str::SplitWhitespace<'_>) -> Result<()> {
++fn parse_filter_chain(words: &mut core::str::SplitWhitespace<'_>) -> Result<aster_bigtcp::netfilter::HookPoint> {
+     let Some(chain) = words.next() else {
+         return_errno_with_message!(Errno::EINVAL, "missing iptables chain");
+     };
+-    if chain != "OUTPUT" {
+-        return_errno_with_message!(Errno::EINVAL, "only OUTPUT chain is supported");
+-    }
+ 
+-    Ok(())
++    match chain {
++        "INPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalIn),
++        "FORWARD" => Ok(aster_bigtcp::netfilter::HookPoint::Forward),
++        "OUTPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalOut),
++        _ => return_errno_with_message!(Errno::EINVAL, "unsupported filter chain"),
++    }
+ }
+ 
+ fn parse_nat_chain(
+@@ -579,6 +613,7 @@ fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
+                 }
+ 
+                 return Ok(AppendOutputRule {
++                    chain: aster_bigtcp::netfilter::HookPoint::LocalOut,
+                     protocol: aster_bigtcp::netfilter::OutputRuleProtocol::Icmp,
+                     ident: Some(parse_hex_u16(ident)?),
+                     src_addr,
+@@ -593,7 +628,9 @@ fn parse_append_output_rule(command: &str) -> Result<AppendOutputRule> {
+     }
+ }
+ 
+-fn parse_delete_output_command(command: &str) -> Result<Option<usize>> {
++fn parse_delete_output_command(
++    command: &str,
++) -> Result<Option<(aster_bigtcp::netfilter::HookPoint, usize)>> {
+     const PREFIX: &str = "delete OUTPUT ";
+ 
+     let Some(index) = command.strip_prefix(PREFIX) else {
+@@ -602,7 +639,7 @@ fn parse_delete_output_command(command: &str) -> Result<Option<usize>> {
+ 
+     index
+         .parse::<usize>()
+-        .map(Some)
++        .map(|index| Some((aster_bigtcp::netfilter::HookPoint::LocalOut, index)))
+         .map_err(|_| Error::with_message(Errno::EINVAL, "invalid delete index"))
+ }
+ 
+diff --git a/test/initramfs/src/regression/network/icmp_raw_socket.c b/test/initramfs/src/regression/network/icmp_raw_socket.c
+index 3a3f8e8..5bf2d59 100644
+--- a/test/initramfs/src/regression/network/icmp_raw_socket.c
++++ b/test/initramfs/src/regression/network/icmp_raw_socket.c
+@@ -2,6 +2,7 @@
+ 
+ #include <arpa/inet.h>
+ #include <errno.h>
++#include <fcntl.h>
+ #include <netinet/in.h>
+ #include <netinet/ip.h>
+ #include <netinet/ip_icmp.h>
+@@ -288,6 +289,15 @@ FN_TEST(netfilter_static_drop_icmp_echo)
+ 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
+ 	};
+ 	struct pollfd poll_fd;
++	const char flush_command[] = "iptables -F OUTPUT";
++	const char drop_command[] =
++		"iptables -A OUTPUT -p icmp --icmp-type echo-request "
++		"--icmp-id 0x0828 -j DROP";
++	int rules_fd = TEST_SUCC(open("/proc/netfilter_rules", O_RDWR));
++	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
++		 _ret == sizeof(flush_command) - 1);
++	TEST_RES(write(rules_fd, drop_command, sizeof(drop_command) - 1),
++		 _ret == sizeof(drop_command) - 1);
+ 
+ 	struct icmphdr *request_header = (struct icmphdr *)request;
+ 	request_header->type = ICMP_ECHO;
+@@ -314,6 +324,9 @@ FN_TEST(netfilter_static_drop_icmp_echo)
+ 	poll_fd.revents = 0;
+ 	TEST_RES(poll(&poll_fd, 1, 300), _ret == 0);
+ 
++	TEST_RES(write(rules_fd, flush_command, sizeof(flush_command) - 1),
++		 _ret == sizeof(flush_command) - 1);
++	TEST_SUCC(close(rules_fd));
+ 	TEST_SUCC(close(raw_fd));
+ }
+ END_TEST()
+diff --git a/test/initramfs/src/regression/network/netfilter_rules.c b/test/initramfs/src/regression/network/netfilter_rules.c
+index 75d0c20..44d6ebe 100644
+--- a/test/initramfs/src/regression/network/netfilter_rules.c
++++ b/test/initramfs/src/regression/network/netfilter_rules.c
+@@ -356,11 +356,11 @@ FN_TEST(read_netfilter_rules_snapshot)
+ 	// static filter chain/rule model without requiring an iptables ABI yet.
+ 	TEST_RES(strstr(buffer, "table filter") != NULL, _ret == 1);
+ 	TEST_RES(strstr(buffer, "chain OUTPUT policy ACCEPT") != NULL, _ret == 1);
+-	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
+-	TEST_RES(strstr(buffer, "target DROP") != NULL, _ret == 1);
+-	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
++	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") == NULL, _ret == 1);
++	TEST_RES(strstr(buffer, "target DROP") == NULL, _ret == 1);
++	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
+ 		 _ret == 1);
+-	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret == 0);
++	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret != 0);
+ 
+ 	TEST_SUCC(close(fd));
+ }
+@@ -381,8 +381,14 @@ FN_TEST(mutate_netfilter_output_rule_list)
+ 	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
+ 
+ 	// NETFILTER_STAGE14: This covers a real ordered rule-list lifecycle:
+-	// append a second rule, delete the first rule by index, flush the chain,
+-	// and restore the default rule for later tests.
++	// create two rules, delete the first rule by index, flush the chain, and
++	// restore the default rule for later tests. The default rule is test-owned;
++	// the production table starts empty.
++	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
++		 _ret == sizeof(flush_command) - 1);
++	TEST_RES(write(fd, append_default_command,
++		       sizeof(append_default_command) - 1),
++		 _ret == sizeof(append_default_command) - 1);
+ 	TEST_RES(write(fd, append_second_command, sizeof(append_second_command) - 1),
+ 		 _ret == sizeof(append_second_command) - 1);
+ 
+@@ -865,6 +871,47 @@ FN_TEST(run_userspace_iptables_tcp_udp_port_matches)
+ }
+ END_TEST()
+ 
++FN_TEST(run_userspace_iptables_input_forward_filter_chains)
++{
++	char buffer[2048];
++	char *const input_flush_command[] = { "./iptables", "-F", "INPUT", NULL };
++	char *const forward_flush_command[] = {
++		"./iptables", "-F", "FORWARD", NULL
++	};
++	char *const input_drop_command[] = {
++		"./iptables", "-A", "INPUT", "-p", "tcp", "--dport", "8080",
++		"-j", "DROP", NULL
++	};
++	char *const forward_drop_command[] = {
++		"./iptables", "-A", "FORWARD", "-p", "udp", "--dport", "5353",
++		"-j", "DROP", NULL
++	};
++
++	// NETFILTER_STAGE1: INPUT and FORWARD rules must be independently managed
++	// even before Stage 2 enables actual multi-interface forwarding.
++	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
++	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
++	TEST_RES(run_iptables_command(input_drop_command), _ret == 0);
++	TEST_RES(run_iptables_command(forward_drop_command), _ret == 0);
++
++	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
++	TEST_RES(strstr(buffer, "chain INPUT policy ACCEPT") != NULL, _ret == 1);
++	TEST_RES(strstr(buffer, "chain FORWARD policy ACCEPT") != NULL,
++		 _ret == 1);
++	TEST_RES(strstr(buffer, "tcp dport 8080 target DROP") != NULL,
++		 _ret == 1);
++	TEST_RES(strstr(buffer, "udp dport 5353 target DROP") != NULL,
++		 _ret == 1);
++	TEST_RES(strstr(buffer, "state stage1-INPUT-rule-count 1") != NULL,
++		 _ret == 1);
++	TEST_RES(strstr(buffer, "state stage1-FORWARD-rule-count 1") != NULL,
++		 _ret == 1);
++
++	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
++	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
++}
++END_TEST()
++
+ FN_TEST(run_userspace_iptables_nat_control_plane)
+ {
+ 	char buffer[2048];

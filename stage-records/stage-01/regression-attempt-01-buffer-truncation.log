@@ -1,0 +1,2374 @@
+these 11 derivations will be built:
+  /nix/store/6p3189h6f6gybvx2nd6ni2k16m748yld-device-test-0.1.0.drv
+  /nix/store/983b8vn279ai4nlr5zs49p5b02qi64bz-fs-test-0.1.0.drv
+  /nix/store/9rps3krp9ci0vgkj57r6jzy5hhf0g2l9-hello_world-test-0.1.0.drv
+  /nix/store/ahlnsm98c2w9djvhfpvwnq22c328j0h3-network-test-0.1.0.drv
+  /nix/store/b3ywqh0i4dxa7044k3ascnv2mlchfs4r-ipc-test-0.1.0.drv
+  /nix/store/kcjwgc9yxr9n2fqp7dgdl2bs9qrxaap0-memory-test-0.1.0.drv
+  /nix/store/ljxgshamg00ia4rvmh2ai05w06g5p7js-process-test-0.1.0.drv
+  /nix/store/zlr8sk6ifpkciiqk5mll6gkxygyjdzmv-security-test-0.1.0.drv
+  /nix/store/4msv85cisjn0f567rl5zfhargwaf0arr-regression-0.1.0.drv
+  /nix/store/8dnz9qrz38dr474dg7lvx23wqcqhrsq9-runtime-deps.drv
+  /nix/store/plivafhbkmnifsh9s7w9ab7dcq3yfm89-initramfs.drv
+these 2 paths will be fetched (95.2 KiB download, 1.1 MiB unpacked):
+  /nix/store/yc9d4s9z52ky0rfgwjbwvg8y83ix83x5-libnl-3.11.0-bin
+  /nix/store/9whp1z0jcw0bad01w4mdzhl2r4nmb3p2-libnl-3.11.0-dev
+copying path '/nix/store/yc9d4s9z52ky0rfgwjbwvg8y83ix83x5-libnl-3.11.0-bin' from 'https://cache.nixos.org'...
+building '/nix/store/6p3189h6f6gybvx2nd6ni2k16m748yld-device-test-0.1.0.drv'...
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/devtmpfs_mode
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/evdev
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/framebuffer
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/full
+copying path '/nix/store/9whp1z0jcw0bad01w4mdzhl2r4nmb3p2-libnl-3.11.0-dev' from 'https://cache.nixos.org'...
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/hwrng
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/random
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/close_pty
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/open_ptmx
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/open_pty
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/pty_blocking
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/pty_packet_mode
+building '/nix/store/983b8vn279ai4nlr5zs49p5b02qi64bz-fs-test-0.1.0.drv'...
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/mknod
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/open_dir
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/rename
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/rmdir
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/unix_socket
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/fdatasync/fdatasync
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_align
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_poll
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_unlink
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/isolation/chroot
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/isolation/pivot_root
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/mount/mount_move
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/overlayfs/ovl_test
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/overlayfs/readdir_small_buffer
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/dentry_cache
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/mountstats
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/pid_mem
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/tid
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/memfd_access_err
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_dentry
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_dev_id
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_inode
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_mount
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/symlink/symlink
+building '/nix/store/9rps3krp9ci0vgkj57r6jzy5hhf0g2l9-hello_world-test-0.1.0.drv'...
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_c/hello
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_c_pie/hello
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_assembly/hello
+building '/nix/store/b3ywqh0i4dxa7044k3ascnv2mlchfs4r-ipc-test-0.1.0.drv'...
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/pipe_err
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/process_pipe_available
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/short_rw
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/shm/posix_shm
+building '/nix/store/kcjwgc9yxr9n2fqp7dgdl2bs9qrxaap0-memory-test-0.1.0.drv'...
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_fork
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_mprotect
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_mremap
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_beyond_the_file
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_err
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_holes
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_readahead
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_shared_filebacked
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_vmrss
+building '/nix/store/ahlnsm98c2w9djvhfpvwnq22c328j0h3-network-test-0.1.0.drv'...
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/getsockname_any
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/icmp_raw_socket
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/inaddr_any
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/iptables
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/ipv6_any
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/linux_socket_compat
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/linux_socket_compat_common
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/listen_autobind
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/listen_backlog
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/localhost_loopback
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/netfilter_rules
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/netlink_route
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/privileged_ports
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/rtnl_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/send_buf_full
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/sendmmsg
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/socket_buffer_defaults
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/socket_readiness
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/socketpair
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/sockoption
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/sockoption_unix
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_accept_model
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_client
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_poll
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_reuseaddr
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_server
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/tcp_wrapped_buffer_io
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/udp_broadcast
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/udp_client
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/udp_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/udp_server
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/uevent_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/unix_client
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/unix_datagram_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/unix_seqpacket_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/unix_server
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/unix_stream_err
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/vsock/vsock_client
+CC <= /nix/store/9mig03648ivyvdyaa3pxkbl64qrp29wq-network-test-0.1.0/network/vsock/vsock_server
+building '/nix/store/ljxgshamg00ia4rvmh2ai05w06g5p7js-process-test-0.1.0.drv'...
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/group_session
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/job_control
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pidfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pidfd_getfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/wait4
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/alarm/alarm
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_files
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_invalid_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_no_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_parent
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_process
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/cpu_affinity/cpu_affinity
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_err
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_memfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_mt_child
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_mt_parent
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/hello
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/exit/exit_code
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/exit/exit_procfs
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/fork_c/fork
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/getcpu/getcpu
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/getpid/getpid
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/itimer/setitimer
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/itimer/timer_create
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/capbset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/secure_bits
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/subreaper
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pthread/pthread_signal_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pthread/pthread_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/ptrace/ptrace
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_attr_getset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_param_getset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_param_idle
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/fault_signals
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/kill
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/parent_death_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/pidfd_send_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/sigaltstack
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_fd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_fpu
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_rflags_df
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_test2
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/sigtrap
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/fork/fork
+building '/nix/store/zlr8sk6ifpkciiqk5mll6gkxygyjdzmv-security-test-0.1.0.drv'...
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/capabilities
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/capset
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/execve
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/execve_child
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/cgroup_ns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/ipc_ns_sem
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/mnt_ns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/proc_nsfs
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/setns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/unshare
+building '/nix/store/4msv85cisjn0f567rl5zfhargwaf0arr-regression-0.1.0.drv'...
+building '/nix/store/8dnz9qrz38dr474dg7lvx23wqcqhrsq9-runtime-deps.drv'...
+structuredAttrs is enabled
+building '/nix/store/plivafhbkmnifsh9s7w9ab7dcq3yfm89-initramfs.drv'...
+/nix/store/08khj20r91r8fhv08syc64af8l2qjd3j-initramfs
+this derivation will be built:
+  /nix/store/081r0mb4inryah666qf9ks5av1fwyhdx-initramfs-image.drv
+building '/nix/store/081r0mb4inryah666qf9ks5av1fwyhdx-initramfs-image.drv'...
+/build/tmp.h8KffSU4mR /build
+113116 blocks
+/build
+/nix/store/6iix2l5hmf1p9d2j6n5fd0d80grn1lqb-initramfs-image
+[Info] [normal] Forwarded QEMU guest port: 12090->22; 31850->8080 34029->6379 17375->5201 47609->31234 39434->31236 51417->11211
+[Info] [test] Forwarded QEMU guest port: 40059->22; 63801->8080 11283->6379 45602->5201 41982->31234 15683->31236 60791->11211
+   Compiling compiler_builtins v0.1.160 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling zerocopy v0.8.55
+   Compiling thiserror v2.0.19
+   Compiling radium v0.7.0
+   Compiling memoffset v0.9.1
+   Compiling x86 v0.52.0
+   Compiling num-traits v0.2.19
+   Compiling generic-array v0.14.9
+   Compiling serde_core v1.0.229
+   Compiling heapless v0.8.0
+   Compiling serde v1.0.229
+   Compiling smoltcp v0.11.0 (https://github.com/asterinas/smoltcp?tag=r_2024-11-08_f07e5b5#b10671de)
+   Compiling ahash v0.8.12
+   Compiling heapless v0.7.17
+   Compiling crc32fast v1.5.0
+   Compiling owo-colors v4.3.0
+   Compiling alloc v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling cfg-if v1.0.4
+   Compiling scopeguard v1.2.0
+   Compiling log v0.4.33
+   Compiling bitflags v2.13.1
+   Compiling bitflags v1.3.2
+   Compiling bit_field v0.10.3
+   Compiling lock_api v0.4.14
+   Compiling tap v1.0.1
+   Compiling raw-cpuid v10.7.0
+   Compiling wyz v0.5.1
+   Compiling uguid v2.2.1
+   Compiling spin v0.9.9
+   Compiling ptr_meta v0.3.1
+   Compiling funty v2.0.0
+   Compiling volatile v0.4.6
+   Compiling multiboot2-common v0.3.0
+   Compiling uefi-raw v0.12.0
+   Compiling lazy_static v1.5.0
+   Compiling x86_64 v0.14.13
+   Compiling iced-x86 v1.21.0
+   Compiling gimli v0.32.3
+   Compiling int-to-c-enum v0.1.0 (/root/asterinas/ostd/libs/int-to-c-enum)
+warning: unstable feature specified for `-Ctarget-feature`: `ermsb`
+  |
+  = note: this feature is not stably supported; its behavior can change in the future
+
+warning: `int-to-c-enum` (lib) generated 1 warning
+   Compiling intrusive-collections v0.9.7
+   Compiling bitvec v1.1.1
+   Compiling acpi v5.2.0
+   Compiling volatile v0.6.1
+   Compiling unwinding v0.2.8
+   Compiling align_ext v0.1.0 (/root/asterinas/ostd/libs/align_ext)
+warning: `align_ext` (lib) generated 1 warning (1 duplicate)
+   Compiling gimli v0.28.1
+   Compiling linux-boot-params v0.17.1 (/root/asterinas/ostd/libs/linux-bzimage/boot-params)
+warning: `linux-boot-params` (lib) generated 1 warning (1 duplicate)
+   Compiling ostd-test v0.17.1 (/root/asterinas/ostd/libs/ostd-test)
+   Compiling smallvec v1.15.2
+warning: `ostd-test` (lib) generated 1 warning (1 duplicate)
+   Compiling inventory v0.3.3 (https://github.com/asterinas/inventory?rev=9dce587#9dce5871)
+   Compiling component v0.1.0 (/root/asterinas/kernel/libs/comp-sys/component)
+   Compiling multiboot2 v0.24.1
+   Compiling typeflags-util v0.1.0 (/root/asterinas/kernel/libs/typeflags-util)
+warning: `typeflags-util` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-rights v0.1.0 (/root/asterinas/kernel/libs/aster-rights)
+warning: `aster-rights` (lib) generated 1 warning (1 duplicate)
+   Compiling typenum v1.20.1
+warning: `component` (lib) generated 1 warning (1 duplicate)
+   Compiling byteorder v1.5.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling allocator-api2 v0.2.21
+   Compiling id-alloc v0.1.0 (/root/asterinas/ostd/libs/id-alloc)
+   Compiling hash32 v0.3.1
+   Compiling font8x8 v0.2.7
+warning: `id-alloc` (lib) generated 1 warning (1 duplicate)
+   Compiling subtle v2.4.1
+   Compiling equivalent v1.0.2
+   Compiling foldhash v0.2.0
+   Compiling opaque-debug v0.3.1
+   Compiling cpufeatures v0.2.17
+   Compiling hashbrown v0.16.1
+   Compiling universal-hash v0.4.1
+   Compiling cipher v0.3.0
+   Compiling tdx-guest v0.2.4
+   Compiling ostd-pod v0.4.0 (/root/asterinas/ostd/libs/ostd-pod)
+   Compiling managed v0.8.0
+   Compiling ext-trait v1.0.1
+warning: `ostd-pod` (lib) generated 1 warning (1 duplicate)
+   Compiling macro_rules_attribute v0.1.3
+   Compiling memchr v2.8.3
+   Compiling nougat v0.2.4
+   Compiling extension-traits v1.0.1
+   Compiling ostd v0.17.1 (/root/asterinas/ostd)
+   Compiling polyval v0.5.3
+   Compiling hash32 v0.2.1
+   Compiling polonius-the-crab v0.2.1
+   Compiling takeable v0.2.2
+   Compiling never-say-never v6.6.666
+   Compiling no_std_io2 v0.9.4
+   Compiling jhash v0.1.0 (/root/asterinas/kernel/libs/jhash)
+   Compiling once_cell v1.21.4
+warning: `jhash` (lib) generated 1 warning (1 duplicate)
+   Compiling lending-iterator v0.1.7
+   Compiling ghash v0.4.4
+   Compiling ctr v0.8.0
+   Compiling aes v0.7.5
+   Compiling ppv-lite86 v0.2.21
+   Compiling aead v0.4.3
+   Compiling cobs v0.3.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling rle-decode-fast v1.0.3
+   Compiling rand_core v0.9.5
+   Compiling libflate_lz77 v2.3.0
+   Compiling konst v0.2.20
+   Compiling aes-gcm v0.9.4
+   Compiling rand_chacha v0.9.0
+   Compiling lru v0.16.4
+   Compiling deranged v0.5.8
+   Compiling num-conv v0.2.2
+   Compiling bittle v0.5.7
+   Compiling powerfmt v0.2.0
+   Compiling dary_heap v0.3.9
+   Compiling zero v0.1.3
+   Compiling adler32 v1.2.0
+   Compiling time-core v0.1.9
+   Compiling xmas-elf v0.10.0
+   Compiling libflate v2.3.1
+   Compiling rand v0.9.5
+   Compiling hashbrown v0.14.5
+   Compiling const_format v0.2.36
+   Compiling cpio-decoder v0.1.0 (/root/asterinas/kernel/libs/cpio-decoder)
+   Compiling time v0.3.54
+warning: `cpio-decoder` (lib) generated 1 warning (1 duplicate)
+   Compiling keyable-arc v0.1.0 (/root/asterinas/kernel/libs/keyable-arc)
+warning: `keyable-arc` (lib) generated 1 warning (1 duplicate)
+   Compiling logo-ascii-art v0.1.0 (/root/asterinas/kernel/libs/logo-ascii-art)
+warning: `logo-ascii-art` (lib) generated 1 warning (1 duplicate)
+   Compiling postcard v1.1.3
+   Compiling osdk-heap-allocator v0.17.1 (/root/asterinas/osdk/deps/heap-allocator)
+   Compiling aster-console v0.1.0 (/root/asterinas/kernel/comps/console)
+   Compiling aster-input v0.1.0 (/root/asterinas/kernel/comps/input)
+   Compiling aster-cmdline v0.1.0 (/root/asterinas/kernel/comps/cmdline)
+   Compiling aster-pci v0.1.0 (/root/asterinas/kernel/comps/pci)
+   Compiling ring-buffer v0.1.0 (/root/asterinas/kernel/libs/ring-buffer)
+   Compiling osdk-frame-allocator v0.17.1 (/root/asterinas/osdk/deps/frame-allocator)
+warning: `ring-buffer` (lib) generated 1 warning (1 duplicate)
+   Compiling xarray v0.1.0 (/root/asterinas/kernel/libs/xarray)
+warning: `xarray` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-util v0.1.0 (/root/asterinas/kernel/libs/aster-util)
+warning: `osdk-frame-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-i8042 v0.1.0 (/root/asterinas/kernel/comps/i8042)
+warning: `aster-console` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-framebuffer v0.1.0 (/root/asterinas/kernel/comps/framebuffer)
+warning: `aster-input` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-uart v0.1.0 (/root/asterinas/kernel/comps/uart)
+warning: `osdk-heap-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-softirq v0.1.0 (/root/asterinas/kernel/comps/softirq)
+warning: `aster-cmdline` (lib) generated 1 warning (1 duplicate)
+   Compiling device-id v0.1.0 (/root/asterinas/kernel/libs/device-id)
+warning: `aster-pci` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-systree v0.1.0 (/root/asterinas/kernel/comps/systree)
+warning: `aster-uart` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-time v0.1.0 (/root/asterinas/kernel/comps/time)
+warning: `device-id` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-block v0.1.0 (/root/asterinas/kernel/comps/block)
+warning: `aster-util` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-logger v0.1.0 (/root/asterinas/kernel/comps/logger)
+warning: `aster-framebuffer` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-bigtcp v0.1.0 (/root/asterinas/kernel/libs/aster-bigtcp)
+warning: `aster-logger` (lib) generated 1 warning (1 duplicate)
+warning: `aster-time` (lib) generated 1 warning (1 duplicate)
+warning: `aster-softirq` (lib) generated 1 warning (1 duplicate)
+warning: `aster-i8042` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-mlsdisk v0.1.0 (/root/asterinas/kernel/comps/mlsdisk)
+warning: `aster-systree` (lib) generated 1 warning (1 duplicate)
+warning: `aster-block` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-network v0.1.0 (/root/asterinas/kernel/comps/network)
+warning: `ostd` (lib) generated 1 warning (1 duplicate)
+warning: `aster-bigtcp` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-virtio v0.1.0 (/root/asterinas/kernel/comps/virtio)
+warning: `aster-network` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-kernel v0.1.0 (/root/asterinas/kernel)
+warning: `aster-virtio` (lib) generated 1 warning (1 duplicate)
+warning: `aster-mlsdisk` (lib) generated 1 warning (1 duplicate)
+warning: `aster-kernel` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-kernel-osdk-bin v0.1.0 (/root/asterinas/target/osdk/aster-kernel-run-base)
+warning: `aster-kernel-osdk-bin` (bin "aster-kernel-osdk-bin") generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 36.65s
+grub-mkrescue: warning: cannot open directory `/usr/local/grub/share/locale': No such file or directory.
+xorriso 1.5.6 : RockRidge filesystem manipulator, libburnia project.
+
+Drive current: -outdev 'stdio:/root/asterinas/target/osdk/aster-kernel-osdk-bin.iso'
+Media current: stdio file, overwriteable
+Media status : is blank
+Media summary: 0 sessions, 0 data blocks, 0 data,  127g free
+Added to ISO image: directory '/'='/tmp/grub.irpUUv'
+xorriso : UPDATE :     298 files added in 1 seconds
+Added to ISO image: directory '/'='/root/asterinas/target/osdk/iso_root'
+xorriso : UPDATE :     303 files added in 1 seconds
+ISO image produced: 18034 sectors
+Written to medium : 18034 sectors at LBA 0
+Writing to 'stdio:/root/asterinas/target/osdk/aster-kernel-osdk-bin.iso' completed successfully.
+
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=01h].ECX.pcid [bit 17]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.hle [bit 4]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.rtm [bit 11]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].ECX.la57 [bit 16]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EDX.spec-ctrl [bit 26]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=80000001h].ECX.cmp-legacy [bit 1]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=01h].ECX.pcid [bit 17]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.hle [bit 4]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.rtm [bit 11]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].ECX.la57 [bit 16]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EDX.spec-ctrl [bit 26]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=80000001h].ECX.cmp-legacy [bit 1]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=01h].ECX.pcid [bit 17]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.hle [bit 4]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.rtm [bit 11]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].ECX.la57 [bit 16]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EDX.spec-ctrl [bit 26]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=80000001h].ECX.cmp-legacy [bit 1]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=01h].ECX.pcid [bit 17]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.hle [bit 4]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EBX.rtm [bit 11]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].ECX.la57 [bit 16]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=07h,ecx=00h].EDX.spec-ctrl [bit 26]
+qemu-system-x86_64: warning: host doesn't support requested feature: CPUID[eax=80000001h].ECX.cmp-legacy [bit 1]
+[2J[01;01H[=3h[2J[01;01H[2J[01;01H[8;042;160t0[2J[01;01H[2J[01;01H[8;056;240t0[2J[01;01HBdsDxe: loading Boot0002 "UEFI QEMU DVD-ROM QM00005 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x2,0xFFFF,0x0)
+BdsDxe: starting Boot0002 "UEFI QEMU DVD-ROM QM00005 " from PciRoot(0x0)/Pci(0x1F,0x2)/Sata(0x2,0xFFFF,0x0)
+WARNING: no console will be available to OS
+
+error: no suitable video mode found.
+
+OSTD initialized. Preparing components.
+Spawn the first kernel thread
+[kernel] unpacking initramfs.cpio.gz to rootfs ...
+[kernel] rootfs is ready
+
+                                  [38;2;87;180;249m.[39m[38;2;89;185;249m.[39m[38;2;91;189;250m.[39m[38;2;93;193;250m.[39m[38;2;94;197;250m.[39m[38;2;96;201;250m.[39m
+                                [38;2;83;172;249m.[39m[38;2;85;176;249m-[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m:[39m
+                               [38;2;82;168;249m.[39m[38;2;83;172;249m=[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m:[39m
+                              [38;2;80;163;249m:[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m:[39m
+                            [38;2;76;155;248m.[39m[38;2;78;159;248m-[39m[38;2;80;163;249m+[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m.[39m
+                           [38;2;74;151;248m.[39m[38;2;76;155;248m=[39m[38;2;78;159;248m*[39m[38;2;80;163;249m*[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m=[39m[38;2;87;180;249m=[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m.[39m
+                          [38;2;73;147;248m:[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m*[39m[38;2;80;163;249m*[39m[38;2;82;168;249m+[39m[38;2;83;172;249m-[39m[38;2;85;176;249m.[39m[38;2;87;180;249m=[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m.[39m
+                        [38;2;69;138;248m.[39m[38;2;71;142;248m=[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m*[39m[38;2;80;163;249m+[39m[38;2;82;168;249m:[39m [38;2;85;176;249m.[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m.[39m
+                       [38;2;67;134;248m.[39m[38;2;69;138;248m+[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m=[39m[38;2;80;163;249m.[39m  [38;2;85;176;249m.[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m-[39m
+                     [38;2;63;125;247m.[39m[38;2;65;130;247m-[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m=[39m[38;2;78;159;248m.[39m   [38;2;85;176;249m:[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m-[39m
+    [38;2;33;54;245m.[39m[38;2;34;58;245m:[39m[38;2;36;62;245m:[39m[38;2;38;66;245m-[39m[38;2;40;70;245m=[39m[38;2;42;75;245m=[39m[38;2;43;79;245m=[39m[38;2;45;83;246m=[39m[38;2;47;87;246m=[39m[38;2;49;92;246m=[39m[38;2;51;96;246m=[39m[38;2;53;100;246m=[39m[38;2;54;104;246m=[39m[38;2;56;108;247m=[39m[38;2;58;113;247m=[39m[38;2;60;117;247m=[39m[38;2;62;121;247m=[39m[38;2;63;125;247m+[39m[38;2;65;130;247m*[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m+[39m[38;2;76;155;248m-[39m[38;2;78;159;248m-[39m[38;2;80;163;249m-[39m[38;2;82;168;249m-[39m[38;2;83;172;249m-[39m[38;2;85;176;249m=[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m-[39m[38;2;98;206;250m:[39m[38;2;100;210;250m:[39m[38;2;102;214;251m:[39m[38;2;103;218;251m:[39m[38;2;105;223;251m:[39m[38;2;107;227;251m:[39m[38;2;109;231;251m:[39m[38;2;111;235;251m.[39m
+        [38;2;40;70;245m.[39m[38;2;42;75;245m.[39m[38;2;43;79;245m:[39m[38;2;45;83;246m-[39m[38;2;47;87;246m*[39m[38;2;49;92;246m#[39m[38;2;51;96;246m#[39m[38;2;53;100;246m#[39m[38;2;54;104;246m#[39m[38;2;56;108;247m#[39m[38;2;58;113;247m#[39m[38;2;60;117;247m#[39m[38;2;62;121;247m#[39m[38;2;63;125;247m#[39m[38;2;65;130;247m*[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m*[39m[38;2;80;163;249m*[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m=[39m[38;2;98;206;250m=[39m[38;2;100;210;250m=[39m[38;2;102;214;251m=[39m[38;2;103;218;251m=[39m[38;2;105;223;251m=[39m[38;2;107;227;251m:[39m[38;2;109;231;251m.[39m
+              [38;2;51;96;246m.[39m[38;2;53;100;246m:[39m[38;2;54;104;246m+[39m[38;2;56;108;247m*[39m[38;2;58;113;247m#[39m[38;2;60;117;247m#[39m[38;2;62;121;247m#[39m[38;2;63;125;247m#[39m[38;2;65;130;247m#[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m+[39m[38;2;76;155;248m+[39m[38;2;78;159;248m+[39m[38;2;80;163;249m+[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m=[39m[38;2;96;201;250m=[39m[38;2;98;206;250m=[39m[38;2;100;210;250m=[39m[38;2;102;214;251m=[39m[38;2;103;218;251m-[39m[38;2;105;223;251m.[39m[38;2;107;227;251m.[39m
+                 [38;2;56;108;247m.[39m[38;2;58;113;247m.[39m[38;2;60;117;247m-[39m[38;2;62;121;247m+[39m[38;2;63;125;247m#[39m[38;2;65;130;247m*[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m=[39m[38;2;78;159;248m.[39m[38;2;80;163;249m.[39m  [38;2;85;176;249m-[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m.[39m
+                [38;2;54;104;246m-[39m[38;2;56;108;247m+[39m[38;2;58;113;247m=[39m[38;2;60;117;247m.[39m[38;2;62;121;247m.[39m[38;2;63;125;247m.[39m[38;2;65;130;247m:[39m[38;2;67;134;248m*[39m[38;2;69;138;248m*[39m[38;2;71;142;248m*[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m*[39m[38;2;80;163;249m=[39m[38;2;82;168;249m.[39m[38;2;83;172;249m.[39m[38;2;85;176;249m=[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m.[39m
+              [38;2;51;96;246m.[39m[38;2;53;100;246m+[39m[38;2;54;104;246m*[39m[38;2;56;108;247m+[39m[38;2;58;113;247m+[39m[38;2;60;117;247m+[39m[38;2;62;121;247m=[39m[38;2;63;125;247m.[39m [38;2;67;134;248m.[39m[38;2;69;138;248m.[39m[38;2;71;142;248m=[39m[38;2;73;147;248m*[39m[38;2;74;151;248m*[39m[38;2;76;155;248m*[39m[38;2;78;159;248m*[39m[38;2;80;163;249m*[39m[38;2;82;168;249m+[39m[38;2;83;172;249m-[39m[38;2;85;176;249m=[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m+[39m[38;2;94;197;250m.[39m
+            [38;2;47;87;246m.[39m[38;2;49;92;246m:[39m[38;2;51;96;246m*[39m[38;2;53;100;246m*[39m[38;2;54;104;246m*[39m[38;2;56;108;247m+[39m[38;2;58;113;247m=[39m[38;2;60;117;247m.[39m[38;2;62;121;247m.[39m     [38;2;73;147;248m.[39m[38;2;74;151;248m-[39m[38;2;76;155;248m+[39m[38;2;78;159;248m*[39m[38;2;80;163;249m*[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m=[39m[38;2;94;197;250m.[39m
+           [38;2;45;83;246m.[39m[38;2;47;87;246m-[39m[38;2;49;92;246m*[39m[38;2;51;96;246m*[39m[38;2;53;100;246m*[39m[38;2;54;104;246m+[39m[38;2;56;108;247m:[39m          [38;2;76;155;248m.[39m[38;2;78;159;248m-[39m[38;2;80;163;249m+[39m[38;2;82;168;249m+[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m=[39m
+          [38;2;43;79;245m.[39m[38;2;45;83;246m*[39m[38;2;47;87;246m#[39m[38;2;49;92;246m*[39m[38;2;51;96;246m=[39m[38;2;53;100;246m.[39m              [38;2;80;163;249m.[39m[38;2;82;168;249m=[39m[38;2;83;172;249m+[39m[38;2;85;176;249m+[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m=[39m
+        [38;2;40;70;245m.[39m[38;2;42;75;245m-[39m[38;2;43;79;245m*[39m[38;2;45;83;246m#[39m[38;2;47;87;246m+[39m[38;2;49;92;246m.[39m[38;2;51;96;246m.[39m                [38;2;82;168;249m.[39m[38;2;83;172;249m:[39m[38;2;85;176;249m=[39m[38;2;87;180;249m+[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m-[39m
+       [38;2;38;66;245m.[39m[38;2;40;70;245m=[39m[38;2;42;75;245m#[39m[38;2;43;79;245m=[39m[38;2;45;83;246m.[39m                     [38;2;85;176;249m.[39m[38;2;87;180;249m=[39m[38;2;89;185;249m+[39m[38;2;91;189;250m+[39m[38;2;93;193;250m-[39m
+      [38;2;36;62;245m:[39m[38;2;38;66;245m*[39m[38;2;40;70;245m=[39m[38;2;42;75;245m.[39m                         [38;2;89;185;249m.[39m[38;2;91;189;250m.[39m[38;2;93;193;250m.[39m
+    [38;2;33;54;245m.[39m[38;2;34;58;245m:[39m[38;2;36;62;245m-[39m[38;2;38;66;245m.[39m [38;2;42;75;245mP[39m[38;2;43;79;245mr[39m[38;2;45;83;246me[39m[38;2;47;87;246ms[39m[38;2;49;92;246me[39m[38;2;51;96;246mn[39m[38;2;53;100;246mt[39m[38;2;54;104;246me[39m[38;2;56;108;247md[39m [38;2;60;117;247mb[39m[38;2;62;121;247my[39m [38;2;65;130;247mt[39m[38;2;67;134;248mh[39m[38;2;69;138;248me[39m [38;2;73;147;248mA[39m[38;2;74;151;248ms[39m[38;2;76;155;248mt[39m[38;2;78;159;248me[39m[38;2;80;163;249mr[39m[38;2;82;168;249mi[39m[38;2;83;172;249mn[39m[38;2;85;176;249ma[39m[38;2;87;180;249ms[39m [38;2;91;189;250md[39m[38;2;93;193;250me[39m[38;2;94;197;250mv[39m[38;2;96;201;250me[39m[38;2;98;206;250ml[39m[38;2;100;210;250mo[39m[38;2;102;214;251mp[39m[38;2;103;218;251me[39m[38;2;105;223;251mr[39m[38;2;107;227;251ms[39m
+    [38;2;33;54;245m.[39m[38;2;34;58;245m.[39m [38;2;38;66;245mR[39m[38;2;40;70;245me[39m[38;2;42;75;245ml[39m[38;2;43;79;245me[39m[38;2;45;83;246ma[39m[38;2;47;87;246ms[39m[38;2;49;92;246me[39m[38;2;51;96;246md[39m [38;2;54;104;246mu[39m[38;2;56;108;247mn[39m[38;2;58;113;247md[39m[38;2;60;117;247me[39m[38;2;62;121;247mr[39m [38;2;65;130;247mM[39m[38;2;67;134;248mo[39m[38;2;69;138;248mz[39m[38;2;71;142;248mi[39m[38;2;73;147;248ml[39m[38;2;74;151;248ml[39m[38;2;76;155;248ma[39m [38;2;80;163;249mP[39m[38;2;82;168;249mu[39m[38;2;83;172;249mb[39m[38;2;85;176;249ml[39m[38;2;87;180;249mi[39m[38;2;89;185;249mc[39m [38;2;93;193;250mL[39m[38;2;94;197;250mi[39m[38;2;96;201;250mc[39m[38;2;98;206;250me[39m[38;2;100;210;250mn[39m[38;2;102;214;251ms[39m[38;2;103;218;251me[39m [38;2;107;227;251mv[39m[38;2;109;231;251m2[39m[38;2;111;235;251m.[39m[38;2;113;240;252m0[39m
+
+Running test in /test/network
+
+
+Hello message sent
+
+
+Client: Hello from client
+
+
+Hello message sent
+
+
+Server: Hello from server
+
+
+Received Hello world from udp client! from 127.0.0.1:32768
+
+
+Received Hello world from udp server! from 127.0.0.1:1234
+
+
+Server is listening...
+
+
+server path = /tmp/test.sock
+
+
+accepted client path = h$
+
+
+Server is connected to client
+
+
+Client Received: Hello from unix socket server
+
+
+Client is connected to server
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind(listen_fd, (struct sockaddr *)&bind_addr, sizeof(bind_addr))` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `getsockname(listen_fd, (struct sockaddr *)&bind_addr, &bind_addrlen)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_family` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_port` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `listen(listen_fd, 1)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `connect(connect_fd, (struct sockaddr *)&connect_addr, sizeof(connect_addr))` passed [got Operation now in progress]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `tcp_exchange_succeeds(connect_fd, accepted_fd, 'a')` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(accepted_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(connect_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(listen_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect summary: 15 tests passed, 0 tests failed
+
+
+test_udp_inaddr_any_receives_datagram: `socket(2, SOCK_DGRAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `bind(recv_fd, (struct sockaddr *)&bind_addr, sizeof(bind_addr))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `getsockname(recv_fd, (struct sockaddr *)&bind_addr, &bind_addrlen)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `bind_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&send_addr, sizeof(send_addr))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `close(send_fd)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `close(recv_fd)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram summary: 10 tests passed, 0 tests failed
+
+
+test_tcp_listen_autobinds_inaddr_any: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen(listen_fd, 1)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `getsockname(listen_fd, (struct sockaddr *)&listen_addr, &listen_addrlen)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_family` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_port` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `connect(connect_fd, (struct sockaddr *)&connect_addr, sizeof(connect_addr))` passed [got Operation now in progress]
+
+
+test_tcp_listen_autobinds_inaddr_any: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `tcp_exchange_succeeds(connect_fd, accepted_fd, 'l')` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(accepted_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(connect_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(listen_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any summary: 14 tests passed, 0 tests failed
+
+
+test_loopback_tcp_and_udp_work: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `tcp_exchange_succeeds(connect_fd, accepted_fd, 't')` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(accepted_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(connect_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(listen_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `bind(recv_fd, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `getsockname(recv_fd, (struct sockaddr *)&recv_addr, &recv_addrlen)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(send_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(recv_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work summary: 13 tests passed, 0 tests failed
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(listen_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections summary: 22 tests passed, 0 tests failed
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_no_read(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(listen_fd, 0)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_no_read(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(listen_fd, 0x001, 0x001)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(listen_fd, 1)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(listen_fd, EPOLLIN, EPOLLIN)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(accepted_fd, 0x001 | 0x004, 0x004)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_write(accepted_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(accepted_fd, EPOLLIN | EPOLLOUT, EPOLLOUT)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `write(connect_fd, &byte, sizeof(byte))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(accepted_fd, 0x001 | 0x004, 0x001 | 0x004)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(accepted_fd, 1)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(accepted_fd, EPOLLIN | EPOLLOUT, EPOLLIN | EPOLLOUT)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `read(accepted_fd, &byte, sizeof(byte))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(accepted_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(connect_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states summary: 18 tests passed, 0 tests failed
+
+
+test_udp_readiness_matches_common_service_states: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `bind(recv_fd, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `getsockname(recv_fd, (struct sockaddr *)&recv_addr, &recv_addrlen)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `poll_has_events(recv_fd, 0x001 | 0x004, 0x004)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_read(recv_fd, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_write(recv_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `epoll_has_events(recv_fd, EPOLLIN | EPOLLOUT, EPOLLOUT)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `poll_has_events(recv_fd, 0x001 | 0x004, 0x001 | 0x004)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_read(recv_fd, 1)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `epoll_has_events(recv_fd, EPOLLIN | EPOLLOUT, EPOLLIN | EPOLLOUT)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `close(send_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `close(recv_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states summary: 15 tests passed, 0 tests failed
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `setsockopt(first_listener, 1, 2, &option, sizeof(option))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `bind(first_listener, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `getsockname(first_listener, (struct sockaddr *)&restart_addr, &restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `listen(first_listener, 1)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `connect(client, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `accept(first_listener, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `tcp_exchange_succeeds(client, accepted, 's')` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(accepted)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(client)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(first_listener)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `setsockopt(second_listener, 1, 2, &option, sizeof(option))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `bind(second_listener, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `listen(second_listener, 1)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(second_listener)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart summary: 17 tests passed, 0 tests failed
+
+
+test_common_service_response_transfer: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_common_service_response_transfer: `write(accepted_fd, send_buf, sizeof(send_buf))` passed [got Success]
+
+
+test_common_service_response_transfer: `read_exact(client_fd, recv_buf, sizeof(recv_buf))` passed [got Success]
+
+
+test_common_service_response_transfer: `memcmp(send_buf, recv_buf, sizeof(send_buf))` passed [got Success]
+
+
+test_common_service_response_transfer: `close(accepted_fd)` passed [got Success]
+
+
+test_common_service_response_transfer: `close(client_fd)` passed [got Success]
+
+
+test_common_service_response_transfer: `close(listen_fd)` passed [got Success]
+
+
+test_common_service_response_transfer summary: 7 tests passed, 0 tests failed
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind(listen_fd, (struct sockaddr *)&bind_addr, sizeof(bind_addr))` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `getsockname(listen_fd, (struct sockaddr *)&bind_addr, &bind_addrlen)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_family` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `bind_addr.sin_port` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `listen(listen_fd, 1)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `connect(connect_fd, (struct sockaddr *)&connect_addr, sizeof(connect_addr))` passed [got Operation now in progress]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `tcp_exchange_succeeds(connect_fd, accepted_fd, 'a')` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(accepted_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(connect_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect: `close(listen_fd)` passed [got Success]
+
+
+test_tcp_inaddr_any_getsockname_and_connect summary: 15 tests passed, 0 tests failed
+
+
+test_udp_inaddr_any_receives_datagram: `socket(2, SOCK_DGRAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `bind(recv_fd, (struct sockaddr *)&bind_addr, sizeof(bind_addr))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `getsockname(recv_fd, (struct sockaddr *)&bind_addr, &bind_addrlen)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `bind_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&send_addr, sizeof(send_addr))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `close(send_fd)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram: `close(recv_fd)` passed [got Success]
+
+
+test_udp_inaddr_any_receives_datagram summary: 10 tests passed, 0 tests failed
+
+
+test_tcp_listen_autobinds_inaddr_any: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen(listen_fd, 1)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `getsockname(listen_fd, (struct sockaddr *)&listen_addr, &listen_addrlen)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_family` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_addr.s_addr` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `listen_addr.sin_port` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `socket(2, SOCK_STREAM | SOCK_NONBLOCK, 0)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `connect(connect_fd, (struct sockaddr *)&connect_addr, sizeof(connect_addr))` passed [got Operation now in progress]
+
+
+test_tcp_listen_autobinds_inaddr_any: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `tcp_exchange_succeeds(connect_fd, accepted_fd, 'l')` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(accepted_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(connect_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any: `close(listen_fd)` passed [got Success]
+
+
+test_tcp_listen_autobinds_inaddr_any summary: 14 tests passed, 0 tests failed
+
+
+test_loopback_tcp_and_udp_work: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `tcp_exchange_succeeds(connect_fd, accepted_fd, 't')` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(accepted_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(connect_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(listen_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `bind(recv_fd, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `getsockname(recv_fd, (struct sockaddr *)&recv_addr, &recv_addrlen)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(send_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work: `close(recv_fd)` passed [got Success]
+
+
+test_loopback_tcp_and_udp_work summary: 13 tests passed, 0 tests failed
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `connect(connect_fd, (struct sockaddr *)&listen_addr, sizeof(listen_addr))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `tcp_exchange_succeeds(connect_fd, accepted_fd, expected)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(accepted_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(connect_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections: `close(listen_fd)` passed [got Success]
+
+
+test_listener_accepts_sequential_connections summary: 22 tests passed, 0 tests failed
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_no_read(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(listen_fd, 0)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_no_read(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(listen_fd, 0x001, 0x001)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(listen_fd, 1)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(listen_fd, EPOLLIN, EPOLLIN)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `accept(listen_fd, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(accepted_fd, 0x001 | 0x004, 0x004)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_write(accepted_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(accepted_fd, EPOLLIN | EPOLLOUT, EPOLLOUT)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `write(connect_fd, &byte, sizeof(byte))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `poll_has_events(accepted_fd, 0x001 | 0x004, 0x001 | 0x004)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `select_has_read(accepted_fd, 1)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `epoll_has_events(accepted_fd, EPOLLIN | EPOLLOUT, EPOLLIN | EPOLLOUT)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `read(accepted_fd, &byte, sizeof(byte))` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(accepted_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(connect_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states: `close(listen_fd)` passed [got Success]
+
+
+test_socket_readiness_matches_common_service_states summary: 18 tests passed, 0 tests failed
+
+
+test_udp_readiness_matches_common_service_states: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `bind(recv_fd, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `getsockname(recv_fd, (struct sockaddr *)&recv_addr, &recv_addrlen)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `poll_has_events(recv_fd, 0x001 | 0x004, 0x004)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_read(recv_fd, 0)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_write(recv_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `epoll_has_events(recv_fd, EPOLLIN | EPOLLOUT, EPOLLOUT)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `sendto(send_fd, &send_byte, sizeof(send_byte), 0, (struct sockaddr *)&recv_addr, sizeof(recv_addr))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `poll_has_events(recv_fd, 0x001 | 0x004, 0x001 | 0x004)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `select_has_read(recv_fd, 1)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `epoll_has_events(recv_fd, EPOLLIN | EPOLLOUT, EPOLLIN | EPOLLOUT)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `read(recv_fd, &recv_byte, sizeof(recv_byte))` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `close(send_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states: `close(recv_fd)` passed [got Success]
+
+
+test_udp_readiness_matches_common_service_states summary: 15 tests passed, 0 tests failed
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `setsockopt(first_listener, 1, 2, &option, sizeof(option))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `bind(first_listener, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `getsockname(first_listener, (struct sockaddr *)&restart_addr, &restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `listen(first_listener, 1)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `connect(client, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `accept(first_listener, ((void *)0), ((void *)0))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `tcp_exchange_succeeds(client, accepted, 's')` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(accepted)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(client)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(first_listener)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `setsockopt(second_listener, 1, 2, &option, sizeof(option))` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `bind(second_listener, (struct sockaddr *)&restart_addr, restart_addrlen)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `listen(second_listener, 1)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart: `close(second_listener)` passed [got Success]
+
+
+test_reuseaddr_allows_service_restart summary: 17 tests passed, 0 tests failed
+
+
+test_default_socket_buffers_cover_common_services: `socket(2, SOCK_STREAM, 0)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `socket(2, SOCK_DGRAM, 0)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `getsockopt(tcp_fd, 1, 7, &optval, &optlen)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `getsockopt(tcp_fd, 1, 8, &optval, &optlen)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `getsockopt(udp_fd, 1, 7, &optval, &optlen)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `getsockopt(udp_fd, 1, 8, &optval, &optlen)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `close(udp_fd)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services: `close(tcp_fd)` passed [got Success]
+
+
+test_default_socket_buffers_cover_common_services summary: 8 tests passed, 0 tests failed
+
+
+test_ipv6_boundary_is_explicit: `socket(10, SOCK_STREAM, 0)` passed [got Address family not supported by protocol]
+
+
+test_ipv6_boundary_is_explicit: `socket(10, SOCK_DGRAM, 0)` passed [got Address family not supported by protocol]
+
+
+test_ipv6_boundary_is_explicit summary: 2 tests passed, 0 tests failed
+
+
+test_create_icmp_raw_socket: `socket(2, SOCK_RAW, IPPROTO_ICMP)` passed [got Success]
+
+
+test_create_icmp_raw_socket: `close(socket_fd)` passed [got Success]
+
+
+test_create_icmp_raw_socket summary: 2 tests passed, 0 tests failed
+
+
+test_receive_local_port_unreachable: `socket(2, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_ICMP)` passed [got Success]
+
+
+test_receive_local_port_unreachable: `socket(2, SOCK_DGRAM, IPPROTO_UDP)` passed [got Success]
+
+
+test_receive_local_port_unreachable: `sendto(udp_fd, payload, sizeof(payload), 0, (const struct sockaddr *)&destination, sizeof(destination))` passed [got Success]
+
+
+test_receive_local_port_unreachable: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_receive_local_port_unreachable: `recvfrom(raw_fd, packet, sizeof(packet), 0, (struct sockaddr *)&source, &source_len)` passed [got Success]
+
+
+test_receive_local_port_unreachable: `packet_len` passed [got Success]
+
+
+test_receive_local_port_unreachable: `ip_header_len` passed [got Success]
+
+
+test_receive_local_port_unreachable: `ip_header->protocol` passed [got Success]
+
+
+test_receive_local_port_unreachable: `icmp_header->type` passed [got Success]
+
+
+test_receive_local_port_unreachable: `icmp_header->code` passed [got Success]
+
+
+test_receive_local_port_unreachable: `source.sin_family` passed [got Success]
+
+
+test_receive_local_port_unreachable: `source.sin_addr.s_addr` passed [got Success]
+
+
+test_receive_local_port_unreachable: `close(udp_fd)` passed [got Success]
+
+
+test_receive_local_port_unreachable: `close(raw_fd)` passed [got Success]
+
+
+test_receive_local_port_unreachable summary: 14 tests passed, 0 tests failed
+
+
+test_send_loopback_echo_request: `socket(2, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_ICMP)` passed [got Success]
+
+
+test_send_loopback_echo_request: `sendto(raw_fd, request, sizeof(request), 0, (const struct sockaddr *)&destination, sizeof(destination))` passed [got Success]
+
+
+test_send_loopback_echo_request: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_send_loopback_echo_request: `recvfrom(raw_fd, packet, sizeof(packet), 0, (struct sockaddr *)&source, &source_len)` passed [got Success]
+
+
+test_send_loopback_echo_request: `packet_len` passed [got Success]
+
+
+test_send_loopback_echo_request: `found_reply` passed [got Success]
+
+
+test_send_loopback_echo_request: `source.sin_family` passed [got Success]
+
+
+test_send_loopback_echo_request: `source.sin_addr.s_addr` passed [got Success]
+
+
+test_send_loopback_echo_request: `close(raw_fd)` passed [got Success]
+
+
+test_send_loopback_echo_request summary: 9 tests passed, 0 tests failed
+
+
+test_send_hdrincl_loopback_echo_request: `socket(2, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_ICMP)` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `setsockopt(raw_fd, IPPROTO_IP, 3, &hdrincl, sizeof(hdrincl))` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `getsockopt(raw_fd, IPPROTO_IP, 3, &hdrincl, &hdrincl_len)` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `hdrincl` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `sendto(raw_fd, packet, sizeof(packet), 0, (const struct sockaddr *)&destination, sizeof(destination))` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `poll(&poll_fd, 1, 1000)` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `recvfrom(raw_fd, received, sizeof(received), 0, (struct sockaddr *)&source, &source_len)` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `found_reply` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `source.sin_family` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `source.sin_addr.s_addr` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request: `close(raw_fd)` passed [got Success]
+
+
+test_send_hdrincl_loopback_echo_request summary: 11 tests passed, 0 tests failed
+
+
+test_netfilter_static_drop_icmp_echo: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `write(rules_fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `write(rules_fd, drop_command, sizeof(drop_command) - 1)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `socket(2, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_ICMP)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `sendto(raw_fd, request, sizeof(request), 0, (const struct sockaddr *)&destination, sizeof(destination))` passed [got Success]
+
+
+Server Received: Hello from unix socket client
+
+
+test_netfilter_static_drop_icmp_echo: `poll(&poll_fd, 1, 300)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `write(rules_fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `close(rules_fd)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo: `close(raw_fd)` passed [got Success]
+
+
+test_netfilter_static_drop_icmp_echo summary: 9 tests passed, 0 tests failed
+
+
+test_nonblocking_empty_receive: `socket(2, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_ICMP)` passed [got Success]
+
+
+test_nonblocking_empty_receive: `recv(socket_fd, buffer, sizeof(buffer), 0)` passed [got Resource temporarily unavailable]
+
+
+test_nonblocking_empty_receive: `close(socket_fd)` passed [got Success]
+
+
+test_nonblocking_empty_receive summary: 3 tests passed, 0 tests failed
+
+
+test_read_netfilter_rules_snapshot: `open("/proc/netfilter_rules", 00)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `strstr(buffer, "table filter") != ((void *)0)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `strstr(buffer, "chain OUTPUT policy ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `strstr(buffer, "icmp-echo-ident 0x0828") == ((void *)0)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `strstr(buffer, "target DROP") == ((void *)0)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `strstr(buffer, "state stage20-output-rule-count 0") != ((void *)0)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `read_rule_counters(buffer, 0x828, &packets, &bytes)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot: `close(fd)` passed [got Success]
+
+
+test_read_netfilter_rules_snapshot summary: 9 tests passed, 0 tests failed
+
+
+test_mutate_netfilter_output_rule_list: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, append_default_command, sizeof(append_default_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, append_second_command, sizeof(append_second_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "icmp-echo-ident 0x0828") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "icmp-echo-ident 0x0829") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "state stage20-output-rule-count 2") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `send_echo_and_wait_reply(0x829, 0x14)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, delete_first_command, sizeof(delete_first_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "icmp-echo-ident 0x0828") == ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "icmp-echo-ident 0x0829") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "state stage20-output-rule-count 1") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `send_echo_and_wait_reply(0x828, 0x15)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `send_echo_and_wait_reply(0x829, 0x16)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "target DROP") == ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `strstr(buffer, "state stage20-output-rule-count 0") != ((void *)0)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `send_echo_and_wait_reply(0x829, 0x17)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `write(fd, append_default_command, sizeof(append_default_command) - 1)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list: `close(fd)` passed [got Success]
+
+
+test_mutate_netfilter_output_rule_list summary: 26 tests passed, 0 tests failed
+
+
+test_count_netfilter_rule_hits: `read_netfilter_rules_snapshot(before, sizeof(before))` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `read_rule_counters(before, 0x828, &before_packets, &before_bytes)` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `send_echo_and_wait_reply(0x828, 0x18)` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `send_echo_and_wait_reply(0x828, 0x19)` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `read_netfilter_rules_snapshot(after, sizeof(after))` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `read_rule_counters(after, 0x828, &after_packets, &after_bytes)` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `after_packets == before_packets + 2` passed [got Success]
+
+
+test_count_netfilter_rule_hits: `after_bytes > before_bytes` passed [got Success]
+
+
+test_count_netfilter_rule_hits summary: 8 tests passed, 0 tests failed
+
+
+test_zero_netfilter_rule_counters: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `send_echo_and_wait_reply(0x828, 0x1a)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `read_netfilter_rules_snapshot(before, sizeof(before))` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `read_rule_counters(before, 0x828, &packets, &bytes)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `packets > 0` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `bytes > 0` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `write(fd, zero_command, sizeof(zero_command) - 1)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `read_netfilter_rules_snapshot(after, sizeof(after))` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `read_rule_counters(after, 0x828, &packets, &bytes)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `packets == 0` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `bytes == 0` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `strstr(after, "icmp-echo-ident 0x0828") != ((void *)0)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters: `close(fd)` passed [got Success]
+
+
+test_zero_netfilter_rule_counters summary: 13 tests passed, 0 tests failed
+
+
+test_match_netfilter_ipv4_addresses: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, append_dst_miss_command, sizeof(append_dst_miss_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, append_dst_hit_command, sizeof(append_dst_hit_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, append_src_hit_command, sizeof(append_src_hit_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `strstr(buffer, "dst 127.0.0.2") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `strstr(buffer, "dst 127.0.0.1") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `strstr(buffer, "src 127.0.0.1") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `strstr(buffer, "state stage20-output-rule-count 3") != ((void *)0)` failed [got Success, but `_ret == 1` is false]
+
+
+test_match_netfilter_ipv4_addresses: `send_echo_and_wait_reply(0x830, 0x1b)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `send_echo_and_wait_reply(0x831, 0x1c)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `send_echo_and_wait_reply(0x832, 0x1d)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `write(fd, append_default_command, sizeof(append_default_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses: `close(fd)` passed [got Success]
+
+
+test_match_netfilter_ipv4_addresses summary: 16 tests passed, 1 tests failed
+
+
+test_match_netfilter_accept_drop_targets: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, append_accept_first_command, sizeof(append_accept_first_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, append_drop_second_command, sizeof(append_drop_second_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `strstr(buffer, "icmp-echo-ident 0x0840 target ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `strstr(buffer, "icmp-echo-ident 0x0840 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `send_echo_and_wait_reply(0x840, 0x1e)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, append_drop_first_command, sizeof(append_drop_first_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, append_accept_second_command, sizeof(append_accept_second_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `strstr(buffer, "icmp-echo-ident 0x0841 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `strstr(buffer, "icmp-echo-ident 0x0841 target ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `send_echo_and_wait_reply(0x841, 0x1f)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, flush_command, sizeof(flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `write(fd, append_default_command, sizeof(append_default_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets: `close(fd)` passed [got Success]
+
+
+test_match_netfilter_accept_drop_targets summary: 20 tests passed, 0 tests failed
+
+
+test_match_netfilter_iptables_command_compat: `open("/proc/netfilter_rules", 02)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_flush_command, sizeof(iptables_flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_drop_all_echo_command, sizeof(iptables_drop_all_echo_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `lseek(fd, 0, 0)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read(fd, buffer, sizeof(buffer) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `strstr(buffer, "icmp-type echo-request target DROP") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `strstr(buffer, "state stage20-output-rule-count 1") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `send_echo_and_wait_reply(0x850, 0x20)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `send_echo_and_wait_reply(0x851, 0x21)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read_rule_counters_by_match(buffer, "icmp-type echo-request", &packets, &bytes)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `packets == 2` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `bytes > 0` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_zero_command, sizeof(iptables_zero_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read_rule_counters_by_match(buffer, "icmp-type echo-request", &packets, &bytes)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `packets == 0` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `bytes == 0` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_delete_first_command, sizeof(iptables_delete_first_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `strstr(buffer, "state stage20-output-rule-count 0") != ((void *)0)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `send_echo_and_wait_reply(0x850, 0x22)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_accept_ident_command, sizeof(iptables_accept_ident_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_drop_ident_command, sizeof(iptables_drop_ident_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `send_echo_and_wait_reply(0x852, 0x23)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_flush_command, sizeof(iptables_flush_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `write(fd, iptables_restore_default_command, sizeof(iptables_restore_default_command) - 1)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat: `close(fd)` passed [got Success]
+
+
+test_match_netfilter_iptables_command_compat summary: 28 tests passed, 0 tests failed
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_drop_all_echo_command)` passed [got Success]
+
+
+table filter
+
+
+chain PREROUTING policy ACCEPT
+
+
+state stage1-PREROUTING-rule-count 0
+
+
+chain INPUT policy ACCEPT
+
+
+state stage1-INPUT-rule-count 0
+
+
+chain FORWARD policy ACCEPT
+
+
+state stage1-FORWARD-rule-count 0
+
+
+chain OUTPUT policy ACCEPT
+
+
+  rule 0 pkts 0 bytes 0 match icmp-type echo-request target DROP
+
+
+state stage1-OUTPUT-rule-count 1
+
+
+state stage20-output-rule-count 1
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage1-POSTROUTING-rule-count 0
+
+
+table nat
+
+
+chain PREROUTING policy ACCEPT
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage21-nat-rule-count 0
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_list_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `strstr(buffer, "icmp-type echo-request target DROP") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `strstr(buffer, "state stage20-output-rule-count 1") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `send_echo_and_wait_reply(0x860, 0x24)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `send_echo_and_wait_reply(0x861, 0x25)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_rule_counters_by_match(buffer, "icmp-type echo-request", &packets, &bytes)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `packets == 2` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `bytes > 0` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_zero_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_rule_counters_by_match(buffer, "icmp-type echo-request", &packets, &bytes)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `packets == 0` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `bytes == 0` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_delete_first_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `strstr(buffer, "state stage20-output-rule-count 0") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `send_echo_and_wait_reply(0x860, 0x26)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_accept_addr_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_drop_addr_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `strstr(buffer, "src 127.0.0.1") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `strstr(buffer, "dst 127.0.0.1") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `send_echo_and_wait_reply(0x862, 0x27)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim: `run_iptables_command(iptables_restore_default_command)` passed [got Success]
+
+
+test_run_userspace_iptables_shim summary: 29 tests passed, 0 tests failed
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_drop_udp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_drop_tcp_command)` passed [got Success]
+
+
+table filter
+
+
+chain PREROUTING policy ACCEPT
+
+
+state stage1-PREROUTING-rule-count 0
+
+
+chain INPUT policy ACCEPT
+
+
+state stage1-INPUT-rule-count 0
+
+
+chain FORWARD policy ACCEPT
+
+
+state stage1-FORWARD-rule-count 0
+
+
+chain OUTPUT policy ACCEPT
+
+
+  rule 0 pkts 0 bytes 0 match udp dport 54020 target DROP
+
+
+  rule 1 pkts 0 bytes 0 match tcp dport 54021 target DROP
+
+
+state stage1-OUTPUT-rule-count 2
+
+
+state stage20-output-rule-count 2
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage1-POSTROUTING-rule-count 0
+
+
+table nat
+
+
+chain PREROUTING policy ACCEPT
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage21-nat-rule-count 0
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_list_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "udp dport 54020 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "tcp dport 54021 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "state stage20-output-rule-count 2") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `send_udp_and_wait_port_unreachable(54020)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `tcp_connect_refused_observed(54021)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `read_rule_counters_by_match(buffer, "udp dport 54020", &packets, &bytes)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `packets > 0` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `read_rule_counters_by_match(buffer, "tcp dport 54021", &packets, &bytes)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `packets > 0` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_accept_udp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_late_drop_udp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_accept_tcp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_late_drop_tcp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "state stage20-output-rule-count 4") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "udp dport 54022 target ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `strstr(buffer, "tcp dport 54023 target ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `send_udp_and_wait_port_unreachable(54022)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `tcp_connect_refused_observed(54023)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches: `run_iptables_command(iptables_restore_default_command)` passed [got Success]
+
+
+test_run_userspace_iptables_tcp_udp_port_matches summary: 28 tests passed, 0 tests failed
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(input_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(forward_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(input_drop_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(forward_drop_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "chain INPUT policy ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "chain FORWARD policy ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "tcp dport 8080 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "udp dport 5353 target DROP") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "state stage1-INPUT-rule-count 1") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `strstr(buffer, "state stage1-FORWARD-rule-count 1") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(input_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains: `run_iptables_command(forward_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_input_forward_filter_chains summary: 13 tests passed, 0 tests failed
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_nat_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_snat_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_dnat_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_masquerade_command)` passed [got Success]
+
+
+table filter
+
+
+chain PREROUTING policy ACCEPT
+
+
+state stage1-PREROUTING-rule-count 0
+
+
+chain INPUT policy ACCEPT
+
+
+state stage1-INPUT-rule-count 0
+
+
+chain FORWARD policy ACCEPT
+
+
+state stage1-FORWARD-rule-count 0
+
+
+chain OUTPUT policy ACCEPT
+
+
+  rule 0 pkts 0 bytes 0 match icmp-echo-ident 0x0828 target DROP
+
+
+state stage1-OUTPUT-rule-count 1
+
+
+state stage20-output-rule-count 1
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage1-POSTROUTING-rule-count 0
+
+
+table nat
+
+
+chain PREROUTING policy ACCEPT
+
+
+  rule 0 chain POSTROUTING pkts 0 bytes 0 match tcp dport 8080 target SNAT to-source 10.0.2.15:40000
+
+
+  rule 1 chain PREROUTING pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354
+
+
+  rule 2 chain POSTROUTING pkts 0 bytes 0 match all target MASQUERADE
+
+
+chain POSTROUTING policy ACCEPT
+
+
+state stage21-nat-rule-count 3
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_nat_list_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "table nat") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "chain PREROUTING policy ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "chain POSTROUTING policy ACCEPT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "chain POSTROUTING pkts 0 bytes 0 match tcp dport 8080 target SNAT to-source 10.0.2.15:40000") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "chain PREROUTING pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "chain POSTROUTING pkts 0 bytes 0 match all target MASQUERADE") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "state stage21-nat-rule-count 3") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_nat_flush_prerouting_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "target DNAT") == ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "state stage21-nat-rule-count 2") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `run_iptables_command(iptables_nat_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane: `strstr(buffer, "state stage21-nat-rule-count 0") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_control_plane summary: 20 tests passed, 0 tests failed
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `run_iptables_command(iptables_nat_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `run_iptables_command(iptables_snat_icmp_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `run_iptables_command(iptables_masquerade_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `strstr(buffer, "target SNAT") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `strstr(buffer, "target MASQUERADE") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `send_raw_icmp_datagram(0x0a000202, 0x872)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `send_raw_icmp_datagram(0x0a000203, 0x873)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `read_netfilter_rules_snapshot(buffer, sizeof(buffer))` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `strstr(buffer, "state stage21-nat-rule-count 2") != ((void *)0)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path: `run_iptables_command(iptables_nat_flush_command)` passed [got Success]
+
+
+test_run_userspace_iptables_nat_postrouting_data_path summary: 11 tests passed, 0 tests failed
+
+
+Regression test failed
+make: *** [Makefile:262: run_kernel] Error 1
