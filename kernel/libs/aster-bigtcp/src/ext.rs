@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::{
-    forwarding::{ForwardedIpv4Packet, ForwardingResult},
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet, ForwardingResult},
     iface::ScheduleNextPoll,
     socket::SocketEventObserver,
 };
@@ -31,6 +31,17 @@ pub trait Ext {
     fn forward_ipv4_packet(
         _ingress_ifindex: u32,
         _packet: ForwardedIpv4Packet,
+    ) -> ForwardingResult {
+        ForwardingResult::Disabled
+    }
+
+    /// Applies platform routing policy to a non-local IPv6 packet.
+    ///
+    /// The default deliberately disables forwarding so IPv6-enabled users of
+    /// `aster-bigtcp` retain host-only behavior until they opt in.
+    fn forward_ipv6_packet(
+        _ingress_ifindex: u32,
+        _packet: ForwardedIpv6Packet,
     ) -> ForwardingResult {
         ForwardingResult::Disabled
     }

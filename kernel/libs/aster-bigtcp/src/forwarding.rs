@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use smoltcp::wire::Ipv4Repr;
+use smoltcp::wire::{Ipv4Repr, Ipv6Address};
 
 /// An IPv4 datagram that has passed ingress validation and is ready for an
 /// egress interface.
@@ -21,6 +21,76 @@ pub struct ForwardedIpv4Packet {
     pub ip_repr: Ipv4Repr,
     pub payload: Vec<u8>,
     postrouting_nat_applied: bool,
+}
+
+/// An IPv6 datagram that has passed ingress validation and is ready for an
+/// egress interface.  IPv6 forwarding keeps the complete wire datagram so
+/// extension headers and opaque transport payloads survive the router.  The
+/// only mutation performed by the forwarding policy is the Hop Limit byte.
+#[derive(Debug)]
+pub struct ForwardedIpv6Packet {
+    pub src_addr: Ipv6Address,
+    pub dst_addr: Ipv6Address,
+    bytes: Vec<u8>,
+}
+
+impl ForwardedIpv6Packet {
+    const HEADER_LEN: usize = 40;
+
+    /// Parses a complete IPv6 datagram copied from an Ethernet frame.
+    pub fn new(bytes: Vec<u8>) -> Option<Self> {
+        if bytes.len() < Self::HEADER_LEN || bytes[0] >> 4 != 6 {
+            return None;
+        }
+        let payload_len = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        if Self::HEADER_LEN.saturating_add(payload_len) > bytes.len() {
+            return None;
+        }
+
+        Some(Self {
+            src_addr: Ipv6Address::new(
+                u16::from_be_bytes([bytes[8], bytes[9]]),
+                u16::from_be_bytes([bytes[10], bytes[11]]),
+                u16::from_be_bytes([bytes[12], bytes[13]]),
+                u16::from_be_bytes([bytes[14], bytes[15]]),
+                u16::from_be_bytes([bytes[16], bytes[17]]),
+                u16::from_be_bytes([bytes[18], bytes[19]]),
+                u16::from_be_bytes([bytes[20], bytes[21]]),
+                u16::from_be_bytes([bytes[22], bytes[23]]),
+            ),
+            dst_addr: Ipv6Address::new(
+                u16::from_be_bytes([bytes[24], bytes[25]]),
+                u16::from_be_bytes([bytes[26], bytes[27]]),
+                u16::from_be_bytes([bytes[28], bytes[29]]),
+                u16::from_be_bytes([bytes[30], bytes[31]]),
+                u16::from_be_bytes([bytes[32], bytes[33]]),
+                u16::from_be_bytes([bytes[34], bytes[35]]),
+                u16::from_be_bytes([bytes[36], bytes[37]]),
+                u16::from_be_bytes([bytes[38], bytes[39]]),
+            ),
+            bytes,
+        })
+    }
+
+    pub fn hop_limit(&self) -> u8 {
+        self.bytes[7]
+    }
+
+    pub fn decrement_hop_limit(&mut self) -> bool {
+        if self.bytes[7] <= 1 {
+            return false;
+        }
+        self.bytes[7] -= 1;
+        true
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 impl ForwardedIpv4Packet {

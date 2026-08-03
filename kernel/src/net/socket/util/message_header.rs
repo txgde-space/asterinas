@@ -37,6 +37,7 @@ impl MessageHeader {
 pub enum ControlMessage {
     Unix(UnixControlMessage),
     Ip(IpControlMessage),
+    IpV6(Ipv6ControlMessage),
 }
 
 /// IPv4 ancillary data accepted by `sendmsg`.
@@ -49,6 +50,14 @@ pub enum ControlMessage {
 pub enum IpControlMessage {
     Tos(i32),
     Ttl(i32),
+    ExtendedError(IpExtendedError),
+}
+
+/// IPv6 ancillary data accepted by `sendmsg` and returned by `recvmsg`.
+#[derive(Debug)]
+pub enum Ipv6ControlMessage {
+    HopLimit(i32),
+    TClass(i32),
     ExtendedError(IpExtendedError),
 }
 
@@ -134,11 +143,82 @@ impl IpControlMessage {
     }
 }
 
+impl Ipv6ControlMessage {
+    fn read_from(header: &CControlHeader, reader: &mut VmReader) -> Result<Option<Self>> {
+        debug_assert_eq!(header.level(), Some(CSocketOptionLevel::SOL_IPV6));
+
+        let message = match header.type_() {
+            IPV6_HOPLIMIT | IPV6_TCLASS => {
+                if header.payload_len() != size_of::<i32>() {
+                    return_errno_with_message!(
+                        Errno::EINVAL,
+                        "the IPv6 control message is invalid"
+                    );
+                }
+                let value = reader.read_val::<i32>()?;
+                if header.type_() == IPV6_HOPLIMIT {
+                    Self::HopLimit(value)
+                } else {
+                    Self::TClass(value)
+                }
+            }
+            IPV6_RECVERR => {
+                if header.payload_len() != size_of::<IpExtendedError>() {
+                    return_errno_with_message!(
+                        Errno::EINVAL,
+                        "the extended IPv6 error control message is invalid"
+                    );
+                }
+                Self::ExtendedError(reader.read_val::<IpExtendedError>()?)
+            }
+            _ => {
+                warn!("unsupported IPv6 control message type in {:?}", header);
+                reader.skip(header.payload_len());
+                return Ok(None);
+            }
+        };
+        Ok(Some(message))
+    }
+
+    fn write_to(&self, writer: &mut VmWriter) -> Result<CControlHeader> {
+        match self {
+            Self::HopLimit(value) | Self::TClass(value) => {
+                let type_ = if matches!(self, Self::HopLimit(_)) {
+                    IPV6_HOPLIMIT
+                } else {
+                    IPV6_TCLASS
+                };
+                let header = CControlHeader::new(
+                    CSocketOptionLevel::SOL_IPV6,
+                    type_,
+                    size_of::<i32>(),
+                );
+                writer.write_val(&header)?;
+                writer.write_val(value)?;
+                Ok(header)
+            }
+            Self::ExtendedError(error) => {
+                let header = CControlHeader::new(
+                    CSocketOptionLevel::SOL_IPV6,
+                    IPV6_RECVERR,
+                    size_of::<IpExtendedError>(),
+                );
+                writer.write_val(&header)?;
+                writer.write_val(error)?;
+                Ok(header)
+            }
+        }
+    }
+}
+
 // Values from <netinet/in.h>.  They are deliberately local to the ancillary
 // parser so the socket-option enum does not have to model cmsg type numbers.
 const IP_TOS: i32 = 1;
 const IP_TTL: i32 = 2;
 const IP_RECVERR: i32 = 11;
+const IPV6_HOPLIMIT: i32 = 52;
+const IPV6_RECVERR: i32 = 25;
+const IPV6_TCLASS: i32 = 67;
 
 impl ControlMessage {
     pub fn read_all_from(reader: &mut VmReader) -> Result<Vec<Self>> {
@@ -196,6 +276,10 @@ impl ControlMessage {
                 let msg = IpControlMessage::read_from(header, reader)?;
                 Ok(msg.map(Self::Ip))
             }
+            CSocketOptionLevel::SOL_IPV6 => {
+                let msg = Ipv6ControlMessage::read_from(header, reader)?;
+                Ok(msg.map(Self::IpV6))
+            }
             _ => {
                 warn!("unsupported control message level in {:?}", header);
                 reader.skip(header.payload_len());
@@ -234,6 +318,7 @@ impl ControlMessage {
         match self {
             Self::Unix(msg) => msg.write_to(writer),
             Self::Ip(msg) => msg.write_to(writer),
+            Self::IpV6(msg) => msg.write_to(writer),
         }
     }
 }

@@ -183,7 +183,12 @@ impl RawSocket {
                         "raw IPv4 sockets require an IPv4 destination address",
                     )
                 })?;
-                let IpAddress::Ipv4(destination) = endpoint.addr;
+                let IpAddress::Ipv4(destination) = endpoint.addr else {
+                    return_errno_with_message!(
+                        Errno::EAFNOSUPPORT,
+                        "raw IPv4 sockets require an IPv4 destination address"
+                    );
+                };
                 destination
             }
         };
@@ -239,7 +244,12 @@ impl RawSocket {
             .local_endpoint
             .read()
             .unwrap_or_else(|| get_ephemeral_endpoint(&remote_endpoint));
-        let IpAddress::Ipv4(local_addr) = local_endpoint.addr;
+        let IpAddress::Ipv4(local_addr) = local_endpoint.addr else {
+            return_errno_with_message!(
+                Errno::EAFNOSUPPORT,
+                "raw IPv4 sockets require an IPv4 local address"
+            );
+        };
         let source = parsed_header
             .as_ref()
             .map_or(local_addr, |packet| {
@@ -554,7 +564,7 @@ fn raw_control_options(control_messages: &[ControlMessage]) -> Result<(Option<u8
     Ok((tos, ttl))
 }
 
-fn check_raw_socket_privilege() -> Result<()> {
+pub(super) fn check_raw_socket_privilege() -> Result<()> {
     let credentials = {
         let thread = current_thread!();
         let posix_thread = thread.as_posix_thread().unwrap();

@@ -2,6 +2,7 @@
 
 pub use smoltcp::wire::{
     EthernetAddress, IpAddress, IpCidr, IpEndpoint, IpProtocol, Ipv4Address, Ipv4Cidr,
+    Ipv6Address, Ipv6Cidr,
 };
 
 pub type PortNum = u16;
