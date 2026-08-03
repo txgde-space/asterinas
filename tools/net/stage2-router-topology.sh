@@ -184,6 +184,197 @@ test_icmp_forward_drop() {
     echo "netfilter-stage3: FORWARD ICMP DROP passed"
 }
 
+test_tcp_masquerade() {
+    require_stage4_dependencies
+    local capture server_pid capture_pid output ports
+    capture=$(mktemp)
+    trap 'rm -f "$capture" "$capture.server"' RETURN
+
+    ip netns exec "$RIGHT_NS" python3 -c '
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("10.0.3.2", 9000))
+s.listen(2)
+for _ in range(2):
+    c, _ = s.accept()
+    data = c.recv(64)
+    c.sendall(data)
+    c.close()
+s.close()
+' >"$capture.server" 2>&1 &
+    server_pid=$!
+    tcpdump -n -l -i "$RIGHT_BR" -c 2 'tcp dst port 9000 and tcp[tcpflags] & tcp-syn != 0' >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 0.2
+
+    echo "Testing two TCP MASQUERADE flows through Asterinas..."
+    if ! output=$(ip netns exec "$LEFT_NS" python3 -c '
+import socket
+for port in (31001, 31002):
+    s = socket.socket()
+    s.settimeout(5)
+    s.bind(("10.0.2.2", port))
+    s.connect(("10.0.3.2", 9000))
+    payload = ("stage4-tcp-%d" % port).encode()
+    s.sendall(payload)
+    assert s.recv(64) == payload
+    s.close()
+print("stage4 TCP application replies passed")
+' 2>&1); then
+        printf '%s\n' "$output"
+        # Do not wait here: a netns child can survive the parent and make a
+        # failed acceptance test hang indefinitely. These namespaces are
+        # dedicated to this harness, so terminate their test children now.
+        kill "$server_pid" "$capture_pid" 2>/dev/null || true
+        for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
+        cat "$capture.server" >&2 || true
+        cat "$capture" >&2 || true
+        return 1
+    fi
+    printf '%s\n' "$output"
+    wait "$server_pid"
+    wait "$capture_pid"
+    cat "$capture"
+
+    if ! grep -Eq '10\.0\.3\.15\.[0-9]+ > 10\.0\.3\.2\.9000' "$capture"; then
+        echo "Stage 4 TCP MASQUERADE source tuple was not observed on $RIGHT_BR." >&2
+        return 1
+    fi
+    ports=$(grep -oE '10\.0\.3\.15\.[0-9]+' "$capture" | sort -u | wc -l)
+    if [ "$ports" -lt 2 ]; then
+        echo "Stage 4 TCP MASQUERADE did not allocate distinct translated ports." >&2
+        return 1
+    fi
+    echo "netfilter-stage4: stateful TCP MASQUERADE passed"
+}
+
+test_udp_masquerade() {
+    require_stage4_dependencies
+    local capture server_pid capture_pid output
+    capture=$(mktemp)
+    trap 'rm -f "$capture" "$capture.server"' RETURN
+
+    ip netns exec "$RIGHT_NS" python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("10.0.3.2", 9001))
+data, peer = s.recvfrom(64)
+s.sendto(data, peer)
+s.close()
+' >"$capture.server" 2>&1 &
+    server_pid=$!
+    tcpdump -n -l -i "$RIGHT_BR" -c 1 'udp dst port 9001' >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 0.2
+
+    echo "Testing UDP MASQUERADE through Asterinas..."
+    if ! output=$(ip netns exec "$LEFT_NS" python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(5)
+s.bind(("10.0.2.2", 32001))
+payload = b"stage4-udp"
+s.sendto(payload, ("10.0.3.2", 9001))
+data, _ = s.recvfrom(64)
+assert data == payload
+print("stage4 UDP application reply passed")
+' 2>&1); then
+        printf '%s\n' "$output"
+        # Failure diagnostics must not block on a lingering process in the
+        # dedicated right-hand namespace.
+        kill "$server_pid" "$capture_pid" 2>/dev/null || true
+        for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
+        cat "$capture.server" >&2 || true
+        cat "$capture" >&2 || true
+        return 1
+    fi
+    printf '%s\n' "$output"
+    wait "$server_pid"
+    wait "$capture_pid"
+    cat "$capture"
+
+    if ! grep -Eq '10\.0\.3\.15\.[0-9]+ > 10\.0\.3\.2\.9001' "$capture"; then
+        echo "Stage 4 UDP MASQUERADE source tuple was not observed on $RIGHT_BR." >&2
+        return 1
+    fi
+    echo "netfilter-stage4: stateful UDP MASQUERADE passed"
+}
+
+test_tcp_dnat() {
+    require_stage4_dependencies
+    local capture server_pid capture_pid output
+    capture=$(mktemp)
+    trap 'rm -f "$capture" "$capture.server"' RETURN
+
+    ip netns exec "$RIGHT_NS" python3 -c '
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("10.0.3.2", 9002))
+s.listen(1)
+c, _ = s.accept()
+data = c.recv(64)
+c.sendall(data)
+c.close()
+s.close()
+' >"$capture.server" 2>&1 &
+    server_pid=$!
+    tcpdump -n -l -i "$RIGHT_BR" -c 1 'tcp dst port 9002 and tcp[tcpflags] & tcp-syn != 0' >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 0.2
+
+    echo "Testing TCP port-DNAT through Asterinas..."
+    if ! output=$(ip netns exec "$LEFT_NS" python3 -c '
+import socket
+s = socket.socket()
+s.settimeout(5)
+s.bind(("10.0.2.2", 33001))
+s.connect(("10.0.2.15", 9002))
+payload = b"stage4-dnat"
+s.sendall(payload)
+assert s.recv(64) == payload
+s.close()
+print("stage4 TCP DNAT application reply passed")
+' 2>&1); then
+        printf '%s\n' "$output"
+        # Failure diagnostics must not block on a lingering process in the
+        # dedicated right-hand namespace.
+        kill "$server_pid" "$capture_pid" 2>/dev/null || true
+        for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
+            kill "$pid" 2>/dev/null || true
+        done
+        cat "$capture.server" >&2 || true
+        cat "$capture" >&2 || true
+        return 1
+    fi
+    printf '%s\n' "$output"
+    wait "$server_pid"
+    wait "$capture_pid"
+    cat "$capture"
+
+    if ! grep -Eq '10\.0\.2\.2\.[0-9]+ > 10\.0\.3\.2\.9002' "$capture"; then
+        echo "Stage 4 TCP DNAT backend tuple was not observed on $RIGHT_BR." >&2
+        return 1
+    fi
+    echo "netfilter-stage4: stateful TCP DNAT passed"
+}
+
+require_stage4_dependencies() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+    if ! command -v tcpdump >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        echo "Stage 4 acceptance requires tcpdump and python3 on the Ubuntu host." >&2
+        exit 1
+    fi
+}
+
 run_ping() {
     local namespace=$1
     local destination=$2
@@ -222,7 +413,7 @@ teardown() {
 }
 
 usage() {
-    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|show|teardown}" >&2
+    echo "Usage: $0 {setup|test|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
 }
 
 require_root
@@ -232,6 +423,9 @@ case "${1:-}" in
     test-nat) test_icmp_masquerade ;;
     test-dnat) test_icmp_dnat ;;
     test-forward-drop) test_icmp_forward_drop ;;
+    test-tcp-nat) test_tcp_masquerade ;;
+    test-udp-nat) test_udp_masquerade ;;
+    test-tcp-dnat) test_tcp_dnat ;;
     show) show ;;
     teardown) teardown ;;
     *) usage; exit 2 ;;
