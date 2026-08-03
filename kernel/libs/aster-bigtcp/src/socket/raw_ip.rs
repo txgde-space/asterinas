@@ -4,7 +4,10 @@ use alloc::{collections::vec_deque::VecDeque, sync::Arc, vec::Vec};
 
 use aster_softirq::BottomHalfDisabled;
 use ostd::sync::SpinLock;
-use smoltcp::wire::{IpProtocol, Ipv4Address};
+use smoltcp::{
+    phy::ChecksumCapabilities,
+    wire::{IpProtocol, Ipv4Address, Ipv4Packet, Ipv4Repr},
+};
 
 use crate::{
     ext::Ext,
@@ -42,6 +45,10 @@ impl RawIpv4Packet {
 /// An IPv4 payload waiting to be transmitted by a raw IP socket.
 pub(crate) struct RawIpv4TxPacket {
     destination: Ipv4Address,
+    source: Ipv4Address,
+    protocol: IpProtocol,
+    traffic_class: u8,
+    hop_limit: u8,
     payload: Vec<u8>,
 }
 
@@ -51,10 +58,79 @@ impl RawIpv4TxPacket {
         self.destination
     }
 
+    pub(crate) fn source(&self) -> Ipv4Address {
+        self.source
+    }
+
+    pub(crate) fn protocol(&self) -> IpProtocol {
+        self.protocol
+    }
+
+    pub(crate) fn traffic_class(&self) -> u8 {
+        self.traffic_class
+    }
+
+    pub(crate) fn hop_limit(&self) -> u8 {
+        self.hop_limit
+    }
+
+    pub(crate) fn set_endpoints(&mut self, source: Ipv4Address, destination: Ipv4Address) {
+        self.source = source;
+        self.destination = destination;
+    }
+
     /// Returns the protocol payload, excluding the IPv4 header.
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload
     }
+
+    pub(crate) fn buffer_len(&self) -> usize {
+        20 + self.payload.len()
+    }
+
+    pub(crate) fn ipv4_repr(&self) -> Ipv4Repr {
+        Ipv4Repr {
+            src_addr: self.source,
+            dst_addr: self.destination,
+            next_header: self.protocol,
+            payload_len: self.payload.len(),
+            hop_limit: self.hop_limit,
+        }
+    }
+
+    /// Emits a raw IPv4 datagram while retaining the socket's TOS byte.
+    ///
+    /// smoltcp's high-level `Ipv4Repr` intentionally has no TOS field, so the
+    /// header is emitted normally and then the DSCP/ECN byte and checksum are
+    /// fixed up here before copying the opaque protocol payload.
+    pub(crate) fn emit_ipv4(
+        &self,
+        buffer: &mut [u8],
+        checksum_caps: &ChecksumCapabilities,
+    ) {
+        debug_assert!(buffer.len() >= self.buffer_len());
+        {
+            let mut ip_packet = Ipv4Packet::new_unchecked(&mut *buffer);
+            self.ipv4_repr().emit(&mut ip_packet, checksum_caps);
+        }
+        buffer[1] = self.traffic_class;
+        buffer[10] = 0;
+        buffer[11] = 0;
+        let checksum = ipv4_header_checksum(&buffer[..20]);
+        buffer[10..12].copy_from_slice(&checksum.to_be_bytes());
+        buffer[20..self.buffer_len()].copy_from_slice(&self.payload);
+    }
+}
+
+fn ipv4_header_checksum(header: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    for word in header.chunks_exact(2) {
+        sum += u32::from(u16::from_be_bytes([word[0], word[1]]));
+    }
+    while sum >> 16 != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 struct RawRecvQueue {
@@ -173,7 +249,15 @@ impl<E: Ext> RawIpSocket<E> {
     }
 
     /// Enqueues an IPv4 protocol payload for transmission.
-    pub fn send_ipv4(&self, destination: Ipv4Address, payload: Vec<u8>) -> bool {
+    pub fn send_ipv4(
+        &self,
+        destination: Ipv4Address,
+        source: Ipv4Address,
+        protocol: IpProtocol,
+        traffic_class: u8,
+        hop_limit: u8,
+        payload: Vec<u8>,
+    ) -> bool {
         // RAW_SOCKET_STAGE3: The syscall layer has already selected the route
         // and copied the userspace buffer, so this layer only enforces queue
         // bounds and schedules interface polling.
@@ -181,6 +265,10 @@ impl<E: Ext> RawIpSocket<E> {
         let was_full = !send_queue.has_capacity();
         let accepted = send_queue.push(RawIpv4TxPacket {
             destination,
+            source,
+            protocol,
+            traffic_class,
+            hop_limit,
             payload,
         });
         let can_send_more = send_queue.has_capacity();

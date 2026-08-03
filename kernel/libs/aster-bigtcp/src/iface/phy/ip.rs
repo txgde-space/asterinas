@@ -3,7 +3,7 @@
 use alloc::{string::String, sync::Arc};
 
 use smoltcp::{
-    iface::Config,
+    iface::{Config, Context},
     phy::{Device, TxToken},
     wire::{self, Ipv4Cidr, Ipv4Packet},
 };
@@ -12,6 +12,7 @@ use crate::{
     device::WithDevice,
     ext::Ext,
     forwarding::ForwardedIpv4Packet,
+    socket::RawIpv4TxPacket,
     iface::{
         Iface, ScheduleNextPoll,
         common::{IfaceCommon, InterfaceFlags, InterfaceType},
@@ -46,7 +47,7 @@ impl<D: WithDevice, E: Ext> IpIface<D, E> {
             interface
         });
 
-        let common = IfaceCommon::new(name, type_, flags, interface, sched_poll);
+        let common = IfaceCommon::new(name, type_, flags, None, interface, sched_poll);
 
         Arc::new(Self { driver, common })
     }
@@ -83,6 +84,7 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
                     });
                     true
                 },
+                |pkt, iface_cx, tx_token| self.dispatch_raw(pkt, iface_cx, tx_token),
             );
             self.common.sched_poll().schedule_next_poll(next_poll);
         });
@@ -91,5 +93,18 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
     fn mtu(&self) -> usize {
         self.driver
             .with(|device| device.capabilities().max_transmission_unit)
+    }
+}
+
+impl<D: WithDevice + 'static, E: Ext> IpIface<D, E> {
+    fn dispatch_raw<T: TxToken>(
+        &self,
+        pkt: &RawIpv4TxPacket,
+        iface_cx: &mut Context,
+        tx_token: T,
+    ) {
+        tx_token.consume(pkt.buffer_len(), |buffer| {
+            pkt.emit_ipv4(buffer, &iface_cx.checksum_caps());
+        });
     }
 }

@@ -7,13 +7,14 @@
 //! errors, conntrack, and NAT are deliberately later stages.
 
 use core::sync::atomic::{AtomicBool, Ordering};
+use alloc::sync::Arc;
 
 use aster_bigtcp::{
     forwarding::{ForwardedIpv4Packet, ForwardingResult},
     wire::Ipv4Address,
 };
 
-use super::iface::iter_all_ifaces;
+use super::iface::{Iface, iter_all_ifaces};
 use crate::prelude::println;
 
 static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -219,15 +220,7 @@ pub fn forward_ipv4_packet(
     }
 
     let destination = packet.ip_repr.dst_addr;
-    let egress = iter_all_ifaces()
-        .filter(|iface| iface.index() != ingress_ifindex)
-        .filter_map(|iface| {
-            let address = iface.ipv4_addr()?;
-            let prefix_len = iface.prefix_len()?;
-            route_matches(destination, address, prefix_len).then_some((prefix_len, iface))
-        })
-        .max_by_key(|(prefix_len, _)| *prefix_len)
-        .map(|(_, iface)| iface);
+    let egress = lookup_ipv4_iface(destination, Some(ingress_ifindex));
 
     let Some(egress) = egress else {
         return ForwardingResult::NoRoute;
@@ -244,6 +237,46 @@ pub fn forward_ipv4_packet(
     // so this does not recurse into the current device lock.
     egress.poll();
     ForwardingResult::Queued
+}
+
+/// Looks up the egress interface for an IPv4 destination.
+///
+/// Connected prefixes win by longest-prefix match.  If no connected route
+/// matches, an interface with a configured gateway supplies the default route.
+/// The optional exclusion is used by forwarding so a packet cannot be queued
+/// back onto the interface it arrived on.
+pub(crate) fn lookup_ipv4_iface(
+    destination: Ipv4Address,
+    exclude_ifindex: Option<u32>,
+) -> Option<Arc<Iface>> {
+    let mut best_connected: Option<(u8, Arc<Iface>)> = None;
+
+    for iface in iter_all_ifaces() {
+        if exclude_ifindex.is_some_and(|index| iface.index() == index) {
+            continue;
+        }
+
+        let Some(address) = iface.ipv4_addr() else {
+            continue;
+        };
+        let prefix_len = iface.prefix_len().unwrap_or(0).min(32);
+        if route_matches(destination, address, prefix_len)
+            && best_connected
+                .as_ref()
+                .map_or(true, |(best_prefix, _)| prefix_len > *best_prefix)
+        {
+            best_connected = Some((prefix_len, iface.clone()));
+        }
+    }
+
+    if let Some((_, iface)) = best_connected {
+        return Some(iface);
+    }
+
+    iter_all_ifaces()
+        .filter(|iface| !exclude_ifindex.is_some_and(|index| iface.index() == index))
+        .find(|iface| iface.ipv4_addr().is_some() && iface.ipv4_gateway().is_some())
+        .cloned()
 }
 
 fn route_matches(destination: Ipv4Address, address: Ipv4Address, prefix_len: u8) -> bool {
