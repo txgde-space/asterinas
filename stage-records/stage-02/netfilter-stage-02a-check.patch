@@ -1,0 +1,100 @@
+diff --git a/Makefile b/Makefile
+index b38e763..c5b7ed7 100644
+--- a/Makefile
++++ b/Makefile
+@@ -20,6 +20,7 @@ OSTD_TASK_STACK_SIZE_IN_PAGES ?= 64
+ FEATURES ?=
+ NO_DEFAULT_FEATURES ?= 0
+ COVERAGE ?= 0
++EXTRA_KCMD_ARGS ?=
+ 
+ # Specify the primary system console (supported: tty0, ttyS0, hvc0).
+ # - tty0: The active virtual terminal (VT).
+@@ -200,6 +201,7 @@ CARGO_OSDK_COMMON_ARGS += $(CARGO_OSDK_INITRAMFS_OPTION)
+ endif
+ 
+ CARGO_OSDK_BUILD_ARGS += $(CARGO_OSDK_COMMON_ARGS)
++CARGO_OSDK_BUILD_ARGS += $(EXTRA_KCMD_ARGS)
+ CARGO_OSDK_TEST_ARGS += $(CARGO_OSDK_COMMON_ARGS)
+ 
+ # Pass make variables to all subdirectory makes
+@@ -274,6 +276,16 @@ else ifeq ($(AUTO_TEST), vsock)
+ 		|| (echo "Vsock test failed" && exit 1)
+ endif
+ 
++# Runs the default regression suite with two virtio NICs and checks that the
++# Stage 2A kernel-side enumeration result is present in the QEMU log.
++.PHONY: stage2_multi_nic_check
++stage2_multi_nic_check:
++	@$(MAKE) --no-print-directory \
++		AUTO_TEST=regression CONSOLE=ttyS0 LOG_LEVEL=info ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
++		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.stage2_multi_nic=on"' run_kernel
++	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
++		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)
++
+ # Build the Asterinas NixOS ISO installer image
+ iso: BOOT_PROTOCOL = linux-efi-handover64
+ iso:
+diff --git a/kernel/src/net/iface/init.rs b/kernel/src/net/iface/init.rs
+index 83f8753..f4f8899 100644
+--- a/kernel/src/net/iface/init.rs
++++ b/kernel/src/net/iface/init.rs
+@@ -1,7 +1,10 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ use alloc::{borrow::ToOwned, string::String, vec::Vec};
+-use core::slice::Iter;
++use core::{
++    slice::Iter,
++    sync::atomic::{AtomicBool, Ordering},
++};
+ 
+ use aster_bigtcp::{
+     device::WithDevice,
+@@ -17,6 +20,9 @@ use crate::{
+ };
+ 
+ static IFACES: Once<Vec<Arc<Iface>>> = Once::new();
++static STAGE2_MULTI_NIC_TEST: AtomicBool = AtomicBool::new(false);
++
++aster_cmdline::define_flag_param!("netfilter.stage2_multi_nic", STAGE2_MULTI_NIC_TEST);
+ 
+ pub fn loopback_iface() -> &'static Arc<Iface> {
+     &IFACES.get().unwrap()[0]
+@@ -58,9 +64,35 @@ pub fn init() {
+ 
+     broadcast::init();
+ 
++    report_stage2_multi_nic_result();
++
+     poll_ifaces();
+ }
+ 
++fn report_stage2_multi_nic_result() {
++    if !STAGE2_MULTI_NIC_TEST.load(Ordering::Relaxed) {
++        return;
++    }
++
++    use aster_bigtcp::wire::Ipv4Address;
++
++    let has_expected_iface = |name, address| {
++        iter_all_ifaces().any(|iface| {
++            iface.name() == name
++                && iface.ipv4_addr()
++                    == Some(Ipv4Address::new(address[0], address[1], address[2], address[3]))
++        })
++    };
++
++    if has_expected_iface("eth0", [10, 0, 2, 15])
++        && has_expected_iface("eth1", [10, 0, 3, 15])
++    {
++        ostd::info!("netfilter-stage2a: multi-nic enumeration passed");
++    } else {
++        ostd::error!("netfilter-stage2a: multi-nic enumeration failed");
++    }
++}
++
+ fn virtio_device_names() -> Vec<String> {
+     aster_network::all_devices()
+         .into_iter()
+

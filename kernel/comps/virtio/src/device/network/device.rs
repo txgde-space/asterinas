@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
-use core::fmt::Debug;
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use core::{
+    fmt::Debug,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use aster_bigtcp::device::{Checksum, DeviceCapabilities, Medium};
 use aster_network::{AnyNetworkDevice, EthernetAddr, NetError, RxBuffer, TxBuffer};
@@ -37,6 +40,8 @@ pub struct NetworkDevice {
     transport: Box<dyn VirtioTransport>,
     poll_stat: PollStatistics,
 }
+
+static DEVICE_INDEX_ALLOCATOR: AtomicUsize = AtomicUsize::new(0);
 
 /// Structure to track the number of packets sent and received during a single polling process.
 struct PollStatistics {
@@ -146,10 +151,9 @@ impl NetworkDevice {
 
         device.transport.finish_init();
 
-        aster_network::register_device(
-            super::DEVICE_NAME.to_string(),
-            Arc::new(SpinLock::new(device)),
-        );
+        let index = DEVICE_INDEX_ALLOCATOR.fetch_add(1, Ordering::Relaxed);
+        let name = alloc::format!("{}-{index}", super::DEVICE_NAME_PREFIX);
+        aster_network::register_device(name, Arc::new(SpinLock::new(device)));
         Ok(())
     }
 

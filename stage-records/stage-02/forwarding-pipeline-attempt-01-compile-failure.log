@@ -1,0 +1,482 @@
+these 3 derivations will be built:
+  /nix/store/4x9ll9mhpxd0n3xq535nara1srxsh05h-resolv-conf.drv
+  /nix/store/w6pdndpppvmqlcq1qf3qbzp1y2shw13k-runtime-deps.drv
+  /nix/store/4j24d5qd7wxqgx88rnp886hspl8fxfb6-initramfs.drv
+building '/nix/store/4x9ll9mhpxd0n3xq535nara1srxsh05h-resolv-conf.drv'...
+Warning: the host's /etc/resolv.conf is not valid for the guest VM (containing lookback addresses).
+Fall back to Cloudflare's public DNS servers (1.1.1.1).
+Consider using the DNS_SERVER Makefile variable to specify DNS server explicitly.
+For example: make DNS_SERVER="192.168.1.1"
+building '/nix/store/w6pdndpppvmqlcq1qf3qbzp1y2shw13k-runtime-deps.drv'...
+structuredAttrs is enabled
+building '/nix/store/4j24d5qd7wxqgx88rnp886hspl8fxfb6-initramfs.drv'...
+/nix/store/qh7qbkks8r1rn5h0amfhw76lfyka44q5-initramfs
+this derivation will be built:
+  /nix/store/203gqbg82l2linvr2igh9zpsq5cf5428-initramfs-image.drv
+building '/nix/store/203gqbg82l2linvr2igh9zpsq5cf5428-initramfs-image.drv'...
+/build/tmp.IT0xeBvx1F /build
+66617 blocks
+/build
+/nix/store/d80kg5v8vjfyrvc6svkz2bk72h3k41br-initramfs-image
+info: syncing channel updates for nightly-2025-12-06-x86_64-unknown-linux-gnu
+info: latest update on 2025-12-06 for version 1.94.0-nightly (1aa9bab4e 2025-12-05)
+info: downloading 12 components
+  Installing cargo-osdk v0.17.1 (/root/asterinas/osdk)
+    Updating crates.io index
+     Locking 164 packages to latest Rust 1.94.0-nightly compatible versions
+      Adding indicatif v0.17.11 (available: v0.18.6)
+      Adding inferno v0.11.21 (available: v0.12.8)
+      Adding shlex v1.3.0 (available: v2.0.1)
+      Adding syn v2.0.119 (available: v3.0.3)
+      Adding toml v0.8.23 (available: v1.1.4+spec-1.1.0)
+      Adding whoami v1.6.1 (available: v2.1.2)
+ Downloading crates ...
+  Downloaded rev_buf_reader v0.3.0
+  Downloaded serde_spanned v0.6.9
+  Downloaded number_prefix v0.4.0
+  Downloaded defmt-parser v1.0.0
+  Downloaded is-terminal v0.4.17
+  Downloaded toml_datetime v0.6.11
+  Downloaded adler32 v1.2.0
+  Downloaded xmas-elf v0.10.0
+  Downloaded str_stack v0.1.1
+  Downloaded libflate_lz77 v2.3.0
+  Downloaded toml_write v0.1.2
+  Downloaded zero v0.1.3
+  Downloaded env_filter v2.0.0
+  Downloaded autocfg v1.5.1
+  Downloaded arrayvec v0.7.8
+  Downloaded env_logger v0.11.11
+  Downloaded whoami v1.6.1
+  Downloaded dashmap v6.2.1
+  Downloaded which v8.0.5
+  Downloaded dary_heap v0.3.9
+  Downloaded zmij v1.0.23
+  Downloaded thiserror-impl v2.0.19
+  Downloaded fastrand v2.5.0
+  Downloaded thiserror v2.0.19
+  Downloaded iana-time-zone v0.1.65
+  Downloaded quote v1.0.47
+  Downloaded libflate v2.3.1
+  Downloaded console v0.15.11
+  Downloaded clap_derive v4.6.4
+  Downloaded bitflags v1.3.2
+  Downloaded defmt v1.1.1
+  Downloaded defmt-macros v1.1.1
+  Downloaded smallvec v1.15.2
+  Downloaded toml v0.8.23
+  Downloaded getrandom v0.4.3
+  Downloaded serde_derive v1.0.229
+  Downloaded num-format v0.4.4
+  Downloaded no_std_io2 v0.9.4
+  Downloaded log v0.4.33
+  Downloaded serde_core v1.0.229
+  Downloaded rle-decode-fast v1.0.3
+  Downloaded toml_edit v0.22.27
+  Downloaded proc-macro2 v1.0.107
+  Downloaded clap v4.6.4
+  Downloaded indicatif v0.17.11
+  Downloaded num-traits v0.2.19
+  Downloaded bytemuck v1.25.2
+  Downloaded bitflags v2.13.1
+  Downloaded allocator-api2 v0.2.21
+  Downloaded crossbeam-channel v0.5.16
+  Downloaded serde v1.0.229
+  Downloaded crossbeam-utils v0.8.22
+  Downloaded memchr v2.8.3
+  Downloaded inferno v0.11.21
+  Downloaded quick-xml v0.26.0
+  Downloaded zerocopy-derive v0.8.55
+  Downloaded jiff-core v0.1.0
+  Downloaded hashbrown v0.14.5
+  Downloaded regex v1.13.1
+  Downloaded serde_json v1.0.151
+  Downloaded clap_builder v4.6.2
+  Downloaded portable-atomic v1.14.0
+  Downloaded chrono v0.4.45
+  Downloaded zerocopy v0.8.55
+  Downloaded syn v3.0.3
+  Downloaded syn v2.0.119
+  Downloaded regex-syntax v0.8.11
+  Downloaded regex-automata v0.4.16
+  Downloaded jiff v0.2.35
+  Downloaded libc v0.2.189
+    Finished `release` profile [optimized] target(s) in 16.35s
+  Installing /root/.cargo/bin/cargo-osdk
+   Installed package `cargo-osdk v0.17.1 (/root/asterinas/osdk)` (executable `cargo-osdk`)
+[Info] [normal] Forwarded QEMU guest port: 5013->22; 54480->8080 18882->6379 37516->5201 57255->31234 14329->31236 37101->11211
+[Info] [test] Forwarded QEMU guest port: 33412->22; 49652->8080 48216->6379 1051->5201 41863->31234 30660->31236 17726->11211
+    Updating crates.io index
+    Updating git repository `https://github.com/asterinas/inherit-methods-macro`
+    Updating git repository `https://github.com/asterinas/smoltcp`
+    Updating git repository `https://github.com/asterinas/inventory`
+    Updating git repository `https://github.com/asterinas/rust-ctor`
+ Downloading crates ...
+  Downloaded bit_field v0.10.3
+  Downloaded cipher v0.3.0
+  Downloaded aead v0.4.3
+  Downloaded extension-traits v1.0.1
+  Downloaded cobs v0.3.0
+  Downloaded ptr_meta v0.3.1
+  Downloaded nougat-proc_macros v0.2.4
+  Downloaded volatile v0.4.6
+  Downloaded time-core v0.1.9
+  Downloaded radium v0.7.0
+  Downloaded defmt v0.3.100
+  Downloaded funty v2.0.0
+  Downloaded ext-trait-proc_macros v1.0.1
+  Downloaded ext-trait v1.0.1
+  Downloaded darling_macro v0.13.4
+  Downloaded num-conv v0.2.2
+  Downloaded nougat v0.2.4
+  Downloaded macro_rules_attribute-proc_macro v0.1.3
+  Downloaded opaque-debug v0.3.1
+  Downloaded hash32 v0.2.1
+  Downloaded ghash v0.4.4
+  Downloaded takeable v0.2.2
+  Downloaded managed v0.8.0
+  Downloaded never-say-never v6.6.666
+  Downloaded memoffset v0.9.1
+  Downloaded tap v1.0.1
+  Downloaded ptr_meta_derive v0.3.1
+  Downloaded macro_rules_attribute v0.1.3
+  Downloaded lending-iterator-proc_macros v0.1.7
+  Downloaded hash32 v0.3.1
+  Downloaded getset v0.1.7
+  Downloaded powerfmt v0.2.0
+  Downloaded universal-hash v0.4.1
+  Downloaded bittle v0.5.7
+  Downloaded const_format_proc_macros v0.2.34
+  Downloaded deranged v0.5.8
+  Downloaded darling v0.13.4
+  Downloaded ctr v0.8.0
+  Downloaded subtle v2.4.1
+  Downloaded uguid v2.2.1
+  Downloaded polonius-the-crab v0.2.1
+  Downloaded konst_macro_rules v0.2.19
+  Downloaded wyz v0.5.1
+  Downloaded rand_core v0.9.5
+  Downloaded volatile v0.6.1
+  Downloaded polyval v0.5.3
+  Downloaded owo-colors v4.3.0
+  Downloaded generic-array v0.14.9
+  Downloaded ghost v0.1.23
+  Downloaded rustversion v1.0.23
+  Downloaded lru v0.16.4
+  Downloaded byteorder v1.5.0
+  Downloaded font8x8 v0.2.7
+  Downloaded either v1.17.0
+  Downloaded unwinding v0.2.8
+  Downloaded spin v0.9.9
+  Downloaded lending-iterator v0.1.7
+  Downloaded darling_core v0.13.4
+  Downloaded acpi v5.2.0
+  Downloaded postcard v1.1.3
+  Downloaded paste v1.0.15
+  Downloaded intrusive-collections v0.9.7
+  Downloaded tdx-guest v0.2.4
+  Downloaded toml v0.7.8
+  Downloaded multiboot2 v0.24.1
+  Downloaded heapless v0.7.17
+  Downloaded const_format v0.2.36
+  Downloaded uefi-raw v0.12.0
+  Downloaded konst v0.2.20
+  Downloaded heapless v0.8.0
+  Downloaded x86_64 v0.14.13
+  Downloaded rand v0.9.5
+  Downloaded raw-cpuid v10.7.0
+  Downloaded typenum v1.20.1
+  Downloaded json v0.12.4
+  Downloaded toml_edit v0.19.15
+  Downloaded aes-gcm v0.9.4
+  Downloaded aes v0.7.5
+  Downloaded winnow v0.5.40
+  Downloaded bitvec v1.1.1
+  Downloaded gimli v0.28.1
+  Downloaded time v0.3.54
+  Downloaded gimli v0.32.3
+  Downloaded multiboot2-common v0.3.0
+  Downloaded x86 v0.52.0
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded rustc-literal-escaper v0.0.5
+  Downloaded getopts v0.2.24
+   Compiling compiler_builtins v0.1.160 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling zerocopy v0.8.55
+   Compiling thiserror v2.0.19
+   Compiling radium v0.7.0
+   Compiling memoffset v0.9.1
+   Compiling x86 v0.52.0
+   Compiling num-traits v0.2.19
+   Compiling generic-array v0.14.9
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling heapless v0.8.0
+   Compiling smoltcp v0.11.0 (https://github.com/asterinas/smoltcp?tag=r_2024-11-08_f07e5b5#b10671de)
+   Compiling ahash v0.8.12
+   Compiling heapless v0.7.17
+   Compiling owo-colors v4.3.0
+   Compiling crc32fast v1.5.0
+   Compiling alloc v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling cfg-if v1.0.4
+   Compiling scopeguard v1.2.0
+   Compiling bitflags v2.13.1
+   Compiling bitflags v1.3.2
+   Compiling log v0.4.33
+   Compiling bit_field v0.10.3
+   Compiling lock_api v0.4.14
+   Compiling tap v1.0.1
+   Compiling raw-cpuid v10.7.0
+   Compiling wyz v0.5.1
+   Compiling uguid v2.2.1
+   Compiling funty v2.0.0
+   Compiling spin v0.9.9
+   Compiling volatile v0.4.6
+   Compiling ptr_meta v0.3.1
+   Compiling x86_64 v0.14.13
+   Compiling uefi-raw v0.12.0
+   Compiling lazy_static v1.5.0
+   Compiling multiboot2-common v0.3.0
+   Compiling iced-x86 v1.21.0
+   Compiling gimli v0.32.3
+   Compiling int-to-c-enum v0.1.0 (/root/asterinas/ostd/libs/int-to-c-enum)
+warning: unstable feature specified for `-Ctarget-feature`: `ermsb`
+  |
+  = note: this feature is not stably supported; its behavior can change in the future
+
+warning: `int-to-c-enum` (lib) generated 1 warning
+   Compiling bitvec v1.1.1
+   Compiling intrusive-collections v0.9.7
+   Compiling acpi v5.2.0
+   Compiling unwinding v0.2.8
+   Compiling linux-boot-params v0.17.1 (/root/asterinas/ostd/libs/linux-bzimage/boot-params)
+warning: `linux-boot-params` (lib) generated 1 warning (1 duplicate)
+   Compiling ostd-test v0.17.1 (/root/asterinas/ostd/libs/ostd-test)
+   Compiling align_ext v0.1.0 (/root/asterinas/ostd/libs/align_ext)
+warning: `align_ext` (lib) generated 1 warning (1 duplicate)
+   Compiling volatile v0.6.1
+warning: `ostd-test` (lib) generated 1 warning (1 duplicate)
+   Compiling gimli v0.28.1
+   Compiling smallvec v1.15.2
+   Compiling inventory v0.3.3 (https://github.com/asterinas/inventory?rev=9dce587#9dce5871)
+   Compiling typeflags-util v0.1.0 (/root/asterinas/kernel/libs/typeflags-util)
+   Compiling component v0.1.0 (/root/asterinas/kernel/libs/comp-sys/component)
+warning: `typeflags-util` (lib) generated 1 warning (1 duplicate)
+   Compiling multiboot2 v0.24.1
+   Compiling aster-rights v0.1.0 (/root/asterinas/kernel/libs/aster-rights)
+warning: `aster-rights` (lib) generated 1 warning (1 duplicate)
+   Compiling byteorder v1.5.0
+   Compiling id-alloc v0.1.0 (/root/asterinas/ostd/libs/id-alloc)
+warning: `component` (lib) generated 1 warning (1 duplicate)
+   Compiling typenum v1.20.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling allocator-api2 v0.2.21
+warning: `id-alloc` (lib) generated 1 warning (1 duplicate)
+   Compiling hash32 v0.3.1
+   Compiling equivalent v1.0.2
+   Compiling font8x8 v0.2.7
+   Compiling cpufeatures v0.2.17
+   Compiling subtle v2.4.1
+   Compiling foldhash v0.2.0
+   Compiling opaque-debug v0.3.1
+   Compiling ostd-pod v0.4.0 (/root/asterinas/ostd/libs/ostd-pod)
+   Compiling hashbrown v0.16.1
+   Compiling macro_rules_attribute v0.1.3
+   Compiling managed v0.8.0
+warning: `ostd-pod` (lib) generated 1 warning (1 duplicate)
+   Compiling memchr v2.8.3
+   Compiling tdx-guest v0.2.4
+   Compiling cipher v0.3.0
+   Compiling universal-hash v0.4.1
+   Compiling ext-trait v1.0.1
+   Compiling polyval v0.5.3
+   Compiling ostd v0.17.1 (/root/asterinas/ostd)
+   Compiling extension-traits v1.0.1
+   Compiling no_std_io2 v0.9.4
+   Compiling nougat v0.2.4
+   Compiling hash32 v0.2.1
+   Compiling takeable v0.2.2
+   Compiling never-say-never v6.6.666
+   Compiling jhash v0.1.0 (/root/asterinas/kernel/libs/jhash)
+   Compiling polonius-the-crab v0.2.1
+   Compiling once_cell v1.21.4
+   Compiling lending-iterator v0.1.7
+   Compiling ghash v0.4.4
+warning: `jhash` (lib) generated 1 warning (1 duplicate)
+   Compiling aes v0.7.5
+   Compiling ctr v0.8.0
+   Compiling aead v0.4.3
+   Compiling ppv-lite86 v0.2.21
+   Compiling cobs v0.3.0
+   Compiling rle-decode-fast v1.0.3
+   Compiling konst_macro_rules v0.2.19
+   Compiling rand_core v0.9.5
+   Compiling libflate_lz77 v2.3.0
+   Compiling konst v0.2.20
+   Compiling rand_chacha v0.9.0
+   Compiling aes-gcm v0.9.4
+   Compiling lru v0.16.4
+   Compiling zero v0.1.3
+   Compiling bittle v0.5.7
+   Compiling dary_heap v0.3.9
+   Compiling deranged v0.5.8
+   Compiling num-conv v0.2.2
+   Compiling adler32 v1.2.0
+   Compiling powerfmt v0.2.0
+   Compiling time-core v0.1.9
+   Compiling libflate v2.3.1
+   Compiling xmas-elf v0.10.0
+   Compiling const_format v0.2.36
+   Compiling hashbrown v0.14.5
+   Compiling rand v0.9.5
+   Compiling cpio-decoder v0.1.0 (/root/asterinas/kernel/libs/cpio-decoder)
+   Compiling logo-ascii-art v0.1.0 (/root/asterinas/kernel/libs/logo-ascii-art)
+warning: `logo-ascii-art` (lib) generated 1 warning (1 duplicate)
+   Compiling keyable-arc v0.1.0 (/root/asterinas/kernel/libs/keyable-arc)
+warning: `cpio-decoder` (lib) generated 1 warning (1 duplicate)
+warning: `keyable-arc` (lib) generated 1 warning (1 duplicate)
+   Compiling time v0.3.54
+   Compiling postcard v1.1.3
+   Compiling osdk-heap-allocator v0.17.1 (/root/asterinas/osdk/deps/heap-allocator)
+   Compiling aster-console v0.1.0 (/root/asterinas/kernel/comps/console)
+   Compiling aster-input v0.1.0 (/root/asterinas/kernel/comps/input)
+   Compiling aster-cmdline v0.1.0 (/root/asterinas/kernel/comps/cmdline)
+   Compiling aster-pci v0.1.0 (/root/asterinas/kernel/comps/pci)
+   Compiling xarray v0.1.0 (/root/asterinas/kernel/libs/xarray)
+   Compiling ring-buffer v0.1.0 (/root/asterinas/kernel/libs/ring-buffer)
+warning: `ring-buffer` (lib) generated 1 warning (1 duplicate)
+   Compiling osdk-frame-allocator v0.17.1 (/root/asterinas/osdk/deps/frame-allocator)
+warning: `xarray` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-util v0.1.0 (/root/asterinas/kernel/libs/aster-util)
+warning: `aster-console` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-framebuffer v0.1.0 (/root/asterinas/kernel/comps/framebuffer)
+warning: `osdk-frame-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-i8042 v0.1.0 (/root/asterinas/kernel/comps/i8042)
+warning: `aster-input` (lib) generated 1 warning (1 duplicate)
+   Compiling device-id v0.1.0 (/root/asterinas/kernel/libs/device-id)
+warning: `aster-cmdline` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-softirq v0.1.0 (/root/asterinas/kernel/comps/softirq)
+warning: `device-id` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-block v0.1.0 (/root/asterinas/kernel/comps/block)
+warning: `osdk-heap-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-systree v0.1.0 (/root/asterinas/kernel/comps/systree)
+warning: `aster-util` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-time v0.1.0 (/root/asterinas/kernel/comps/time)
+warning: `aster-pci` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-logger v0.1.0 (/root/asterinas/kernel/comps/logger)
+warning: `aster-framebuffer` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-bigtcp v0.1.0 (/root/asterinas/kernel/libs/aster-bigtcp)
+warning: `aster-logger` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-uart v0.1.0 (/root/asterinas/kernel/comps/uart)
+error[E0425]: cannot find type `VecDeque` in this scope
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/poll.rs:106:38
+    |
+106 |         forwarded_packets: &SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
+    |                                      ^^^^^^^^ not found in this scope
+    |
+help: consider importing this struct
+    |
+  3 + use alloc::collections::VecDeque;
+    |
+
+warning: `aster-time` (lib) generated 1 warning (1 duplicate)
+warning: `aster-softirq` (lib) generated 1 warning (1 duplicate)
+error[E0277]: the trait bound `E: Ext` is not satisfied
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/iface.rs:25:14
+    |
+ 25 |         self.common().enqueue_forwarded_ipv4(packet)
+    |              ^^^^^^ the trait `Ext` is not implemented for `E`
+    |
+note: required by a bound in `IfaceInternal::common`
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/iface.rs:112:16
+    |
+110 |         fn common(&self) -> &IfaceCommon<E>
+    |            ------ required by a bound in this associated function
+111 |         where
+112 |             E: Ext;
+    |                ^^^ required by this bound in `IfaceInternal::common`
+help: consider restricting type parameter `E` with trait `Ext`
+    |
+ 16 | pub trait Iface<E: ext::Ext>: internal::IfaceInternal<E> + Send + Sync {
+    |                  ++++++++++
+
+error[E0599]: the method `enqueue_forwarded_ipv4` exists for reference `&IfaceCommon<E>`, but its trait bounds were not satisfied
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/iface.rs:25:23
+    |
+ 25 |         self.common().enqueue_forwarded_ipv4(packet)
+    |                       ^^^^^^^^^^^^^^^^^^^^^^ method cannot be called on `&IfaceCommon<E>` due to unsatisfied trait bounds
+    |
+note: trait bound `E: Ext` was not satisfied
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/common.rs:108:9
+    |
+108 | impl<E: Ext> IfaceCommon<E> {
+    |         ^^^  --------------
+    |         |
+    |         unsatisfied trait bound introduced here
+    = help: items from traits can only be used if the trait is implemented and in scope
+note: `Iface` defines an item `enqueue_forwarded_ipv4`, perhaps you need to implement it
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/iface.rs:16:1
+    |
+ 16 | pub trait Iface<E>: internal::IfaceInternal<E> + Send + Sync {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs:312:37
+    |
+312 |                 packet.ip_repr.emit(frame.payload_mut(), &caps.checksum);
+    |                                ---- ^^^^^^^^^^^^^^^^^^^ expected `&mut Ipv4Packet<_>`, found `&mut [u8]`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+    = note: expected mutable reference `&mut Ipv4Packet<_>`
+               found mutable reference `&mut [u8]`
+note: method defined here
+   --> /root/.cargo/git/checkouts/smoltcp-da84dc96af6ffcd7/b10671d/src/wire/ipv4.rs:594:12
+    |
+594 |     pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(
+    |            ^^^^
+
+warning: `aster-uart` (lib) generated 1 warning (1 duplicate)
+error[E0599]: no method named `header_len` found for struct `Ipv4Repr` in the current scope
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs:313:52
+    |
+313 |                 frame.payload_mut()[packet.ip_repr.header_len()..]
+    |                                                    ^^^^^^^^^^ method not found in `Ipv4Repr`
+
+error[E0308]: mismatched types
+   --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs:80:42
+    |
+ 80 |                         pkt.ip_repr.emit(buffer, &iface_cx.checksum_caps());
+    |                                     ---- ^^^^^^ expected `&mut Ipv4Packet<_>`, found `&mut [u8]`
+    |                                     |
+    |                                     arguments to this method are incorrect
+    |
+    = note: expected mutable reference `&mut Ipv4Packet<_>`
+               found mutable reference `&mut [u8]`
+note: method defined here
+   --> /root/.cargo/git/checkouts/smoltcp-da84dc96af6ffcd7/b10671d/src/wire/ipv4.rs:594:12
+    |
+594 |     pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(
+    |            ^^^^
+
+error[E0599]: no method named `header_len` found for struct `Ipv4Repr` in the current scope
+  --> /root/asterinas/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs:81:44
+   |
+81 |                         buffer[pkt.ip_repr.header_len()..].copy_from_slice(&pkt.payload);
+   |                                            ^^^^^^^^^^ method not found in `Ipv4Repr`
+
+   Compiling aster-mlsdisk v0.1.0 (/root/asterinas/kernel/comps/mlsdisk)
+warning: `aster-i8042` (lib) generated 1 warning (1 duplicate)
+warning: `aster-systree` (lib) generated 1 warning (1 duplicate)
+Some errors have detailed explanations: E0277, E0308, E0425, E0599.
+For more information about an error, try `rustc --explain E0277`.
+warning: `aster-bigtcp` (lib) generated 1 warning (1 duplicate)
+error: could not compile `aster-bigtcp` (lib) due to 7 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+warning: `aster-block` (lib) generated 1 warning (1 duplicate)
+warning: `ostd` (lib) generated 1 warning (1 duplicate)
+warning: `aster-mlsdisk` (lib) generated 1 warning (1 duplicate)
+[Error]: Cargo build failed
+make[1]: *** [Makefile:263: run_kernel] Error 6
+make: *** [Makefile:294: stage2_forwarding_pipeline_check] Error 2

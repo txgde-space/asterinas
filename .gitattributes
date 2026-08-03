@@ -1,1 +1,3 @@
 stage-records/stage-01/*.patch binary
+stage-records/stage-02/*.patch binary
+stage-records/stage-02/*.log text eol=lf

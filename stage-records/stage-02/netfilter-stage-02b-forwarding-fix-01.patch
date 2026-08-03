@@ -1,0 +1,58 @@
+diff --git a/kernel/libs/aster-bigtcp/src/iface/poll.rs b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+index b4741a6..86b0d05 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/poll.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+-use alloc::{sync::Arc, vec, vec::Vec};
++use alloc::{collections::VecDeque, sync::Arc, vec, vec::Vec};
+ 
+ use aster_softirq::BottomHalfDisabled;
+ use ostd::sync::SpinLock;
+diff --git a/kernel/libs/aster-bigtcp/src/iface/iface.rs b/kernel/libs/aster-bigtcp/src/iface/iface.rs
+index bb121c7..1669e5c 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/iface.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/iface.rs
+@@ -13,7 +13,7 @@ use crate::{errors::BindError, ext::Ext, forwarding::ForwardedIpv4Packet};
+ /// computer to a network. Network interfaces can be physical components like Ethernet ports or
+ /// wireless adapters. They can also be virtual interfaces created by software, such as virtual
+ /// private network (VPN) connections.
+-pub trait Iface<E>: internal::IfaceInternal<E> + Send + Sync {
++pub trait Iface<E: Ext>: internal::IfaceInternal<E> + Send + Sync {
+     /// Transmits or receives packets queued in the iface, and updates socket status accordingly.
+     fn poll(&self);
+ 
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+index 3868489..5560989 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+@@ -309,9 +309,9 @@ impl<D, E: Ext> EtherIface<D, E> {
+             |buffer| {
+                 let mut frame = EthernetFrame::new_unchecked(buffer);
+                 ether_repr.emit(&mut frame);
+-                packet.ip_repr.emit(frame.payload_mut(), &caps.checksum);
+-                frame.payload_mut()[packet.ip_repr.header_len()..]
+-                    .copy_from_slice(&packet.payload);
++                let mut ip_packet = Ipv4Packet::new_unchecked(frame.payload_mut());
++                packet.ip_repr.emit(&mut ip_packet, &caps.checksum);
++                ip_packet.payload_mut().copy_from_slice(&packet.payload);
+             },
+         );
+     }
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+index 2f5aec5..b54e7af 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+@@ -77,8 +77,9 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
+                 },
+                 |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
+                     tx_token.consume(pkt.ip_repr.buffer_len(), |buffer| {
+-                        pkt.ip_repr.emit(buffer, &iface_cx.checksum_caps());
+-                        buffer[pkt.ip_repr.header_len()..].copy_from_slice(&pkt.payload);
++                        let mut ip_packet = Ipv4Packet::new_unchecked(buffer);
++                        pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
++                        ip_packet.payload_mut().copy_from_slice(&pkt.payload);
+                     });
+                 },
+             );

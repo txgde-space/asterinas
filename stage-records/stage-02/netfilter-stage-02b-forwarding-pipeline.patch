@@ -1,0 +1,689 @@
+diff --git a/Makefile b/Makefile
+index 00444fb..e28c1e9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -286,6 +286,17 @@ stage2_multi_nic_check:
+ 	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
+ 		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)
+ 
++# Builds and boots the Stage 2B forwarding pipeline with the explicit
++# forwarding switch enabled. It verifies configuration and initialization;
++# TAP-backed endpoint forwarding is the next acceptance milestone.
++.PHONY: stage2_forwarding_pipeline_check
++stage2_forwarding_pipeline_check:
++	@$(MAKE) --no-print-directory \
++		AUTO_TEST=boot CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
++		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.ipv4_forward=on"' run_kernel
++	@grep -q "netfilter-stage2b: ipv4 forwarding pipeline enabled" qemu.log \
++		|| (echo "Stage 2B forwarding pipeline failed to initialize" && exit 1)
++
+ # Build the Asterinas NixOS ISO installer image
+ iso: BOOT_PROTOCOL = linux-efi-handover64
+ iso:
+diff --git a/kernel/libs/aster-bigtcp/src/ext.rs b/kernel/libs/aster-bigtcp/src/ext.rs
+index 13ca321..798bb01 100644
+--- a/kernel/libs/aster-bigtcp/src/ext.rs
++++ b/kernel/libs/aster-bigtcp/src/ext.rs
+@@ -1,6 +1,10 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+-use crate::{iface::ScheduleNextPoll, socket::SocketEventObserver};
++use crate::{
++    forwarding::{ForwardedIpv4Packet, ForwardingResult},
++    iface::ScheduleNextPoll,
++    socket::SocketEventObserver,
++};
+ 
+ /// Extension to be implemented by users of this crate.
+ ///
+@@ -19,4 +23,15 @@ pub trait Ext {
+ 
+     /// The type for UDP sockets to observe events.
+     type UdpEventObserver: SocketEventObserver;
++
++    /// Applies platform routing policy to a non-local IPv4 packet.
++    ///
++    /// The default deliberately disables forwarding so existing users of
++    /// `aster-bigtcp` retain host-only behavior until they opt in.
++    fn forward_ipv4_packet(
++        _ingress_ifindex: u32,
++        _packet: ForwardedIpv4Packet,
++    ) -> ForwardingResult {
++        ForwardingResult::Disabled
++    }
+ }
+diff --git a/kernel/libs/aster-bigtcp/src/forwarding.rs b/kernel/libs/aster-bigtcp/src/forwarding.rs
+new file mode 100644
+index 0000000..8f07730
+--- /dev/null
++++ b/kernel/libs/aster-bigtcp/src/forwarding.rs
+@@ -0,0 +1,45 @@
++// SPDX-License-Identifier: MPL-2.0
++
++//! Types shared by the IPv4 forwarding data path and its platform integration.
++//!
++//! The forwarding decision is made by the platform because it owns the set of
++//! interfaces and the routing policy.  This crate owns the bounded egress
++//! queue and the packet serialization that sends a selected packet.
++
++use alloc::vec::Vec;
++
++use smoltcp::wire::Ipv4Repr;
++
++/// An IPv4 datagram that has passed ingress validation and is ready for an
++/// egress interface.
++///
++/// `ip_repr` deliberately contains a parsed IPv4 header.  Re-emitting it at
++/// egress recalculates the IPv4 header checksum after the router decrements
++/// the hop limit.  The transport payload is otherwise opaque in Stage 2.
++#[derive(Debug)]
++pub struct ForwardedIpv4Packet {
++    pub ip_repr: Ipv4Repr,
++    pub payload: Vec<u8>,
++}
++
++impl ForwardedIpv4Packet {
++    pub fn new(ip_repr: Ipv4Repr, payload: Vec<u8>) -> Self {
++        debug_assert_eq!(ip_repr.payload_len, payload.len());
++        Self { ip_repr, payload }
++    }
++}
++
++/// Result of asking the platform forwarding policy to route a packet.
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum ForwardingResult {
++    /// The packet was accepted by an egress interface queue.
++    Queued,
++    /// IPv4 forwarding is administratively disabled.
++    Disabled,
++    /// No eligible egress interface owns a route for the destination.
++    NoRoute,
++    /// The packet cannot be forwarded because its hop limit would expire.
++    HopLimitExceeded,
++    /// The selected egress queue is bounded and currently full.
++    QueueFull,
++}
+diff --git a/kernel/libs/aster-bigtcp/src/iface/common.rs b/kernel/libs/aster-bigtcp/src/iface/common.rs
+index b9632af..aa12173 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/common.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/common.rs
+@@ -2,6 +2,7 @@
+ 
+ use alloc::{
+     collections::btree_map::{BTreeMap, Entry},
++    collections::vec_deque::VecDeque,
+     string::String,
+     sync::Arc,
+     vec::Vec,
+@@ -28,6 +29,7 @@ use super::{
+ use crate::{
+     errors::BindError,
+     ext::Ext,
++    forwarding::ForwardedIpv4Packet,
+     socket::{RawIpSocketBg, TcpListenerBg, UdpSocketBg},
+     socket_table::SocketTable,
+ };
+@@ -39,6 +41,7 @@ pub struct IfaceCommon<E: Ext> {
+     flags: InterfaceFlags,
+ 
+     interface: SpinLock<PollableIface<E>, BottomHalfDisabled>,
++    forwarded_packets: SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
+     used_ports: SpinLock<BTreeMap<u16, PortState>, BottomHalfDisabled>,
+     sockets: SpinLock<SocketTable<E>, BottomHalfDisabled>,
+     sched_poll: E::ScheduleNextPoll,
+@@ -60,6 +63,7 @@ impl<E: Ext> IfaceCommon<E> {
+             type_,
+             flags,
+             interface: SpinLock::new(PollableIface::new(interface)),
++            forwarded_packets: SpinLock::new(VecDeque::new()),
+             used_ports: SpinLock::new(BTreeMap::new()),
+             sockets: SpinLock::new(SocketTable::new()),
+             sched_poll,
+@@ -102,6 +106,21 @@ pub static INTERFACE_INDEX_ALLOCATOR: AtomicU32 = AtomicU32::new(1);
+ 
+ // Lock order: `interface` -> `sockets`
+ impl<E: Ext> IfaceCommon<E> {
++    /// Queues a routed packet for this interface.
++    ///
++    /// The queue is intentionally bounded: ingress runs in an interrupt-adjacent
++    /// path, so forwarding must not be able to consume unbounded kernel memory.
++    pub(crate) fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
++        const FORWARD_QUEUE_LIMIT: usize = 256;
++
++        let mut packets = self.forwarded_packets.lock();
++        if packets.len() >= FORWARD_QUEUE_LIMIT {
++            return false;
++        }
++        packets.push_back(packet);
++        true
++    }
++
+     /// Acquires the lock to the interface.
+     pub(crate) fn interface(&self) -> SpinLockGuard<'_, PollableIface<E>, BottomHalfDisabled> {
+         self.interface.lock()
+@@ -233,11 +252,12 @@ impl<E: Ext> IfaceCommon<E> {
+ }
+ 
+ impl<E: Ext> IfaceCommon<E> {
+-    pub(super) fn poll<D, P, Q>(
++    pub(super) fn poll<D, P, Q, R>(
+         &self,
+         device: &mut D,
+         mut process_phy: P,
+         mut dispatch_phy: Q,
++        mut dispatch_forwarded_phy: R,
+     ) -> Option<u64>
+     where
+         D: Device + ?Sized,
+@@ -246,8 +266,9 @@ impl<E: Ext> IfaceCommon<E> {
+                 &'cx mut Context,
+                 D::TxToken<'tx>,
+                 Option<(Ipv4Packet<&'pkt [u8]>, D::TxToken<'tx>)>,
+-            >,
++        >,
+         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
++        R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
+     {
+         let mut interface = self.interface();
+         interface.context_mut().now = get_network_timestamp();
+@@ -255,8 +276,18 @@ impl<E: Ext> IfaceCommon<E> {
+         let mut sockets = self.sockets.lock();
+         let mut socket_actions = Vec::new();
+ 
+-        let mut context = PollContext::new(interface.as_mut(), &sockets, &mut socket_actions);
++        let mut context = PollContext::new(
++            interface.as_mut(),
++            &sockets,
++            &mut socket_actions,
++            self.index,
++        );
+         context.poll_ingress(device, &mut process_phy, &mut dispatch_phy);
++        context.poll_forwarded_egress(
++            device,
++            &self.forwarded_packets,
++            &mut dispatch_forwarded_phy,
++        );
+         context.poll_egress(device, &mut dispatch_phy);
+ 
+         // Insert new connections and remove dead connections.
+diff --git a/kernel/libs/aster-bigtcp/src/iface/iface.rs b/kernel/libs/aster-bigtcp/src/iface/iface.rs
+index 9b14079..bb121c7 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/iface.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/iface.rs
+@@ -5,7 +5,7 @@ use alloc::sync::Arc;
+ use smoltcp::wire::{Ipv4Address, Ipv4Cidr};
+ 
+ use super::{BoundPort, InterfaceFlags, InterfaceType, port::BindPortConfig};
+-use crate::{errors::BindError, ext::Ext};
++use crate::{errors::BindError, ext::Ext, forwarding::ForwardedIpv4Packet};
+ 
+ /// A network interface.
+ ///
+@@ -19,6 +19,11 @@ pub trait Iface<E>: internal::IfaceInternal<E> + Send + Sync {
+ 
+     /// Returns the maximum transmission unit.
+     fn mtu(&self) -> usize;
++
++    /// Queues a routed IPv4 datagram for egress from this interface.
++    fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
++        self.common().enqueue_forwarded_ipv4(packet)
++    }
+ }
+ 
+ impl<E: Ext> dyn Iface<E> {
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+index a7ecf47..3868489 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ether.rs
+@@ -16,6 +16,7 @@ use smoltcp::{
+ use crate::{
+     device::{NotifyDevice, WithDevice},
+     ext::Ext,
++    forwarding::ForwardedIpv4Packet,
+     iface::{
+         Iface, InterfaceFlags, ScheduleNextPoll,
+         common::{IfaceCommon, InterfaceType},
+@@ -84,6 +85,7 @@ where
+                 &mut *device,
+                 |data, iface_cx, tx_token| self.process(data, iface_cx, tx_token),
+                 |pkt, iface_cx, tx_token| self.dispatch(pkt, iface_cx, tx_token),
++                |pkt, iface_cx, tx_token| self.dispatch_forwarded(pkt, iface_cx, tx_token),
+             );
+             device.notify_poll_end();
+             self.common.sched_poll().schedule_next_poll(next_poll);
+@@ -205,13 +207,42 @@ impl<D, E: Ext> EtherIface<D, E> {
+         }
+     }
+ 
++    fn dispatch_forwarded<T: TxToken>(
++        &self,
++        pkt: &ForwardedIpv4Packet,
++        iface_cx: &mut Context,
++        tx_token: T,
++    ) {
++        let ether = match self.resolve_ether_or_generate_arp_for_addr(
++            IpAddress::Ipv4(pkt.ip_repr.dst_addr),
++            iface_cx,
++        ) {
++            Ok(ether) => ether,
++            Err(Some(arp)) => {
++                Self::emit_arp(&arp, tx_token);
++                return;
++            }
++            Err(None) => return,
++        };
++
++        Self::emit_forwarded_ip(&ether, pkt, &iface_cx.caps, tx_token);
++    }
++
+     fn resolve_ether_or_generate_arp(
+         &self,
+         pkt: &Packet,
+         iface_cx: &mut Context,
++    ) -> Result<EthernetRepr, Option<ArpRepr>> {
++        self.resolve_ether_or_generate_arp_for_addr(pkt.ip_repr().dst_addr(), iface_cx)
++    }
++
++    fn resolve_ether_or_generate_arp_for_addr(
++        &self,
++        dst_addr: IpAddress,
++        iface_cx: &mut Context,
+     ) -> Result<EthernetRepr, Option<ArpRepr>> {
+         // Resolve the next-hop IP address.
+-        let next_hop_ip = match iface_cx.route(&pkt.ip_repr().dst_addr(), iface_cx.now()) {
++        let next_hop_ip = match iface_cx.route(&dst_addr, iface_cx.now()) {
+             Some(IpAddress::Ipv4(next_hop_ip)) => next_hop_ip,
+             None => return Err(None),
+         };
+@@ -265,6 +296,26 @@ impl<D, E: Ext> EtherIface<D, E> {
+         );
+     }
+ 
++    /// Consumes the token and emits a routed packet without reparsing or
++    /// mutating its transport payload.
++    fn emit_forwarded_ip<T: TxToken>(
++        ether_repr: &EthernetRepr,
++        packet: &ForwardedIpv4Packet,
++        caps: &DeviceCapabilities,
++        tx_token: T,
++    ) {
++        tx_token.consume(
++            ether_repr.buffer_len() + packet.ip_repr.buffer_len(),
++            |buffer| {
++                let mut frame = EthernetFrame::new_unchecked(buffer);
++                ether_repr.emit(&mut frame);
++                packet.ip_repr.emit(frame.payload_mut(), &caps.checksum);
++                frame.payload_mut()[packet.ip_repr.header_len()..]
++                    .copy_from_slice(&packet.payload);
++            },
++        );
++    }
++
+     /// Consumes the token and emits an ARP packet.
+     fn emit_arp<T: TxToken>(arp_repr: &ArpRepr, tx_token: T) {
+         let ether_repr = match arp_repr {
+diff --git a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+index 2627edd..2f5aec5 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/phy/ip.rs
+@@ -11,6 +11,7 @@ use smoltcp::{
+ use crate::{
+     device::WithDevice,
+     ext::Ext,
++    forwarding::ForwardedIpv4Packet,
+     iface::{
+         Iface, ScheduleNextPoll,
+         common::{IfaceCommon, InterfaceFlags, InterfaceType},
+@@ -74,6 +75,12 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
+                         );
+                     });
+                 },
++                |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
++                    tx_token.consume(pkt.ip_repr.buffer_len(), |buffer| {
++                        pkt.ip_repr.emit(buffer, &iface_cx.checksum_caps());
++                        buffer[pkt.ip_repr.header_len()..].copy_from_slice(&pkt.payload);
++                    });
++                },
+             );
+             self.common.sched_poll().schedule_next_poll(next_poll);
+         });
+diff --git a/kernel/libs/aster-bigtcp/src/iface/poll.rs b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+index 59d858a..b4741a6 100644
+--- a/kernel/libs/aster-bigtcp/src/iface/poll.rs
++++ b/kernel/libs/aster-bigtcp/src/iface/poll.rs
+@@ -2,6 +2,9 @@
+ 
+ use alloc::{sync::Arc, vec, vec::Vec};
+ 
++use aster_softirq::BottomHalfDisabled;
++use ostd::sync::SpinLock;
++
+ use smoltcp::{
+     iface::{
+         Context,
+@@ -19,6 +22,7 @@ use super::poll_iface::PollableIfaceMut;
+ use crate::{
+     ext::Ext,
+     netfilter::{self, HookPoint, Ipv4PacketContext},
++    forwarding::{ForwardedIpv4Packet, ForwardingResult},
+     socket::{TcpConnectionBg, TcpProcessResult},
+     socket_table::{ConnectionKey, ListenerKey, SocketTable},
+ };
+@@ -27,6 +31,7 @@ pub(super) struct PollContext<'a, E: Ext> {
+     iface: PollableIfaceMut<'a, E>,
+     sockets: &'a SocketTable<E>,
+     actions: &'a mut Vec<SocketTableAction<E>>,
++    ingress_ifindex: u32,
+ }
+ 
+ /// Socket table actions such as adding or removing TCP connections.
+@@ -43,11 +48,13 @@ impl<'a, E: Ext> PollContext<'a, E> {
+         iface: PollableIfaceMut<'a, E>,
+         sockets: &'a SocketTable<E>,
+         actions: &'a mut Vec<SocketTableAction<E>>,
++        ingress_ifindex: u32,
+     ) -> Self {
+         Self {
+             iface,
+             sockets,
+             actions,
++            ingress_ifindex,
+         }
+     }
+ }
+@@ -89,6 +96,32 @@ impl<E: Ext> PollContext<'_, E> {
+         }
+     }
+ 
++    /// Drains packets accepted by the router into the egress device.
++    ///
++    /// Packets are copied into a bounded queue before this point so the ingress
++    /// device lock is never held while an unrelated interface transmits.
++    pub(super) fn poll_forwarded_egress<D, Q>(
++        &mut self,
++        device: &mut D,
++        forwarded_packets: &SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
++        dispatch_forwarded_phy: &mut Q,
++    ) where
++        D: Device + ?Sized,
++        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
++    {
++        while let Some(tx_token) = device.transmit(self.iface.context().now()) {
++            let Some(packet) = forwarded_packets.lock().pop_front() else {
++                break;
++            };
++
++            if !self.accept_ipv4_at(HookPoint::PostRouting, &packet.ip_repr) {
++                continue;
++            }
++
++            dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token);
++        }
++    }
++
+     fn accept_ipv4_at(&self, hook_point: HookPoint, repr: &Ipv4Repr) -> bool {
+         netfilter::evaluate_ipv4(Ipv4PacketContext::new(hook_point, repr)).is_accept()
+     }
+@@ -196,11 +229,31 @@ impl<E: Ext> PollContext<'_, E> {
+         }
+ 
+         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
+-            return self.generate_icmp_unreachable(
+-                &IpRepr::Ipv4(repr),
+-                pkt.payload(),
+-                Icmpv4DstUnreachable::HostUnreachable,
++            if !self.accept_ipv4_at(HookPoint::Forward, &repr)
++                || !self.accept_forwarded_transport(&repr, pkt.payload())
++            {
++                return None;
++            }
++
++            let result = E::forward_ipv4_packet(
++                self.ingress_ifindex,
++                ForwardedIpv4Packet::new(repr, pkt.payload().to_vec()),
+             );
++
++            return match result {
++                ForwardingResult::Queued => None,
++                // Stage 2B deliberately returns the existing host-unreachable
++                // response until the later ICMP-error work adds distinct
++                // no-route, queue-pressure, and time-exceeded responses.
++                ForwardingResult::Disabled
++                | ForwardingResult::NoRoute
++                | ForwardingResult::HopLimitExceeded
++                | ForwardingResult::QueueFull => self.generate_icmp_unreachable(
++                    &IpRepr::Ipv4(repr),
++                    pkt.payload(),
++                    Icmpv4DstUnreachable::HostUnreachable,
++                ),
++            };
+         }
+ 
+         if !self.accept_ipv4_at(HookPoint::LocalIn, &repr) {
+@@ -255,6 +308,47 @@ impl<E: Ext> PollContext<'_, E> {
+         }
+     }
+ 
++    fn accept_forwarded_transport(&self, ipv4_repr: &Ipv4Repr, payload: &[u8]) -> bool {
++        let ip_repr = IpRepr::Ipv4(*ipv4_repr);
++        let checksum_caps = self.iface.context().checksum_caps();
++
++        match ipv4_repr.next_header {
++            IpProtocol::Tcp => TcpPacket::new_checked(payload)
++                .ok()
++                .and_then(|packet| {
++                    TcpRepr::parse(
++                        &packet,
++                        &ip_repr.src_addr(),
++                        &ip_repr.dst_addr(),
++                        &checksum_caps,
++                    )
++                    .ok()
++                })
++                .is_some_and(|tcp_repr| self.accept_tcp_at(HookPoint::Forward, &ip_repr, &tcp_repr)),
++            IpProtocol::Udp => UdpPacket::new_checked(payload)
++                .ok()
++                .and_then(|packet| {
++                    UdpRepr::parse(
++                        &packet,
++                        &ip_repr.src_addr(),
++                        &ip_repr.dst_addr(),
++                        &checksum_caps,
++                    )
++                    .ok()
++                })
++                .is_some_and(|udp_repr| self.accept_udp_at(HookPoint::Forward, &ip_repr, &udp_repr)),
++            IpProtocol::Icmp => Icmpv4Packet::new_checked(payload)
++                .ok()
++                .and_then(|packet| Icmpv4Repr::parse(&packet, &checksum_caps).ok())
++                .is_some_and(|icmp_repr| {
++                    self.accept_icmpv4_at(HookPoint::Forward, &ip_repr, &icmp_repr)
++                }),
++            // Stage 2 forwards only parsed TCP, UDP, and ICMPv4 packets.  This
++            // prevents an unknown protocol from bypassing the filter framework.
++            _ => false,
++        }
++    }
++
+     fn process_raw_ipv4(&self, ipv4_repr: &Ipv4Repr, packet: &[u8]) {
+         for socket in self.sockets.raw_ip_socket_iter() {
+             if socket.protocol() != ipv4_repr.next_header {
+@@ -620,7 +714,12 @@ impl<E: Ext> PollContext<'_, E> {
+ 
+             let (reply, became_dead) =
+                 TcpConnectionBg::dispatch(&socket, &mut self.iface, |iface, ip_repr, tcp_repr| {
+-                    let mut this = PollContext::new(iface, self.sockets, self.actions);
++                    let mut this = PollContext::new(
++                        iface,
++                        self.sockets,
++                        self.actions,
++                        self.ingress_ifindex,
++                    );
+ 
+                     if !this.accept_tcp_at(HookPoint::LocalOut, ip_repr, tcp_repr) {
+                         return None;
+@@ -739,7 +838,12 @@ impl<E: Ext> PollContext<'_, E> {
+             let (cx, pending) = self.iface.inner_mut();
+             socket.dispatch(cx, |cx, ip_repr, udp_repr, udp_payload| {
+                 let iface = PollableIfaceMut::new(cx, pending);
+-                let mut this = PollContext::new(iface, self.sockets, &mut actions);
++                let mut this = PollContext::new(
++                    iface,
++                    self.sockets,
++                    &mut actions,
++                    self.ingress_ifindex,
++                );
+ 
+                 if !this.accept_udp_at(HookPoint::LocalOut, ip_repr, udp_repr) {
+                     return;
+diff --git a/kernel/libs/aster-bigtcp/src/lib.rs b/kernel/libs/aster-bigtcp/src/lib.rs
+index 827f030..877e73d 100644
+--- a/kernel/libs/aster-bigtcp/src/lib.rs
++++ b/kernel/libs/aster-bigtcp/src/lib.rs
+@@ -21,6 +21,7 @@ pub mod boolean_value;
+ pub mod device;
+ pub mod errors;
+ pub mod ext;
++pub mod forwarding;
+ pub mod iface;
+ pub mod netfilter;
+ pub mod socket;
+diff --git a/kernel/src/net/iface/ext.rs b/kernel/src/net/iface/ext.rs
+index 79ddaa3..c7fe07a 100644
+--- a/kernel/src/net/iface/ext.rs
++++ b/kernel/src/net/iface/ext.rs
+@@ -10,4 +10,11 @@ impl aster_bigtcp::ext::Ext for BigtcpExt {
+ 
+     type TcpEventObserver = StreamObserver;
+     type UdpEventObserver = DatagramObserver;
++
++    fn forward_ipv4_packet(
++        ingress_ifindex: u32,
++        packet: aster_bigtcp::forwarding::ForwardedIpv4Packet,
++    ) -> aster_bigtcp::forwarding::ForwardingResult {
++        crate::net::router::forward_ipv4_packet(ingress_ifindex, packet)
++    }
+ }
+diff --git a/kernel/src/net/mod.rs b/kernel/src/net/mod.rs
+index b7f1574..c7698d5 100644
+--- a/kernel/src/net/mod.rs
++++ b/kernel/src/net/mod.rs
+@@ -1,11 +1,13 @@
+ // SPDX-License-Identifier: MPL-2.0
+ 
+ pub mod iface;
++mod router;
+ pub mod socket;
+ pub mod uts_ns;
+ 
+ pub fn init() {
+     iface::init();
++    router::init();
+     socket::netlink::init();
+     socket::vsock::init();
+ }
+diff --git a/kernel/src/net/router.rs b/kernel/src/net/router.rs
+new file mode 100644
+index 0000000..9e58271
+--- /dev/null
++++ b/kernel/src/net/router.rs
+@@ -0,0 +1,99 @@
++// SPDX-License-Identifier: MPL-2.0
++
++//! Stage 2 IPv4 forwarding policy.
++//!
++//! Routes are currently the directly connected IPv4 prefixes of registered
++//! interfaces.  Static routes, a userspace control surface, ICMP-specific
++//! errors, conntrack, and NAT are deliberately later stages.
++
++use core::sync::atomic::{AtomicBool, Ordering};
++
++use aster_bigtcp::{
++    forwarding::{ForwardedIpv4Packet, ForwardingResult},
++    wire::Ipv4Address,
++};
++
++use super::iface::iter_all_ifaces;
++
++static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
++
++aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
++
++/// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
++pub fn init() {
++    if IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
++        println!("netfilter-stage2b: ipv4 forwarding pipeline enabled");
++    }
++}
++
++/// Selects a directly connected egress route and queues the packet.
++pub fn forward_ipv4_packet(
++    ingress_ifindex: u32,
++    mut packet: ForwardedIpv4Packet,
++) -> ForwardingResult {
++    if !IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
++        return ForwardingResult::Disabled;
++    }
++
++    if packet.ip_repr.hop_limit <= 1 {
++        return ForwardingResult::HopLimitExceeded;
++    }
++
++    let destination = packet.ip_repr.dst_addr;
++    let egress = iter_all_ifaces()
++        .filter(|iface| iface.index() != ingress_ifindex)
++        .filter_map(|iface| {
++            let address = iface.ipv4_addr()?;
++            let prefix_len = iface.prefix_len()?;
++            route_matches(destination, address, prefix_len).then_some((prefix_len, iface))
++        })
++        .max_by_key(|(prefix_len, _)| *prefix_len)
++        .map(|(_, iface)| iface);
++
++    let Some(egress) = egress else {
++        return ForwardingResult::NoRoute;
++    };
++
++    // Ipv4Repr is re-emitted at egress, which computes a fresh header checksum.
++    packet.ip_repr.hop_limit -= 1;
++
++    if !egress.enqueue_forwarded_ipv4(packet) {
++        return ForwardingResult::QueueFull;
++    }
++
++    // The queues are per-interface and the ingress interface is excluded above,
++    // so this does not recurse into the current device lock.
++    egress.poll();
++    ForwardingResult::Queued
++}
++
++fn route_matches(destination: Ipv4Address, address: Ipv4Address, prefix_len: u8) -> bool {
++    let prefix_len = prefix_len.min(32);
++    let mask = if prefix_len == 0 {
++        0
++    } else {
++        u32::MAX << (32 - prefix_len)
++    };
++    (u32::from_be_bytes(destination.0) & mask) == (u32::from_be_bytes(address.0) & mask)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::route_matches;
++    use aster_bigtcp::wire::Ipv4Address;
++
++    #[test]
++    fn route_matching_honors_prefix_length() {
++        let network_address = Ipv4Address::new(10, 0, 3, 15);
++        assert!(route_matches(
++            Ipv4Address::new(10, 0, 3, 2),
++            network_address,
++            24
++        ));
++        assert!(!route_matches(
++            Ipv4Address::new(10, 0, 2, 2),
++            network_address,
++            24
++        ));
++    }
++}

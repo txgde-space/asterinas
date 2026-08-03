@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use alloc::{sync::Arc, vec, vec::Vec};
+use alloc::{collections::VecDeque, sync::Arc, vec, vec::Vec};
+
+use aster_softirq::BottomHalfDisabled;
+use ostd::sync::SpinLock;
 
 use smoltcp::{
     iface::{
@@ -19,6 +22,7 @@ use super::poll_iface::PollableIfaceMut;
 use crate::{
     ext::Ext,
     netfilter::{self, HookPoint, Ipv4PacketContext},
+    forwarding::{ForwardedIpv4Packet, ForwardingResult},
     socket::{TcpConnectionBg, TcpProcessResult},
     socket_table::{ConnectionKey, ListenerKey, SocketTable},
 };
@@ -27,6 +31,7 @@ pub(super) struct PollContext<'a, E: Ext> {
     iface: PollableIfaceMut<'a, E>,
     sockets: &'a SocketTable<E>,
     actions: &'a mut Vec<SocketTableAction<E>>,
+    ingress_ifindex: u32,
 }
 
 /// Socket table actions such as adding or removing TCP connections.
@@ -43,11 +48,13 @@ impl<'a, E: Ext> PollContext<'a, E> {
         iface: PollableIfaceMut<'a, E>,
         sockets: &'a SocketTable<E>,
         actions: &'a mut Vec<SocketTableAction<E>>,
+        ingress_ifindex: u32,
     ) -> Self {
         Self {
             iface,
             sockets,
             actions,
+            ingress_ifindex,
         }
     }
 }
@@ -86,6 +93,32 @@ impl<E: Ext> PollContext<'_, E> {
 
                 self.dispatch_outgoing_packet(&reply, dispatch_phy, tx_token);
             });
+        }
+    }
+
+    /// Drains packets accepted by the router into the egress device.
+    ///
+    /// Packets are copied into a bounded queue before this point so the ingress
+    /// device lock is never held while an unrelated interface transmits.
+    pub(super) fn poll_forwarded_egress<D, Q>(
+        &mut self,
+        device: &mut D,
+        forwarded_packets: &SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
+        dispatch_forwarded_phy: &mut Q,
+    ) where
+        D: Device + ?Sized,
+        Q: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>),
+    {
+        while let Some(tx_token) = device.transmit(self.iface.context().now()) {
+            let Some(packet) = forwarded_packets.lock().pop_front() else {
+                break;
+            };
+
+            if !self.accept_ipv4_at(HookPoint::PostRouting, &packet.ip_repr) {
+                continue;
+            }
+
+            dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token);
         }
     }
 
@@ -196,11 +229,31 @@ impl<E: Ext> PollContext<'_, E> {
         }
 
         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
-            return self.generate_icmp_unreachable(
-                &IpRepr::Ipv4(repr),
-                pkt.payload(),
-                Icmpv4DstUnreachable::HostUnreachable,
+            if !self.accept_ipv4_at(HookPoint::Forward, &repr)
+                || !self.accept_forwarded_transport(&repr, pkt.payload())
+            {
+                return None;
+            }
+
+            let result = E::forward_ipv4_packet(
+                self.ingress_ifindex,
+                ForwardedIpv4Packet::new(repr, pkt.payload().to_vec()),
             );
+
+            return match result {
+                ForwardingResult::Queued => None,
+                // Stage 2B deliberately returns the existing host-unreachable
+                // response until the later ICMP-error work adds distinct
+                // no-route, queue-pressure, and time-exceeded responses.
+                ForwardingResult::Disabled
+                | ForwardingResult::NoRoute
+                | ForwardingResult::HopLimitExceeded
+                | ForwardingResult::QueueFull => self.generate_icmp_unreachable(
+                    &IpRepr::Ipv4(repr),
+                    pkt.payload(),
+                    Icmpv4DstUnreachable::HostUnreachable,
+                ),
+            };
         }
 
         if !self.accept_ipv4_at(HookPoint::LocalIn, &repr) {
@@ -252,6 +305,47 @@ impl<E: Ext> PollContext<'_, E> {
                 self.parse_and_process_icmpv4(&ip_repr, pkt.payload(), &checksum_caps)
             }
             _ => None,
+        }
+    }
+
+    fn accept_forwarded_transport(&self, ipv4_repr: &Ipv4Repr, payload: &[u8]) -> bool {
+        let ip_repr = IpRepr::Ipv4(*ipv4_repr);
+        let checksum_caps = self.iface.context().checksum_caps();
+
+        match ipv4_repr.next_header {
+            IpProtocol::Tcp => TcpPacket::new_checked(payload)
+                .ok()
+                .and_then(|packet| {
+                    TcpRepr::parse(
+                        &packet,
+                        &ip_repr.src_addr(),
+                        &ip_repr.dst_addr(),
+                        &checksum_caps,
+                    )
+                    .ok()
+                })
+                .is_some_and(|tcp_repr| self.accept_tcp_at(HookPoint::Forward, &ip_repr, &tcp_repr)),
+            IpProtocol::Udp => UdpPacket::new_checked(payload)
+                .ok()
+                .and_then(|packet| {
+                    UdpRepr::parse(
+                        &packet,
+                        &ip_repr.src_addr(),
+                        &ip_repr.dst_addr(),
+                        &checksum_caps,
+                    )
+                    .ok()
+                })
+                .is_some_and(|udp_repr| self.accept_udp_at(HookPoint::Forward, &ip_repr, &udp_repr)),
+            IpProtocol::Icmp => Icmpv4Packet::new_checked(payload)
+                .ok()
+                .and_then(|packet| Icmpv4Repr::parse(&packet, &checksum_caps).ok())
+                .is_some_and(|icmp_repr| {
+                    self.accept_icmpv4_at(HookPoint::Forward, &ip_repr, &icmp_repr)
+                }),
+            // Stage 2 forwards only parsed TCP, UDP, and ICMPv4 packets.  This
+            // prevents an unknown protocol from bypassing the filter framework.
+            _ => false,
         }
     }
 
@@ -620,7 +714,12 @@ impl<E: Ext> PollContext<'_, E> {
 
             let (reply, became_dead) =
                 TcpConnectionBg::dispatch(&socket, &mut self.iface, |iface, ip_repr, tcp_repr| {
-                    let mut this = PollContext::new(iface, self.sockets, self.actions);
+                    let mut this = PollContext::new(
+                        iface,
+                        self.sockets,
+                        self.actions,
+                        self.ingress_ifindex,
+                    );
 
                     if !this.accept_tcp_at(HookPoint::LocalOut, ip_repr, tcp_repr) {
                         return None;
@@ -739,7 +838,12 @@ impl<E: Ext> PollContext<'_, E> {
             let (cx, pending) = self.iface.inner_mut();
             socket.dispatch(cx, |cx, ip_repr, udp_repr, udp_payload| {
                 let iface = PollableIfaceMut::new(cx, pending);
-                let mut this = PollContext::new(iface, self.sockets, &mut actions);
+                let mut this = PollContext::new(
+                    iface,
+                    self.sockets,
+                    &mut actions,
+                    self.ingress_ifindex,
+                );
 
                 if !this.accept_udp_at(HookPoint::LocalOut, ip_repr, udp_repr) {
                     return;

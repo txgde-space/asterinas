@@ -1,0 +1,12 @@
+diff --git a/kernel/src/net/iface/init.rs b/kernel/src/net/iface/init.rs
+--- a/kernel/src/net/iface/init.rs
++++ b/kernel/src/net/iface/init.rs
+@@ -76,7 +76,7 @@ fn report_stage2_multi_nic_result() {
+ 
+     use aster_bigtcp::wire::Ipv4Address;
+ 
+-    let has_expected_iface = |name, address| {
++    let has_expected_iface = |name: &str, address: [u8; 4]| {
+         iter_all_ifaces().any(|iface| {
+             iface.name() == name
+                 && iface.ipv4_addr()

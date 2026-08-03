@@ -1,0 +1,577 @@
+these 12 derivations will be built:
+  /nix/store/6p3189h6f6gybvx2nd6ni2k16m748yld-device-test-0.1.0.drv
+  /nix/store/983b8vn279ai4nlr5zs49p5b02qi64bz-fs-test-0.1.0.drv
+  /nix/store/9rps3krp9ci0vgkj57r6jzy5hhf0g2l9-hello_world-test-0.1.0.drv
+  /nix/store/b3ywqh0i4dxa7044k3ascnv2mlchfs4r-ipc-test-0.1.0.drv
+  /nix/store/kcjwgc9yxr9n2fqp7dgdl2bs9qrxaap0-memory-test-0.1.0.drv
+  /nix/store/ljxgshamg00ia4rvmh2ai05w06g5p7js-process-test-0.1.0.drv
+  /nix/store/zlr8sk6ifpkciiqk5mll6gkxygyjdzmv-security-test-0.1.0.drv
+  /nix/store/zwb8mlrxv6mqs02x0ph30vrw5n7fqza0-network-test-0.1.0.drv
+  /nix/store/4jyfazvgcajrq7crk3jkb1dplwv6q16m-regression-0.1.0.drv
+  /nix/store/4x9ll9mhpxd0n3xq535nara1srxsh05h-resolv-conf.drv
+  /nix/store/gl61q1150gnpfwpi8grib4asqkx8zn6k-runtime-deps.drv
+  /nix/store/la77dhql91p9sczyhf7yb6ikxwxcl66r-initramfs.drv
+these 2 paths will be fetched (95.2 KiB download, 1.1 MiB unpacked):
+  /nix/store/yc9d4s9z52ky0rfgwjbwvg8y83ix83x5-libnl-3.11.0-bin
+  /nix/store/9whp1z0jcw0bad01w4mdzhl2r4nmb3p2-libnl-3.11.0-dev
+building '/nix/store/4x9ll9mhpxd0n3xq535nara1srxsh05h-resolv-conf.drv'...
+copying path '/nix/store/yc9d4s9z52ky0rfgwjbwvg8y83ix83x5-libnl-3.11.0-bin' from 'https://cache.nixos.org'...
+Warning: the host's /etc/resolv.conf is not valid for the guest VM (containing lookback addresses).
+Fall back to Cloudflare's public DNS servers (1.1.1.1).
+Consider using the DNS_SERVER Makefile variable to specify DNS server explicitly.
+For example: make DNS_SERVER="192.168.1.1"
+building '/nix/store/6p3189h6f6gybvx2nd6ni2k16m748yld-device-test-0.1.0.drv'...
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/devtmpfs_mode
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/evdev
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/framebuffer
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/full
+copying path '/nix/store/9whp1z0jcw0bad01w4mdzhl2r4nmb3p2-libnl-3.11.0-dev' from 'https://cache.nixos.org'...
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/hwrng
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/random
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/close_pty
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/open_ptmx
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/open_pty
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/pty_blocking
+CC <= /nix/store/fbq9jiy1w71wwf7ryj98pwrgl19a65i1-device-test-0.1.0/device/pty/pty_packet_mode
+building '/nix/store/983b8vn279ai4nlr5zs49p5b02qi64bz-fs-test-0.1.0.drv'...
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/mknod
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/open_dir
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/rename
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/rmdir
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/ext2/unix_socket
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/fdatasync/fdatasync
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_align
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_poll
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/inotify/inotify_unlink
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/isolation/chroot
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/isolation/pivot_root
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/mount/mount_move
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/overlayfs/ovl_test
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/overlayfs/readdir_small_buffer
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/dentry_cache
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/mountstats
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/pid_mem
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/procfs/tid
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/memfd_access_err
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_dentry
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_dev_id
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_inode
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/pseudofs/pseudo_mount
+CC <= /nix/store/fn7mxddisyp8c9vb538ayy51nwv7q7xz-fs-test-0.1.0/fs/symlink/symlink
+building '/nix/store/9rps3krp9ci0vgkj57r6jzy5hhf0g2l9-hello_world-test-0.1.0.drv'...
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_c/hello
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_c_pie/hello
+CC <= /nix/store/kc7z47hd3wyl30da053wvli6s8wygbrc-hello_world-test-0.1.0/hello_world/in_assembly/hello
+building '/nix/store/b3ywqh0i4dxa7044k3ascnv2mlchfs4r-ipc-test-0.1.0.drv'...
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/pipe_err
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/process_pipe_available
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/pipe/short_rw
+CC <= /nix/store/xzwpa4k5cn81qqh7kkvn24rlyi13sjs1-ipc-test-0.1.0/ipc/shm/posix_shm
+building '/nix/store/kcjwgc9yxr9n2fqp7dgdl2bs9qrxaap0-memory-test-0.1.0.drv'...
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_fork
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_mprotect
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_and_mremap
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_beyond_the_file
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_err
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_holes
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_readahead
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_shared_filebacked
+CC <= /nix/store/23arl6hqs0fw2cy5b8ysfy978mhnl8n4-memory-test-0.1.0/memory/mmap/mmap_vmrss
+building '/nix/store/zwb8mlrxv6mqs02x0ph30vrw5n7fqza0-network-test-0.1.0.drv'...
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/getsockname_any
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/icmp_raw_socket
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/inaddr_any
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/iptables
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/ipv6_any
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/linux_socket_compat
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/linux_socket_compat_common
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/listen_autobind
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/listen_backlog
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/localhost_loopback
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/netfilter_rules
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/netlink_route
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/privileged_ports
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/rtnl_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/send_buf_full
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/sendmmsg
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/socket_buffer_defaults
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/socket_readiness
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/socketpair
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/sockoption
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/sockoption_unix
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_accept_model
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_client
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_poll
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_reuseaddr
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_server
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/tcp_wrapped_buffer_io
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/udp_broadcast
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/udp_client
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/udp_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/udp_server
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/uevent_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/unix_client
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/unix_datagram_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/unix_seqpacket_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/unix_server
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/unix_stream_err
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/vsock/vsock_client
+CC <= /nix/store/h8xs9ydji5p3547h8jy3l3rgx2kg6fk5-network-test-0.1.0/network/vsock/vsock_server
+building '/nix/store/ljxgshamg00ia4rvmh2ai05w06g5p7js-process-test-0.1.0.drv'...
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/group_session
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/job_control
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pidfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pidfd_getfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/wait4
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/alarm/alarm
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_files
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_invalid_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_no_exit_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_parent
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/clone3/clone_process
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/cpu_affinity/cpu_affinity
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_err
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_memfd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_mt_child
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/execve_mt_parent
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/execve/hello
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/exit/exit_code
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/exit/exit_procfs
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/fork_c/fork
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/getcpu/getcpu
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/getpid/getpid
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/itimer/setitimer
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/itimer/timer_create
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/capbset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/secure_bits
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/prctl/subreaper
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pthread/pthread_signal_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/pthread/pthread_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/ptrace/ptrace
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_attr_getset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_param_getset
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/sched/sched_param_idle
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/fault_signals
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/kill
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/parent_death_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/pidfd_send_signal
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/sigaltstack
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_fd
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_fpu
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_rflags_df
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_test
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/signal_test2
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/signal/sigtrap
+CC <= /nix/store/8g7j4hlqq4hinl37s0msas0s3dg81gdc-process-test-0.1.0/process/fork/fork
+building '/nix/store/zlr8sk6ifpkciiqk5mll6gkxygyjdzmv-security-test-0.1.0.drv'...
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/capabilities
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/capset
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/execve
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/capability/execve_child
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/cgroup_ns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/ipc_ns_sem
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/mnt_ns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/proc_nsfs
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/setns
+CC <= /nix/store/z2gqkr42j2pl9n9fzphaa6j0hy9rpn4w-security-test-0.1.0/security/namespace/unshare
+building '/nix/store/4jyfazvgcajrq7crk3jkb1dplwv6q16m-regression-0.1.0.drv'...
+building '/nix/store/gl61q1150gnpfwpi8grib4asqkx8zn6k-runtime-deps.drv'...
+structuredAttrs is enabled
+building '/nix/store/la77dhql91p9sczyhf7yb6ikxwxcl66r-initramfs.drv'...
+/nix/store/7prhkdhl41hgkn5gvx83gwqnvmlj00ad-initramfs
+this derivation will be built:
+  /nix/store/fcypiak2yx5w6cybkwvlc5vksva0p7gy-initramfs-image.drv
+building '/nix/store/fcypiak2yx5w6cybkwvlc5vksva0p7gy-initramfs-image.drv'...
+/build/tmp.RARiobao5Q /build
+113116 blocks
+/build
+/nix/store/3vfyl3fikx4n1j5i3z0xmp2vbfp846qf-initramfs-image
+info: syncing channel updates for nightly-2025-12-06-x86_64-unknown-linux-gnu
+info: latest update on 2025-12-06 for version 1.94.0-nightly (1aa9bab4e 2025-12-05)
+info: downloading 12 components
+  Installing cargo-osdk v0.17.1 (/root/asterinas/osdk)
+    Updating crates.io index
+     Locking 164 packages to latest Rust 1.94.0-nightly compatible versions
+      Adding indicatif v0.17.11 (available: v0.18.6)
+      Adding inferno v0.11.21 (available: v0.12.8)
+      Adding shlex v1.3.0 (available: v2.0.1)
+      Adding syn v2.0.119 (available: v3.0.3)
+      Adding toml v0.8.23 (available: v1.1.4+spec-1.1.0)
+      Adding whoami v1.6.1 (available: v2.1.2)
+ Downloading crates ...
+  Downloaded is-terminal v0.4.17
+  Downloaded toml_write v0.1.2
+  Downloaded defmt-parser v1.0.0
+  Downloaded adler32 v1.2.0
+  Downloaded number_prefix v0.4.0
+  Downloaded zero v0.1.3
+  Downloaded libflate_lz77 v2.3.0
+  Downloaded toml_datetime v0.6.11
+  Downloaded env_filter v2.0.0
+  Downloaded str_stack v0.1.1
+  Downloaded serde_spanned v0.6.9
+  Downloaded xmas-elf v0.10.0
+  Downloaded rev_buf_reader v0.3.0
+  Downloaded fastrand v2.5.0
+  Downloaded bitflags v1.3.2
+  Downloaded dary_heap v0.3.9
+  Downloaded dashmap v6.2.1
+  Downloaded whoami v1.6.1
+  Downloaded thiserror-impl v2.0.19
+  Downloaded env_logger v0.11.11
+  Downloaded thiserror v2.0.19
+  Downloaded autocfg v1.5.1
+  Downloaded defmt-macros v1.1.1
+  Downloaded zmij v1.0.23
+  Downloaded which v8.0.5
+  Downloaded arrayvec v0.7.8
+  Downloaded libflate v2.3.1
+  Downloaded quote v1.0.47
+  Downloaded smallvec v1.15.2
+  Downloaded clap_derive v4.6.4
+  Downloaded no_std_io2 v0.9.4
+  Downloaded toml v0.8.23
+  Downloaded defmt v1.1.1
+  Downloaded console v0.15.11
+  Downloaded clap v4.6.4
+  Downloaded iana-time-zone v0.1.65
+  Downloaded proc-macro2 v1.0.107
+  Downloaded crossbeam-utils v0.8.22
+  Downloaded num-format v0.4.4
+  Downloaded serde_derive v1.0.229
+  Downloaded bytemuck v1.25.2
+  Downloaded bitflags v2.13.1
+  Downloaded num-traits v0.2.19
+  Downloaded rle-decode-fast v1.0.3
+  Downloaded getrandom v0.4.3
+  Downloaded serde_core v1.0.229
+  Downloaded log v0.4.33
+  Downloaded indicatif v0.17.11
+  Downloaded allocator-api2 v0.2.21
+  Downloaded toml_edit v0.22.27
+  Downloaded crossbeam-channel v0.5.16
+  Downloaded zerocopy-derive v0.8.55
+  Downloaded memchr v2.8.3
+  Downloaded serde v1.0.229
+  Downloaded quick-xml v0.26.0
+  Downloaded inferno v0.11.21
+  Downloaded jiff-core v0.1.0
+  Downloaded hashbrown v0.14.5
+  Downloaded serde_json v1.0.151
+  Downloaded regex v1.13.1
+  Downloaded clap_builder v4.6.2
+  Downloaded portable-atomic v1.14.0
+  Downloaded chrono v0.4.45
+  Downloaded zerocopy v0.8.55
+  Downloaded syn v2.0.119
+  Downloaded syn v3.0.3
+  Downloaded regex-syntax v0.8.11
+  Downloaded regex-automata v0.4.16
+  Downloaded jiff v0.2.35
+  Downloaded libc v0.2.189
+    Finished `release` profile [optimized] target(s) in 30.29s
+  Installing /root/.cargo/bin/cargo-osdk
+   Installed package `cargo-osdk v0.17.1 (/root/asterinas/osdk)` (executable `cargo-osdk`)
+[Info] [normal] Forwarded QEMU guest port: 11000->22; 58440->8080 14580->6379 20572->5201 30810->31234 48740->31236 44099->11211
+[Info] [test] Forwarded QEMU guest port: 7491->22; 22015->8080 16291->6379 27268->5201 40284->31234 51281->31236 19945->11211
+    Updating crates.io index
+    Updating git repository `https://github.com/asterinas/inherit-methods-macro`
+    Updating git repository `https://github.com/asterinas/smoltcp`
+    Updating git repository `https://github.com/asterinas/inventory`
+    Updating git repository `https://github.com/asterinas/rust-ctor`
+ Downloading crates ...
+  Downloaded ext-trait v1.0.1
+  Downloaded cipher v0.3.0
+  Downloaded konst_macro_rules v0.2.19
+  Downloaded hash32 v0.2.1
+  Downloaded powerfmt v0.2.0
+  Downloaded aead v0.4.3
+  Downloaded nougat v0.2.4
+  Downloaded macro_rules_attribute-proc_macro v0.1.3
+  Downloaded ptr_meta_derive v0.3.1
+  Downloaded memoffset v0.9.1
+  Downloaded time-core v0.1.9
+  Downloaded tap v1.0.1
+  Downloaded num-conv v0.2.2
+  Downloaded getset v0.1.7
+  Downloaded volatile v0.4.6
+  Downloaded macro_rules_attribute v0.1.3
+  Downloaded subtle v2.4.1
+  Downloaded never-say-never v6.6.666
+  Downloaded managed v0.8.0
+  Downloaded lending-iterator-proc_macros v0.1.7
+  Downloaded darling_macro v0.13.4
+  Downloaded hash32 v0.3.1
+  Downloaded extension-traits v1.0.1
+  Downloaded funty v2.0.0
+  Downloaded cobs v0.3.0
+  Downloaded bit_field v0.10.3
+  Downloaded ext-trait-proc_macros v1.0.1
+  Downloaded ptr_meta v0.3.1
+  Downloaded nougat-proc_macros v0.2.4
+  Downloaded ghash v0.4.4
+  Downloaded opaque-debug v0.3.1
+  Downloaded owo-colors v4.3.0
+  Downloaded lru v0.16.4
+  Downloaded bittle v0.5.7
+  Downloaded takeable v0.2.2
+  Downloaded paste v1.0.15
+  Downloaded ghost v0.1.23
+  Downloaded radium v0.7.0
+  Downloaded polonius-the-crab v0.2.1
+  Downloaded volatile v0.6.1
+  Downloaded wyz v0.5.1
+  Downloaded unwinding v0.2.8
+  Downloaded uguid v2.2.1
+  Downloaded polyval v0.5.3
+  Downloaded const_format_proc_macros v0.2.34
+  Downloaded tdx-guest v0.2.4
+  Downloaded rustversion v1.0.23
+  Downloaded rand_core v0.9.5
+  Downloaded deranged v0.5.8
+  Downloaded defmt v0.3.100
+  Downloaded ctr v0.8.0
+  Downloaded universal-hash v0.4.1
+  Downloaded darling v0.13.4
+  Downloaded generic-array v0.14.9
+  Downloaded postcard v1.1.3
+  Downloaded lending-iterator v0.1.7
+  Downloaded acpi v5.2.0
+  Downloaded byteorder v1.5.0
+  Downloaded either v1.17.0
+  Downloaded spin v0.9.9
+  Downloaded font8x8 v0.2.7
+  Downloaded darling_core v0.13.4
+  Downloaded toml v0.7.8
+  Downloaded intrusive-collections v0.9.7
+  Downloaded multiboot2 v0.24.1
+  Downloaded konst v0.2.20
+  Downloaded uefi-raw v0.12.0
+  Downloaded heapless v0.7.17
+  Downloaded x86_64 v0.14.13
+  Downloaded heapless v0.8.0
+  Downloaded toml_edit v0.19.15
+  Downloaded const_format v0.2.36
+  Downloaded rand v0.9.5
+  Downloaded typenum v1.20.1
+  Downloaded raw-cpuid v10.7.0
+  Downloaded json v0.12.4
+  Downloaded aes v0.7.5
+  Downloaded aes-gcm v0.9.4
+  Downloaded winnow v0.5.40
+  Downloaded bitvec v1.1.1
+  Downloaded time v0.3.54
+  Downloaded gimli v0.28.1
+  Downloaded gimli v0.32.3
+  Downloaded multiboot2-common v0.3.0
+  Downloaded x86 v0.52.0
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded rustc-literal-escaper v0.0.5
+  Downloaded getopts v0.2.24
+   Compiling compiler_builtins v0.1.160 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling zerocopy v0.8.55
+   Compiling thiserror v2.0.19
+   Compiling radium v0.7.0
+   Compiling memoffset v0.9.1
+   Compiling num-traits v0.2.19
+   Compiling x86 v0.52.0
+   Compiling generic-array v0.14.9
+   Compiling serde_core v1.0.229
+   Compiling serde v1.0.229
+   Compiling heapless v0.8.0
+   Compiling smoltcp v0.11.0 (https://github.com/asterinas/smoltcp?tag=r_2024-11-08_f07e5b5#b10671de)
+   Compiling ahash v0.8.12
+   Compiling heapless v0.7.17
+   Compiling owo-colors v4.3.0
+   Compiling crc32fast v1.5.0
+   Compiling alloc v0.0.0 (/root/.rustup/toolchains/nightly-2025-12-06-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling cfg-if v1.0.4
+   Compiling scopeguard v1.2.0
+   Compiling log v0.4.33
+   Compiling bitflags v2.13.1
+   Compiling bitflags v1.3.2
+   Compiling bit_field v0.10.3
+   Compiling lock_api v0.4.14
+   Compiling tap v1.0.1
+   Compiling wyz v0.5.1
+   Compiling raw-cpuid v10.7.0
+   Compiling volatile v0.4.6
+   Compiling ptr_meta v0.3.1
+   Compiling funty v2.0.0
+   Compiling spin v0.9.9
+   Compiling uguid v2.2.1
+   Compiling multiboot2-common v0.3.0
+   Compiling x86_64 v0.14.13
+   Compiling lazy_static v1.5.0
+   Compiling uefi-raw v0.12.0
+   Compiling int-to-c-enum v0.1.0 (/root/asterinas/ostd/libs/int-to-c-enum)
+warning: unstable feature specified for `-Ctarget-feature`: `ermsb`
+  |
+  = note: this feature is not stably supported; its behavior can change in the future
+
+   Compiling iced-x86 v1.21.0
+warning: `int-to-c-enum` (lib) generated 1 warning
+   Compiling gimli v0.32.3
+   Compiling intrusive-collections v0.9.7
+   Compiling bitvec v1.1.1
+   Compiling acpi v5.2.0
+   Compiling align_ext v0.1.0 (/root/asterinas/ostd/libs/align_ext)
+warning: `align_ext` (lib) generated 1 warning (1 duplicate)
+   Compiling ostd-test v0.17.1 (/root/asterinas/ostd/libs/ostd-test)
+warning: `ostd-test` (lib) generated 1 warning (1 duplicate)
+   Compiling smallvec v1.15.2
+   Compiling unwinding v0.2.8
+   Compiling gimli v0.28.1
+   Compiling volatile v0.6.1
+   Compiling linux-boot-params v0.17.1 (/root/asterinas/ostd/libs/linux-bzimage/boot-params)
+warning: `linux-boot-params` (lib) generated 1 warning (1 duplicate)
+   Compiling inventory v0.3.3 (https://github.com/asterinas/inventory?rev=9dce587#9dce5871)
+   Compiling typeflags-util v0.1.0 (/root/asterinas/kernel/libs/typeflags-util)
+   Compiling component v0.1.0 (/root/asterinas/kernel/libs/comp-sys/component)
+warning: `typeflags-util` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-rights v0.1.0 (/root/asterinas/kernel/libs/aster-rights)
+warning: `aster-rights` (lib) generated 1 warning (1 duplicate)
+   Compiling multiboot2 v0.24.1
+   Compiling byteorder v1.5.0
+warning: `component` (lib) generated 1 warning (1 duplicate)
+   Compiling typenum v1.20.1
+   Compiling stable_deref_trait v1.2.1
+   Compiling id-alloc v0.1.0 (/root/asterinas/ostd/libs/id-alloc)
+   Compiling allocator-api2 v0.2.21
+warning: `id-alloc` (lib) generated 1 warning (1 duplicate)
+   Compiling hash32 v0.3.1
+   Compiling foldhash v0.2.0
+   Compiling cpufeatures v0.2.17
+   Compiling subtle v2.4.1
+   Compiling equivalent v1.0.2
+   Compiling opaque-debug v0.3.1
+   Compiling font8x8 v0.2.7
+   Compiling hashbrown v0.16.1
+   Compiling ext-trait v1.0.1
+   Compiling memchr v2.8.3
+   Compiling macro_rules_attribute v0.1.3
+   Compiling tdx-guest v0.2.4
+   Compiling ostd-pod v0.4.0 (/root/asterinas/ostd/libs/ostd-pod)
+   Compiling cipher v0.3.0
+   Compiling universal-hash v0.4.1
+warning: `ostd-pod` (lib) generated 1 warning (1 duplicate)
+   Compiling managed v0.8.0
+   Compiling polyval v0.5.3
+   Compiling nougat v0.2.4
+   Compiling ostd v0.17.1 (/root/asterinas/ostd)
+   Compiling no_std_io2 v0.9.4
+   Compiling extension-traits v1.0.1
+   Compiling hash32 v0.2.1
+   Compiling once_cell v1.21.4
+   Compiling never-say-never v6.6.666
+   Compiling takeable v0.2.2
+   Compiling polonius-the-crab v0.2.1
+   Compiling jhash v0.1.0 (/root/asterinas/kernel/libs/jhash)
+   Compiling lending-iterator v0.1.7
+   Compiling ghash v0.4.4
+   Compiling aes v0.7.5
+warning: `jhash` (lib) generated 1 warning (1 duplicate)
+   Compiling ctr v0.8.0
+   Compiling ppv-lite86 v0.2.21
+   Compiling aead v0.4.3
+   Compiling cobs v0.3.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling rand_core v0.9.5
+   Compiling rle-decode-fast v1.0.3
+   Compiling konst v0.2.20
+   Compiling aes-gcm v0.9.4
+   Compiling libflate_lz77 v2.3.0
+   Compiling rand_chacha v0.9.0
+   Compiling lru v0.16.4
+   Compiling deranged v0.5.8
+   Compiling zero v0.1.3
+   Compiling dary_heap v0.3.9
+   Compiling adler32 v1.2.0
+   Compiling time-core v0.1.9
+   Compiling powerfmt v0.2.0
+   Compiling num-conv v0.2.2
+   Compiling bittle v0.5.7
+   Compiling libflate v2.3.1
+   Compiling xmas-elf v0.10.0
+   Compiling rand v0.9.5
+   Compiling hashbrown v0.14.5
+   Compiling const_format v0.2.36
+   Compiling time v0.3.54
+   Compiling cpio-decoder v0.1.0 (/root/asterinas/kernel/libs/cpio-decoder)
+   Compiling logo-ascii-art v0.1.0 (/root/asterinas/kernel/libs/logo-ascii-art)
+warning: `logo-ascii-art` (lib) generated 1 warning (1 duplicate)
+   Compiling keyable-arc v0.1.0 (/root/asterinas/kernel/libs/keyable-arc)
+warning: `cpio-decoder` (lib) generated 1 warning (1 duplicate)
+warning: `keyable-arc` (lib) generated 1 warning (1 duplicate)
+   Compiling postcard v1.1.3
+   Compiling osdk-heap-allocator v0.17.1 (/root/asterinas/osdk/deps/heap-allocator)
+   Compiling aster-console v0.1.0 (/root/asterinas/kernel/comps/console)
+   Compiling aster-input v0.1.0 (/root/asterinas/kernel/comps/input)
+   Compiling aster-cmdline v0.1.0 (/root/asterinas/kernel/comps/cmdline)
+   Compiling aster-pci v0.1.0 (/root/asterinas/kernel/comps/pci)
+   Compiling ring-buffer v0.1.0 (/root/asterinas/kernel/libs/ring-buffer)
+   Compiling osdk-frame-allocator v0.17.1 (/root/asterinas/osdk/deps/frame-allocator)
+warning: `ring-buffer` (lib) generated 1 warning (1 duplicate)
+   Compiling xarray v0.1.0 (/root/asterinas/kernel/libs/xarray)
+warning: `osdk-frame-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-util v0.1.0 (/root/asterinas/kernel/libs/aster-util)
+warning: `xarray` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-framebuffer v0.1.0 (/root/asterinas/kernel/comps/framebuffer)
+warning: `aster-console` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-i8042 v0.1.0 (/root/asterinas/kernel/comps/i8042)
+warning: `aster-input` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-logger v0.1.0 (/root/asterinas/kernel/comps/logger)
+warning: `osdk-heap-allocator` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-softirq v0.1.0 (/root/asterinas/kernel/comps/softirq)
+warning: `aster-cmdline` (lib) generated 1 warning (1 duplicate)
+   Compiling device-id v0.1.0 (/root/asterinas/kernel/libs/device-id)
+warning: `device-id` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-block v0.1.0 (/root/asterinas/kernel/comps/block)
+warning: `aster-logger` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-systree v0.1.0 (/root/asterinas/kernel/comps/systree)
+warning: `aster-pci` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-time v0.1.0 (/root/asterinas/kernel/comps/time)
+warning: `aster-util` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-bigtcp v0.1.0 (/root/asterinas/kernel/libs/aster-bigtcp)
+warning: `aster-framebuffer` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-uart v0.1.0 (/root/asterinas/kernel/comps/uart)
+warning: `aster-softirq` (lib) generated 1 warning (1 duplicate)
+warning: `aster-uart` (lib) generated 1 warning (1 duplicate)
+warning: `aster-time` (lib) generated 1 warning (1 duplicate)
+warning: `aster-i8042` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-mlsdisk v0.1.0 (/root/asterinas/kernel/comps/mlsdisk)
+warning: `aster-systree` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-network v0.1.0 (/root/asterinas/kernel/comps/network)
+warning: `aster-block` (lib) generated 1 warning (1 duplicate)
+warning: `ostd` (lib) generated 1 warning (1 duplicate)
+warning: `aster-bigtcp` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-virtio v0.1.0 (/root/asterinas/kernel/comps/virtio)
+warning: `aster-network` (lib) generated 1 warning (1 duplicate)
+   Compiling aster-kernel v0.1.0 (/root/asterinas/kernel)
+warning: `aster-virtio` (lib) generated 1 warning (1 duplicate)
+warning: `aster-mlsdisk` (lib) generated 1 warning (1 duplicate)
+error[E0282]: type annotations needed
+  --> /root/asterinas/kernel/src/net/iface/init.rs:79:37
+   |
+79 |     let has_expected_iface = |name, address| {
+   |                                     ^^^^^^^
+...
+83 |                     == Some(Ipv4Address::new(address[0], address[1], address[2], address[3]))
+   |                                              ------- type must be known at this point
+   |
+help: consider giving this closure parameter an explicit type
+   |
+79 |     let has_expected_iface = |name, address: /* Type */| {
+   |                                            ++++++++++++
+
+For more information about this error, try `rustc --explain E0282`.
+warning: `aster-kernel` (lib) generated 1 warning (1 duplicate)
+error: could not compile `aster-kernel` (lib) due to 1 previous error; 1 warning emitted
+[Error]: Cargo build failed
+make[1]: *** [Makefile:263: run_kernel] Error 6
+make: *** [Makefile:283: stage2_multi_nic_check] Error 2

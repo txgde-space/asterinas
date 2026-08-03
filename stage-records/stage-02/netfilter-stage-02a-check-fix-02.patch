@@ -1,0 +1,26 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -279,7 +279,7 @@ endif
+ .PHONY: stage2_multi_nic_check
+ stage2_multi_nic_check:
+ 	@$(MAKE) --no-print-directory \
+-		AUTO_TEST=regression CONSOLE=ttyS0 LOG_LEVEL=info ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
++		AUTO_TEST=regression CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
+ 		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.stage2_multi_nic=on"' run_kernel
+ 	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
+ 		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)
+diff --git a/kernel/src/net/iface/init.rs b/kernel/src/net/iface/init.rs
+--- a/kernel/src/net/iface/init.rs
++++ b/kernel/src/net/iface/init.rs
+@@ -87,7 +87,7 @@ fn report_stage2_multi_nic_result() {
+     if has_expected_iface("eth0", [10, 0, 2, 15])
+         && has_expected_iface("eth1", [10, 0, 3, 15])
+     {
+-        ostd::info!("netfilter-stage2a: multi-nic enumeration passed");
++        println!("netfilter-stage2a: multi-nic enumeration passed");
+     } else {
+-        ostd::error!("netfilter-stage2a: multi-nic enumeration failed");
++        println!("netfilter-stage2a: multi-nic enumeration failed");
+     }
+ }

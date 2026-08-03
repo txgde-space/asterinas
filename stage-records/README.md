@@ -10,7 +10,7 @@ roadmap.
 |---|---|---|
 | Baseline | VMware/KVM full regression | Passed (2026-07-29) |
 | 1 | IPv4 filter chains and rule-management foundation | Passed (2026-07-29) |
-| 2 | Multi-interface IPv4 forwarding | Planned |
+| 2 | Multi-interface IPv4 forwarding | In progress — Stage 2A enumeration and Stage 2B forwarding pipeline/regression passed; full end-to-end forwarding pending |
 | 3 | Bounded connection tracking | Planned |
 | 4 | Bidirectional SNAT, MASQUERADE, and DNAT | Planned |
 | 5 | iptables compatibility and VM/container scenarios | Planned |

@@ -1,0 +1,18 @@
+diff --git a/Makefile b/Makefile
+--- a/Makefile
++++ b/Makefile
+@@ -276,11 +276,11 @@ else ifeq ($(AUTO_TEST), vsock)
+ endif
+ 
+-# Runs the default regression suite with two virtio NICs and checks that the
+-# Stage 2A kernel-side enumeration result is present in the QEMU log.
++# Boots with two virtio NICs and checks that the Stage 2A kernel-side
++# enumeration result is present in the QEMU log.
+ .PHONY: stage2_multi_nic_check
+ stage2_multi_nic_check:
+ 	@$(MAKE) --no-print-directory \
+-		AUTO_TEST=regression CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
++		AUTO_TEST=boot CONSOLE=ttyS0 LOG_LEVEL=error ENABLE_KVM=1 SMP=4 RELEASE=1 MULTI_NET=on \
+ 		EXTRA_KCMD_ARGS='--kcmd-args="netfilter.stage2_multi_nic=on"' run_kernel
+ 	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
+ 		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)

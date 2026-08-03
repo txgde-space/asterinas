@@ -1,0 +1,22 @@
+diff --git a/kernel/src/net/router.rs b/kernel/src/net/router.rs
+index 9e58271..e91a4c4 100644
+--- a/kernel/src/net/router.rs
++++ b/kernel/src/net/router.rs
+@@ -14,6 +14,7 @@ use aster_bigtcp::{
+ };
+ 
+ use super::iface::iter_all_ifaces;
++use crate::prelude::println;
+ 
+ static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
+ 
+@@ -74,7 +75,8 @@ fn route_matches(destination: Ipv4Address, address: Ipv4Address, prefix_len: u8)
+     } else {
+         u32::MAX << (32 - prefix_len)
+     };
+-    (u32::from_be_bytes(destination.0) & mask) == (u32::from_be_bytes(address.0) & mask)
++    (u32::from_be_bytes(destination.octets()) & mask)
++        == (u32::from_be_bytes(address.octets()) & mask)
+ }
+ 
+ #[cfg(test)]
