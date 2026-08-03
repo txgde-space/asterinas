@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use aster_softirq::BottomHalfDisabled;
-use ostd::sync::SpinLock;
+use ostd::{
+    sync::SpinLock,
+    timer::Jiffies,
+};
 use smoltcp::wire::{Icmpv4Repr, Ipv4Address, Ipv4Repr, TcpRepr, UdpRepr};
 
 use super::{
@@ -17,6 +20,10 @@ const MAX_NAT_TRANSPORT_CONNECTIONS: usize = 64;
 const NAT_EPHEMERAL_PORT_FIRST: u16 = 40_000;
 const NAT_EPHEMERAL_PORT_LAST: u16 = 59_999;
 const IPV4_MIN_HEADER_LEN: usize = 20;
+const NAT_ICMP_TIMEOUT_MILLIS: u64 = 30_000;
+const NAT_UDP_TIMEOUT_MILLIS: u64 = 60_000;
+const NAT_TCP_NEW_TIMEOUT_MILLIS: u64 = 30_000;
+const NAT_TCP_ESTABLISHED_TIMEOUT_MILLIS: u64 = 300_000;
 
 static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
     SpinLock::new(MutableFilterRules::new()),
@@ -74,6 +81,7 @@ struct OutputRule {
     dst_addr: Option<Ipv4Address>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
     action: Action,
     packets: u64,
     bytes: u64,
@@ -107,14 +115,15 @@ struct NatIcmpConnection {
     original_dst: Ipv4Address,
     translated_src: Ipv4Address,
     translated_dst: Ipv4Address,
+    last_seen_millis: u64,
 }
 
 /// A bounded stateful TCP or UDP NAT mapping.
 ///
 /// The tuple is deliberately kept in a fixed-size table: the forwarding path
 /// cannot allocate memory, and a translated source port is never reused while
-/// an active mapping owns the same egress tuple.  Lifecycle expiry is the
-/// next conntrack stage; Stage 4 makes exhaustion deterministic instead.
+/// an active mapping owns the same egress tuple. Stage 6 reclaims idle slots
+/// with bounded per-protocol timeouts, so exhaustion remains deterministic.
 #[derive(Clone, Copy, Debug)]
 struct NatTransportConnection {
     protocol: OutputRuleProtocol,
@@ -126,6 +135,8 @@ struct NatTransportConnection {
     translated_dst: Ipv4Address,
     translated_src_port: u16,
     translated_dst_port: u16,
+    state: ConntrackState,
+    last_seen_millis: u64,
 }
 
 impl NatRule {
@@ -280,6 +291,7 @@ impl OutputRule {
             dst_addr,
             src_port: None,
             dst_port: None,
+            conntrack_state: None,
             action,
             packets: 0,
             bytes: 0,
@@ -292,6 +304,7 @@ impl OutputRule {
         dst_addr: Option<Ipv4Address>,
         src_port: Option<u16>,
         dst_port: Option<u16>,
+        conntrack_state: Option<ConntrackState>,
         action: Action,
     ) -> Self {
         Self {
@@ -301,6 +314,7 @@ impl OutputRule {
             dst_addr,
             src_port,
             dst_port,
+            conntrack_state,
             action,
             packets: 0,
             bytes: 0,
@@ -341,6 +355,7 @@ impl OutputRule {
         context: Ipv4PacketContext<'_>,
         src_port: u16,
         dst_port: u16,
+        conntrack_state: ConntrackState,
     ) -> bool {
         if self.protocol != protocol || !self.matches_common_ipv4(context) {
             return false;
@@ -356,6 +371,13 @@ impl OutputRule {
         if self
             .dst_port
             .is_some_and(|expected_port| expected_port != dst_port)
+        {
+            return false;
+        }
+
+        if self
+            .conntrack_state
+            .is_some_and(|expected| expected != conntrack_state)
         {
             return false;
         }
@@ -385,6 +407,46 @@ impl MutableNatRules {
         }
     }
 
+    fn reap_expired_connections(&mut self, now_millis: u64) {
+        for slot in &mut self.icmp_connections {
+            if slot.is_some_and(|connection| {
+                now_millis.saturating_sub(connection.last_seen_millis) >= NAT_ICMP_TIMEOUT_MILLIS
+            }) {
+                *slot = None;
+            }
+        }
+
+        for slot in &mut self.transport_connections {
+            if slot.is_some_and(|connection| {
+                now_millis.saturating_sub(connection.last_seen_millis)
+                    >= transport_timeout_millis(connection)
+            }) {
+                *slot = None;
+            }
+        }
+    }
+
+    fn conntrack_state_for_transport(
+        &mut self,
+        protocol: OutputRuleProtocol,
+        ipv4_repr: &Ipv4Repr,
+        src_port: u16,
+        dst_port: u16,
+    ) -> ConntrackState {
+        let now_millis = netfilter_now_millis();
+        self.reap_expired_connections(now_millis);
+
+        let Some(connection) = self.transport_connections.iter_mut().flatten().find(|connection| {
+            connection.protocol == protocol
+                && transport_tuple_matches(connection, ipv4_repr, src_port, dst_port)
+        }) else {
+            return ConntrackState::New;
+        };
+
+        connection.last_seen_millis = now_millis;
+        connection.state
+    }
+
     fn append_rule(&mut self, rule: NatRule) -> bool {
         if self.len == MAX_NAT_RULES {
             return false;
@@ -393,6 +455,92 @@ impl MutableNatRules {
         self.rules[self.len] = Some(rule);
         self.len += 1;
         true
+    }
+
+    /// Inserts a rule at a zero-based position within one NAT chain.
+    ///
+    /// The fixed backing array is shared by PREROUTING and POSTROUTING, while
+    /// the position follows iptables' per-chain numbering.
+    fn insert_rule(&mut self, chain: NatRuleChain, index: usize, rule: NatRule) -> bool {
+        if self.len == MAX_NAT_RULES {
+            return false;
+        }
+
+        let mut chain_index = 0;
+        let mut insert_at = self.len;
+        for current_index in 0..self.len {
+            let Some(current_rule) = self.rules[current_index] else {
+                continue;
+            };
+            if current_rule.chain != chain {
+                continue;
+            }
+            if chain_index == index {
+                insert_at = current_index;
+                break;
+            }
+            chain_index += 1;
+        }
+        if index != chain_index && insert_at == self.len {
+            return false;
+        }
+
+        for current_index in (insert_at..self.len).rev() {
+            self.rules[current_index + 1] = self.rules[current_index];
+        }
+        self.rules[insert_at] = Some(rule);
+        self.len += 1;
+        self.reset_connections();
+        true
+    }
+
+    /// Deletes a zero-based rule position within one NAT chain.
+    fn delete_rule(&mut self, chain: NatRuleChain, index: usize) -> bool {
+        let mut chain_index = 0;
+        let mut delete_at = None;
+        for current_index in 0..self.len {
+            let Some(current_rule) = self.rules[current_index] else {
+                continue;
+            };
+            if current_rule.chain != chain {
+                continue;
+            }
+            if chain_index == index {
+                delete_at = Some(current_index);
+                break;
+            }
+            chain_index += 1;
+        }
+        let Some(delete_at) = delete_at else {
+            return false;
+        };
+
+        for current_index in delete_at..self.len - 1 {
+            self.rules[current_index] = self.rules[current_index + 1];
+        }
+        self.len -= 1;
+        self.rules[self.len] = None;
+        self.reset_connections();
+        true
+    }
+
+    fn zero_counters(&mut self, chain: Option<NatRuleChain>) {
+        for rule in self.rules[..self.len].iter_mut().flatten() {
+            if chain.is_none() || chain == Some(rule.chain) {
+                rule.packets = 0;
+                rule.bytes = 0;
+            }
+        }
+    }
+
+    fn reset_connections(&mut self) {
+        for connection in &mut self.icmp_connections {
+            *connection = None;
+        }
+        for connection in &mut self.transport_connections {
+            *connection = None;
+        }
+        self.next_ephemeral_port = NAT_EPHEMERAL_PORT_FIRST;
     }
 
     fn flush(&mut self, chain: Option<NatRuleChain>) {
@@ -539,6 +687,7 @@ impl MutableNatRules {
             original_dst,
             translated_src: original_src,
             translated_dst,
+            last_seen_millis: netfilter_now_millis(),
         });
     }
 
@@ -583,17 +732,20 @@ impl MutableNatRules {
                 original_dst: translated_dst,
                 translated_src: ipv4_repr.src_addr,
                 translated_dst,
+                last_seen_millis: netfilter_now_millis(),
             });
 
         ipv4_repr.src_addr = translated_src;
         self.upsert_icmp_connection(NatIcmpConnection {
             translated_src,
             translated_dst,
+            last_seen_millis: netfilter_now_millis(),
             ..connection
         });
     }
 
     fn rewrite_forwarded_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr, payload: &mut [u8]) {
+        self.reap_expired_connections(netfilter_now_millis());
         let Some(protocol) = transport_protocol(ipv4_repr) else {
             self.rewrite_forwarded_icmp_prerouting(ipv4_repr);
             return;
@@ -607,7 +759,7 @@ impl MutableNatRules {
         // address is forwarded rather than mistaken for local traffic.
         if let Some(connection) = self
             .transport_connections
-            .iter()
+            .iter_mut()
             .flatten()
             .find(|connection| {
                 connection.protocol == protocol
@@ -616,8 +768,9 @@ impl MutableNatRules {
                     && connection.translated_dst_port == src_port
                     && connection.translated_src_port == dst_port
             })
-            .copied()
         {
+            connection.state = ConntrackState::Established;
+            connection.last_seen_millis = netfilter_now_millis();
             apply_transport_translation(
                 protocol,
                 ipv4_repr,
@@ -635,7 +788,7 @@ impl MutableNatRules {
         // selected egress interface supplies the MASQUERADE address.
         if let Some(connection) = self
             .transport_connections
-            .iter()
+            .iter_mut()
             .flatten()
             .find(|connection| {
                 connection.protocol == protocol
@@ -646,8 +799,8 @@ impl MutableNatRules {
                     && (connection.original_dst != connection.translated_dst
                         || connection.original_dst_port != connection.translated_dst_port)
             })
-            .copied()
         {
+            connection.last_seen_millis = netfilter_now_millis();
             apply_transport_translation(
                 protocol,
                 ipv4_repr,
@@ -704,6 +857,8 @@ impl MutableNatRules {
             translated_dst,
             translated_src_port: src_port,
             translated_dst_port,
+            state: ConntrackState::New,
+            last_seen_millis: netfilter_now_millis(),
         });
     }
 
@@ -713,6 +868,7 @@ impl MutableNatRules {
         payload: &mut [u8],
         masquerade_addr: Option<Ipv4Address>,
     ) {
+        self.reap_expired_connections(netfilter_now_millis());
         let Some(protocol) = transport_protocol(ipv4_repr) else {
             self.rewrite_forwarded_icmp_postrouting(ipv4_repr, masquerade_addr);
             return;
@@ -726,7 +882,7 @@ impl MutableNatRules {
         // changing their translated source port.
         if let Some(connection) = self
             .transport_connections
-            .iter()
+            .iter_mut()
             .flatten()
             .find(|connection| {
                 connection.protocol == protocol
@@ -735,8 +891,8 @@ impl MutableNatRules {
                     && connection.original_src_port == src_port
                     && connection.original_dst_port == dst_port
             })
-            .copied()
         {
+            connection.last_seen_millis = netfilter_now_millis();
             apply_transport_translation(
                 protocol,
                 ipv4_repr,
@@ -824,6 +980,8 @@ impl MutableNatRules {
             translated_dst: original_dst,
             translated_src_port,
             translated_dst_port: dst_port,
+            state: ConntrackState::New,
+            last_seen_millis: netfilter_now_millis(),
         });
     }
 
@@ -917,6 +1075,56 @@ fn transport_ports(payload: &[u8]) -> Option<(u16, u16)> {
             u16::from_be_bytes([payload[2], payload[3]]),
         )
     })
+}
+
+fn netfilter_now_millis() -> u64 {
+    Jiffies::elapsed().as_duration().as_millis() as u64
+}
+
+fn transport_timeout_millis(connection: NatTransportConnection) -> u64 {
+    match (connection.protocol, connection.state) {
+        (OutputRuleProtocol::Tcp, ConntrackState::New) => NAT_TCP_NEW_TIMEOUT_MILLIS,
+        (OutputRuleProtocol::Tcp, ConntrackState::Established) => {
+            NAT_TCP_ESTABLISHED_TIMEOUT_MILLIS
+        }
+        (OutputRuleProtocol::Udp, _) => NAT_UDP_TIMEOUT_MILLIS,
+        (OutputRuleProtocol::Icmp, _) => 0,
+    }
+}
+
+fn transport_tuple_matches(
+    connection: &NatTransportConnection,
+    ipv4_repr: &Ipv4Repr,
+    src_port: u16,
+    dst_port: u16,
+) -> bool {
+    (connection.original_src == ipv4_repr.src_addr
+        && connection.original_dst == ipv4_repr.dst_addr
+        && connection.original_src_port == src_port
+        && connection.original_dst_port == dst_port)
+        || (connection.translated_src == ipv4_repr.src_addr
+            && connection.translated_dst == ipv4_repr.dst_addr
+            && connection.translated_src_port == src_port
+            && connection.translated_dst_port == dst_port)
+        || (connection.original_dst == ipv4_repr.src_addr
+            && connection.original_src == ipv4_repr.dst_addr
+            && connection.original_dst_port == src_port
+            && connection.original_src_port == dst_port)
+        || (connection.translated_dst == ipv4_repr.src_addr
+            && connection.translated_src == ipv4_repr.dst_addr
+            && connection.translated_dst_port == src_port
+            && connection.translated_src_port == dst_port)
+}
+
+fn conntrack_state_for_transport(
+    protocol: OutputRuleProtocol,
+    ipv4_repr: &Ipv4Repr,
+    src_port: u16,
+    dst_port: u16,
+) -> ConntrackState {
+    NAT_RULES
+        .lock()
+        .conntrack_state_for_transport(protocol, ipv4_repr, src_port, dst_port)
 }
 
 fn apply_transport_translation(
@@ -1038,6 +1246,7 @@ impl MutableFilterRules {
         dst_addr: Option<Ipv4Address>,
         src_port: Option<u16>,
         dst_port: Option<u16>,
+        conntrack_state: Option<ConntrackState>,
         target: OutputRuleTarget,
     ) -> bool {
         self.append_rule(OutputRule::transport(
@@ -1046,6 +1255,7 @@ impl MutableFilterRules {
             dst_addr,
             src_port,
             dst_port,
+            conntrack_state,
             target.into_action(),
         ))
     }
@@ -1072,6 +1282,7 @@ impl MutableFilterRules {
         dst_addr: Option<Ipv4Address>,
         src_port: Option<u16>,
         dst_port: Option<u16>,
+        conntrack_state: Option<ConntrackState>,
         target: OutputRuleTarget,
     ) -> bool {
         self.insert_rule(
@@ -1082,6 +1293,7 @@ impl MutableFilterRules {
                 dst_addr,
                 src_port,
                 dst_port,
+                conntrack_state,
                 target.into_action(),
             ),
         )
@@ -1167,10 +1379,11 @@ impl MutableFilterRules {
         context: Ipv4PacketContext<'_>,
         src_port: u16,
         dst_port: u16,
+        conntrack_state: ConntrackState,
         bytes: usize,
     ) -> Option<Verdict> {
         self.evaluate_first_match(bytes, |rule| {
-            rule.matches_transport(protocol, context, src_port, dst_port)
+            rule.matches_transport(protocol, context, src_port, dst_port, conntrack_state)
         })
     }
 
@@ -1204,6 +1417,18 @@ pub enum OutputRuleProtocol {
     Icmp,
     Tcp,
     Udp,
+}
+
+/// The minimal connection states available to the filter table.
+///
+/// A flow is `New` until the bounded NAT table observes its first reply
+/// tuple. It becomes `Established` after that reverse-direction packet.
+/// RELATED, INVALID, TCP state-machine validation, and protocol helpers are
+/// intentionally outside this allocation-free Stage 6 subset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConntrackState {
+    New,
+    Established,
 }
 
 /// Describes the terminal target selected by a mutable IPv4 filter rule.
@@ -1318,12 +1543,26 @@ impl FilterTable {
         src_port: u16,
         dst_port: u16,
     ) -> Verdict {
+        // Resolve NAT state before taking the filter-chain lock. Conntrack
+        // lookups mutate bounded idle timestamps and therefore take NAT_RULES;
+        // keeping the two lock scopes separate prevents a filter/NAT lock
+        // inversion while forwarding is active.
+        let conntrack_state =
+            conntrack_state_for_transport(protocol, context.ipv4_repr(), src_port, dst_port);
+
         // NETFILTER_STAGE20: TCP/UDP rules use the same first-match chain
         // semantics at INPUT, OUTPUT, and FORWARD.
         let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
         let mut rules = FILTER_RULES[context.hook_point().index()].lock();
         if let Some(verdict) =
-            rules.evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
+            rules.evaluate_matching_transport(
+                protocol,
+                context,
+                src_port,
+                dst_port,
+                conntrack_state,
+                packet_len,
+            )
         {
             return verdict;
         }
@@ -1361,7 +1600,7 @@ pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::
         for (index, rule) in rules.rules[..rules.len()].iter().flatten().enumerate() {
             writeln!(
                 writer,
-                "  rule {} pkts {} bytes {} match{}{} {}{}{} target {}",
+                "  rule {} pkts {} bytes {} match{}{} {}{}{}{} target {}",
                 index,
                 rule.packets,
                 rule.bytes,
@@ -1370,6 +1609,7 @@ pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::
                 FormatProtocolMatcher(*rule),
                 FormatPortMatcher::new(" sport", rule.src_port),
                 FormatPortMatcher::new(" dport", rule.dst_port),
+                FormatConntrackMatcher(rule.conntrack_state),
                 FormatAction(rule.action),
             )?;
         }
@@ -1387,34 +1627,39 @@ pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::
     // NETFILTER_STAGE21: NAT rules are intentionally rendered in the same
     // procfs snapshot as the filter table so the small `iptables` shim can
     // implement `-t nat -L` without a second kernel ABI.
-    writeln!(writer, "table nat")?;
-    writeln!(writer, "chain PREROUTING policy ACCEPT")?;
-
     let nat_rules = NAT_RULES.lock();
-    for (index, rule) in nat_rules.rules[..nat_rules.len()]
-        .iter()
-        .flatten()
-        .enumerate()
-    {
+    writeln!(writer, "table nat")?;
+    for chain in [NatRuleChain::PreRouting, NatRuleChain::PostRouting] {
+        writeln!(writer, "chain {} policy ACCEPT", FormatNatChain(chain))?;
+        let mut chain_index = 0;
+        for rule in nat_rules.rules[..nat_rules.len()].iter().flatten() {
+            if rule.chain != chain {
+                continue;
+            }
+            writeln!(
+                writer,
+                "  rule {} pkts {} bytes {} match{}{}{}{}{} target {}{}{}",
+                chain_index,
+                rule.packets,
+                rule.bytes,
+                FormatOptionalProtocolMatcher(rule.protocol),
+                FormatIpv4Matcher::new(" src", rule.src_addr),
+                FormatIpv4Matcher::new(" dst", rule.dst_addr),
+                FormatPortMatcher::new(" sport", rule.src_port),
+                FormatPortMatcher::new(" dport", rule.dst_port),
+                FormatNatTarget(rule.target),
+                FormatNatToAddress::new(rule.target, rule.to_addr),
+                FormatNatToPort(rule.to_port),
+            )?;
+            chain_index += 1;
+        }
         writeln!(
             writer,
-            "  rule {} chain {} pkts {} bytes {} match{}{}{}{}{} target {}{}{}",
-            index,
-            FormatNatChain(rule.chain),
-            rule.packets,
-            rule.bytes,
-            FormatOptionalProtocolMatcher(rule.protocol),
-            FormatIpv4Matcher::new(" src", rule.src_addr),
-            FormatIpv4Matcher::new(" dst", rule.dst_addr),
-            FormatPortMatcher::new(" sport", rule.src_port),
-            FormatPortMatcher::new(" dport", rule.dst_port),
-            FormatNatTarget(rule.target),
-            FormatNatToAddress::new(rule.target, rule.to_addr),
-            FormatNatToPort(rule.to_port),
+            "state stage7-{}-nat-rule-count {}",
+            FormatNatChain(chain),
+            chain_index
         )?;
     }
-
-    writeln!(writer, "chain POSTROUTING policy ACCEPT")?;
     writeln!(writer, "state stage21-nat-rule-count {}", nat_rules.len())
 }
 
@@ -1448,6 +1693,7 @@ pub fn append_output_transport_rule(
     dst_addr: Option<Ipv4Address>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
     target: OutputRuleTarget,
 ) -> bool {
     append_filter_transport_rule(
@@ -1457,6 +1703,7 @@ pub fn append_output_transport_rule(
         dst_addr,
         src_port,
         dst_port,
+        conntrack_state,
         target,
     )
 }
@@ -1469,11 +1716,20 @@ pub fn append_filter_transport_rule(
     dst_addr: Option<Ipv4Address>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
     target: OutputRuleTarget,
 ) -> bool {
     FILTER_RULES[hook_point.index()]
         .lock()
-        .append_transport(protocol, src_addr, dst_addr, src_port, dst_port, target)
+        .append_transport(
+            protocol,
+            src_addr,
+            dst_addr,
+            src_port,
+            dst_port,
+            conntrack_state,
+            target,
+        )
 }
 
 /// Inserts an ICMP Echo rule before the zero-based rule index in one chain.
@@ -1499,10 +1755,18 @@ pub fn insert_filter_transport_rule(
     dst_addr: Option<Ipv4Address>,
     src_port: Option<u16>,
     dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
     target: OutputRuleTarget,
 ) -> bool {
     FILTER_RULES[hook_point.index()].lock().insert_transport(
-        index, protocol, src_addr, dst_addr, src_port, dst_port, target,
+        index,
+        protocol,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        conntrack_state,
+        target,
     )
 }
 
@@ -1560,9 +1824,41 @@ pub fn append_nat_rule(
     ))
 }
 
+/// Inserts a NAT rule at a zero-based position within one NAT chain.
+pub fn insert_nat_rule(
+    chain: NatRuleChain,
+    index: usize,
+    protocol: Option<OutputRuleProtocol>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: NatRuleTarget,
+    to_addr: Option<Ipv4Address>,
+    to_port: Option<u16>,
+) -> bool {
+    NAT_RULES.lock().insert_rule(
+        chain,
+        index,
+        NatRule::new(
+            chain, protocol, src_addr, dst_addr, src_port, dst_port, target, to_addr, to_port,
+        ),
+    )
+}
+
+/// Deletes a zero-based NAT rule position within one chain.
+pub fn delete_nat_rule(chain: NatRuleChain, index: usize) -> bool {
+    NAT_RULES.lock().delete_rule(chain, index)
+}
+
 /// Flushes NAT rules from one chain or from the whole NAT table.
 pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
     NAT_RULES.lock().flush(chain);
+}
+
+/// Clears NAT rule counters from one chain or from the whole NAT table.
+pub fn zero_nat_rule_counters(chain: Option<NatRuleChain>) {
+    NAT_RULES.lock().zero_counters(chain);
 }
 
 /// Applies bounded stateful NAT before an IPv4 forwarding decision.
@@ -1702,6 +1998,21 @@ impl core::fmt::Display for FormatPortMatcher {
         };
 
         write!(formatter, "{} {}", self.label, port)
+    }
+}
+
+struct FormatConntrackMatcher(Option<ConntrackState>);
+
+impl core::fmt::Display for FormatConntrackMatcher {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let Some(state) = self.0 else {
+            return Ok(());
+        };
+
+        match state {
+            ConntrackState::New => formatter.write_str(" ctstate NEW"),
+            ConntrackState::Established => formatter.write_str(" ctstate ESTABLISHED"),
+        }
     }
 }
 
