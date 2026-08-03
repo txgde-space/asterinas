@@ -35,21 +35,24 @@ enum RouteAttrClass {
 #[derive(Debug)]
 pub enum RouteAttr {
     Destination([u8; 4]),
+    DestinationV6([u8; 16]),
     OutputInterface(u32),
     Gateway([u8; 4]),
+    GatewayV6([u8; 16]),
     Priority(u32),
     PreferredSource([u8; 4]),
+    PreferredSourceV6([u8; 16]),
     Table(u32),
 }
 
 impl RouteAttr {
     fn class(&self) -> RouteAttrClass {
         match self {
-            Self::Destination(_) => RouteAttrClass::DST,
+            Self::Destination(_) | Self::DestinationV6(_) => RouteAttrClass::DST,
             Self::OutputInterface(_) => RouteAttrClass::OIF,
-            Self::Gateway(_) => RouteAttrClass::GATEWAY,
+            Self::Gateway(_) | Self::GatewayV6(_) => RouteAttrClass::GATEWAY,
             Self::Priority(_) => RouteAttrClass::PRIORITY,
-            Self::PreferredSource(_) => RouteAttrClass::PREFSRC,
+            Self::PreferredSource(_) | Self::PreferredSourceV6(_) => RouteAttrClass::PREFSRC,
             Self::Table(_) => RouteAttrClass::TABLE,
         }
     }
@@ -62,9 +65,12 @@ impl Attribute for RouteAttr {
 
     fn payload_as_bytes(&self) -> &[u8] {
         match self {
-            Self::Destination(address)
-            | Self::Gateway(address)
-            | Self::PreferredSource(address) => address,
+            Self::Destination(address) | Self::Gateway(address) | Self::PreferredSource(address) => {
+                address
+            }
+            Self::DestinationV6(address)
+            | Self::GatewayV6(address)
+            | Self::PreferredSourceV6(address) => address,
             Self::OutputInterface(index) | Self::Priority(index) | Self::Table(index) => {
                 index.as_bytes()
             }
