@@ -91,6 +91,98 @@ impl ForwardedIpv6Packet {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    /// Rewrites the source address and repairs the IPv6 transport checksum.
+    pub(crate) fn rewrite_source_address(&mut self, address: Ipv6Address) -> bool {
+        if !rewrite_ipv6_addresses(&mut self.bytes, Some(address), None) {
+            return false;
+        }
+        self.src_addr = address;
+        true
+    }
+
+    /// Rewrites the destination address and repairs the IPv6 transport
+    /// checksum.
+    pub(crate) fn rewrite_destination_address(&mut self, address: Ipv6Address) -> bool {
+        if !rewrite_ipv6_addresses(&mut self.bytes, None, Some(address)) {
+            return false;
+        }
+        self.dst_addr = address;
+        true
+    }
+}
+
+/// Rewrites one or both IPv6 addresses in a serialized datagram and
+/// recalculates the checksum of the fixed-header TCP, UDP, or ICMPv6 payload.
+///
+/// Stage 12 intentionally does not parse extension-header chains.  Packets
+/// using an extension header are left untouched by NAT rather than being
+/// rewritten with an incorrect pseudo-header checksum.
+pub(crate) fn rewrite_ipv6_addresses(
+    bytes: &mut [u8],
+    source: Option<Ipv6Address>,
+    destination: Option<Ipv6Address>,
+) -> bool {
+    const HEADER_LEN: usize = 40;
+    if bytes.len() < HEADER_LEN || bytes[0] >> 4 != 6 {
+        return false;
+    }
+
+    let payload_len = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+    let end = HEADER_LEN.saturating_add(payload_len);
+    if end > bytes.len() {
+        return false;
+    }
+
+    let checksum_offset = match bytes[6] {
+        6 => HEADER_LEN + 16,  // TCP checksum
+        17 => HEADER_LEN + 6,  // UDP checksum
+        58 => HEADER_LEN + 2,  // ICMPv6 checksum
+        _ => return false,
+    };
+    if checksum_offset + 2 > end {
+        return false;
+    }
+
+    if let Some(address) = source {
+        bytes[8..24].copy_from_slice(&address.octets());
+    }
+    if let Some(address) = destination {
+        bytes[24..40].copy_from_slice(&address.octets());
+    }
+
+    bytes[checksum_offset..checksum_offset + 2].fill(0);
+    let checksum = ipv6_transport_checksum(&bytes[..end]);
+    bytes[checksum_offset..checksum_offset + 2].copy_from_slice(&checksum.to_be_bytes());
+    true
+}
+
+fn ipv6_transport_checksum(bytes: &[u8]) -> u16 {
+    const HEADER_LEN: usize = 40;
+
+    fn add(mut sum: u32, bytes: &[u8]) -> u32 {
+        let mut chunks = bytes.chunks_exact(2);
+        for chunk in &mut chunks {
+            sum = sum.wrapping_add(u16::from_be_bytes([chunk[0], chunk[1]]) as u32);
+        }
+        if let Some(&byte) = chunks.remainder().first() {
+            sum = sum.wrapping_add((byte as u32) << 8);
+        }
+        sum
+    }
+
+    let payload_len = bytes.len().saturating_sub(HEADER_LEN);
+    let mut sum = 0;
+    sum = add(sum, &bytes[8..24]);
+    sum = add(sum, &bytes[24..40]);
+    sum = sum.wrapping_add((payload_len as u32) >> 16);
+    sum = sum.wrapping_add((payload_len as u32) & 0xffff);
+    sum = sum.wrapping_add(bytes[6] as u32);
+    sum = add(sum, &bytes[HEADER_LEN..]);
+    while sum >> 16 != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 impl ForwardedIpv4Packet {

@@ -184,6 +184,80 @@ test_ipv6_forward_drop() {
     echo "netfilter-stage11: IPv6 ICMPv6 FORWARD DROP passed"
 }
 
+test_ipv6_snat() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+    if ! command -v tcpdump >/dev/null 2>&1; then
+        echo "tcpdump is required for Stage 12 IPv6 NAT acceptance." >&2
+        exit 1
+    fi
+
+    local capture capture_pid output
+    capture=$(mktemp)
+    trap 'rm -f "$capture"' RETURN
+    timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp6 and ip6[40] == 128' >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 0.2
+
+    echo "Testing IPv6 MASQUERADE with stateful reverse mapping through Asterinas..."
+    if ! output=$(ip netns exec "$LEFT_NS" ping -6 -n -c 4 -W 2 "$RIGHT_IPV6" 2>&1); then
+        printf '%s\n' "$output"
+        kill "$capture_pid" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s\n' "$output"
+    wait "$capture_pid" || true
+    cat "$capture"
+    if ! grep -q ' 0% packet loss' <<<"$output"; then
+        echo "Stage 12 IPv6 MASQUERADE reply did not reach the left endpoint." >&2
+        return 1
+    fi
+    if ! grep -Eq 'fd00:0:0:3::15 > fd00:0:0:3::2' "$capture"; then
+        echo "Stage 12 IPv6 MASQUERADE source address was not observed on $RIGHT_BR." >&2
+        return 1
+    fi
+    echo "netfilter-stage12: stateful IPv6 MASQUERADE passed"
+}
+
+test_ipv6_dnat() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+    if ! command -v tcpdump >/dev/null 2>&1; then
+        echo "tcpdump is required for Stage 12 IPv6 NAT acceptance." >&2
+        exit 1
+    fi
+
+    local capture capture_pid output
+    capture=$(mktemp)
+    trap 'rm -f "$capture"' RETURN
+    timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp6 and ip6[40] == 128' >"$capture" 2>&1 &
+    capture_pid=$!
+    sleep 0.2
+
+    echo "Testing IPv6 PREROUTING DNAT to the right endpoint..."
+    if ! output=$(ip netns exec "$LEFT_NS" ping -6 -n -c 4 -W 2 "$RIGHT_ROUTER_IPV6" 2>&1); then
+        printf '%s\n' "$output"
+        kill "$capture_pid" 2>/dev/null || true
+        return 1
+    fi
+    printf '%s\n' "$output"
+    wait "$capture_pid" || true
+    cat "$capture"
+    if ! grep -q ' 0% packet loss' <<<"$output"; then
+        echo "Stage 12 IPv6 DNAT reverse mapping did not reach the left endpoint." >&2
+        return 1
+    fi
+    if ! grep -Eq '> fd00:0:0:3::2' "$capture"; then
+        echo "Stage 12 IPv6 DNAT backend address was not observed on $RIGHT_BR." >&2
+        return 1
+    fi
+    echo "netfilter-stage12: stateful IPv6 DNAT passed"
+}
+
 test_forwarding() {
     if ! topology_is_ready; then
         echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
@@ -511,7 +585,7 @@ teardown() {
 }
 
 usage() {
-    echo "Usage: $0 {setup|test|test-ipv6|test-ipv6-forward|test-ipv6-forward-drop|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
+    echo "Usage: $0 {setup|test|test-ipv6|test-ipv6-forward|test-ipv6-forward-drop|test-ipv6-snat|test-ipv6-dnat|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
 }
 
 require_root
@@ -521,6 +595,8 @@ case "${1:-}" in
     test-ipv6) test_ipv6_ethernet ;;
     test-ipv6-forward) test_ipv6_forwarding ;;
     test-ipv6-forward-drop) test_ipv6_forward_drop ;;
+    test-ipv6-snat) test_ipv6_snat ;;
+    test-ipv6-dnat) test_ipv6_dnat ;;
     test-nat) test_icmp_masquerade ;;
     test-dnat) test_icmp_dnat ;;
     test-forward-drop) test_icmp_forward_drop ;;
