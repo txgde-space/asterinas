@@ -54,6 +54,7 @@ pub(super) struct FilterTable {
 struct MutableFilterRules {
     rules: [Option<OutputRule>; MAX_FILTER_RULES],
     len: usize,
+    policy: Action,
 }
 
 #[derive(Debug)]
@@ -1011,6 +1012,7 @@ impl MutableFilterRules {
         Self {
             rules: [None; MAX_FILTER_RULES],
             len: 0,
+            policy: Action::Accept,
         }
     }
 
@@ -1048,12 +1050,62 @@ impl MutableFilterRules {
         ))
     }
 
+    fn insert_icmp_echo(
+        &mut self,
+        index: usize,
+        ident: Option<u16>,
+        src_addr: Option<Ipv4Address>,
+        dst_addr: Option<Ipv4Address>,
+        target: OutputRuleTarget,
+    ) -> bool {
+        self.insert_rule(
+            index,
+            OutputRule::icmp_echo(ident, src_addr, dst_addr, target.into_action()),
+        )
+    }
+
+    fn insert_transport(
+        &mut self,
+        index: usize,
+        protocol: OutputRuleProtocol,
+        src_addr: Option<Ipv4Address>,
+        dst_addr: Option<Ipv4Address>,
+        src_port: Option<u16>,
+        dst_port: Option<u16>,
+        target: OutputRuleTarget,
+    ) -> bool {
+        self.insert_rule(
+            index,
+            OutputRule::transport(
+                protocol,
+                src_addr,
+                dst_addr,
+                src_port,
+                dst_port,
+                target.into_action(),
+            ),
+        )
+    }
+
     fn append_rule(&mut self, rule: OutputRule) -> bool {
         if self.len == MAX_FILTER_RULES {
             return false;
         }
 
         self.rules[self.len] = Some(rule);
+        self.len += 1;
+        true
+    }
+
+    fn insert_rule(&mut self, index: usize, rule: OutputRule) -> bool {
+        if index > self.len || self.len == MAX_FILTER_RULES {
+            return false;
+        }
+
+        for idx in (index..self.len).rev() {
+            self.rules[idx + 1] = self.rules[idx];
+        }
+        self.rules[index] = Some(rule);
         self.len += 1;
         true
     }
@@ -1090,6 +1142,14 @@ impl MutableFilterRules {
 
     fn len(&self) -> usize {
         self.len
+    }
+
+    const fn policy(&self) -> Action {
+        self.policy
+    }
+
+    fn set_policy(&mut self, policy: Action) {
+        self.policy = policy;
     }
 
     fn evaluate_matching_icmp_echo(
@@ -1184,6 +1244,9 @@ impl OutputRuleTarget {
 impl FilterTable {
     /// Evaluates generic IPv4 rules and returns the first matching verdict.
     pub(super) fn evaluate_ipv4(&self, context: Ipv4PacketContext<'_>) -> Verdict {
+        // Transport-aware evaluation below owns mutable filter policies. Keep
+        // this generic pre-parser gate permissive so an ACCEPT exception can
+        // be considered after the TCP, UDP, or ICMP header is available.
         let Some(chain) = self.find_chain(context.hook_point()) else {
             return Verdict::Accept;
         };
@@ -1208,22 +1271,16 @@ impl FilterTable {
         icmp_repr: &Icmpv4Repr<'_>,
     ) -> Verdict {
         let Icmpv4Repr::EchoRequest { ident, .. } = icmp_repr else {
-            return Verdict::Accept;
+            return FILTER_RULES[context.hook_point().index()].lock().policy().into();
         };
 
         let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
-        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
-            .lock()
-            .evaluate_matching_icmp_echo(context, *ident, packet_len)
-        {
+        let mut rules = FILTER_RULES[context.hook_point().index()].lock();
+        if let Some(verdict) = rules.evaluate_matching_icmp_echo(context, *ident, packet_len) {
             return verdict;
         }
 
-        let Some(chain) = self.find_chain(context.hook_point()) else {
-            return Verdict::Accept;
-        };
-
-        chain.evaluate_ipv4_icmpv4(context, icmp_repr)
+        rules.policy().into()
     }
 
     /// Evaluates IPv4 TCP rules and returns the first matching verdict.
@@ -1264,18 +1321,14 @@ impl FilterTable {
         // NETFILTER_STAGE20: TCP/UDP rules use the same first-match chain
         // semantics at INPUT, OUTPUT, and FORWARD.
         let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
-        if let Some(verdict) = FILTER_RULES[context.hook_point().index()]
-            .lock()
-            .evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
+        let mut rules = FILTER_RULES[context.hook_point().index()].lock();
+        if let Some(verdict) =
+            rules.evaluate_matching_transport(protocol, context, src_port, dst_port, packet_len)
         {
             return verdict;
         }
 
-        let Some(chain) = self.find_chain(context.hook_point()) else {
-            return Verdict::Accept;
-        };
-
-        chain.evaluate_ipv4(context)
+        rules.policy().into()
     }
 }
 
@@ -1301,8 +1354,9 @@ pub fn write_filter_table_snapshot(writer: &mut impl core::fmt::Write) -> core::
         let rules = FILTER_RULES[hook_point.index()].lock();
         writeln!(
             writer,
-            "chain {} policy ACCEPT",
-            FormatFilterChain(hook_point)
+            "chain {} policy {}",
+            FormatFilterChain(hook_point),
+            FormatAction(rules.policy())
         )?;
         for (index, rule) in rules.rules[..rules.len()].iter().flatten().enumerate() {
             writeln!(
@@ -1420,6 +1474,43 @@ pub fn append_filter_transport_rule(
     FILTER_RULES[hook_point.index()]
         .lock()
         .append_transport(protocol, src_addr, dst_addr, src_port, dst_port, target)
+}
+
+/// Inserts an ICMP Echo rule before the zero-based rule index in one chain.
+pub fn insert_filter_icmp_echo_rule(
+    hook_point: HookPoint,
+    index: usize,
+    ident: Option<u16>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()]
+        .lock()
+        .insert_icmp_echo(index, ident, src_addr, dst_addr, target)
+}
+
+/// Inserts a TCP or UDP rule before the zero-based rule index in one chain.
+pub fn insert_filter_transport_rule(
+    hook_point: HookPoint,
+    index: usize,
+    protocol: OutputRuleProtocol,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()].lock().insert_transport(
+        index, protocol, src_addr, dst_addr, src_port, dst_port, target,
+    )
+}
+
+/// Sets the default policy for one built-in IPv4 filter chain.
+pub fn set_filter_chain_policy(hook_point: HookPoint, target: OutputRuleTarget) {
+    FILTER_RULES[hook_point.index()]
+        .lock()
+        .set_policy(target.into_action());
 }
 
 /// Deletes one OUTPUT-chain rule by index.
