@@ -8,12 +8,18 @@
 
 mod chain;
 mod hook;
+mod ipv6;
 mod rule;
 mod table;
 
 pub use hook::{
     HookPoint, Ipv4PacketContext, Verdict, evaluate_ipv4, evaluate_ipv4_icmpv4, evaluate_ipv4_tcp,
     evaluate_ipv4_udp,
+};
+pub use ipv6::{
+    Ipv6PacketContext, Ipv6RuleProtocol, Ipv6RuleTarget, append_filter_rule as append_ipv6_filter_rule,
+    evaluate_ipv6, flush_rules as flush_ipv6_rules, set_chain_policy as set_ipv6_chain_policy,
+    write_snapshot as write_ipv6_filter_snapshot, zero_counters as zero_ipv6_counters,
 };
 pub use table::{
     ConntrackState, NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,

@@ -19,6 +19,7 @@ use crate::prelude::println;
 
 static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
 static IPV6_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
+static STAGE11_IPV6_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
@@ -29,6 +30,10 @@ static STAGE6_TCP_CONNTRACK_POLICY_TEST: AtomicBool = AtomicBool::new(false);
 
 aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
 aster_cmdline::define_flag_param!("netfilter.ipv6_forward", IPV6_FORWARDING_ENABLED);
+aster_cmdline::define_flag_param!(
+    "netfilter.stage11_ipv6_forward_drop",
+    STAGE11_IPV6_FORWARD_DROP_TEST
+);
 aster_cmdline::define_flag_param!(
     "netfilter.stage3_icmp_masquerade",
     STAGE3_ICMP_MASQUERADE_TEST
@@ -59,6 +64,20 @@ pub fn init() {
     }
     if IPV6_FORWARDING_ENABLED.load(Ordering::Relaxed) {
         println!("netfilter-stage10d: ipv6 forwarding pipeline enabled");
+    }
+
+    if STAGE11_IPV6_FORWARD_DROP_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_ipv6_filter_rule(
+            aster_bigtcp::netfilter::HookPoint::Forward,
+            aster_bigtcp::netfilter::Ipv6RuleProtocol::Icmpv6,
+            Some(Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2)),
+            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 2)),
+            Some(128),
+            aster_bigtcp::netfilter::Ipv6RuleTarget::Drop,
+        );
+        if installed {
+            println!("netfilter-stage11: IPv6 ICMPv6 FORWARD DROP acceptance rule installed");
+        }
     }
 
     // The TAP acceptance topology cannot run an interactive userspace command

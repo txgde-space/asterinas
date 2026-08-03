@@ -36,6 +36,9 @@ impl FileOps for NetfilterRulesFileOps {
         aster_bigtcp::netfilter::write_filter_table_snapshot(&mut printer).map_err(|_| {
             Error::with_message(Errno::EIO, "failed to render netfilter rule table")
         })?;
+        aster_bigtcp::netfilter::write_ipv6_filter_snapshot(&mut printer).map_err(|_| {
+            Error::with_message(Errno::EIO, "failed to render IPv6 netfilter rule table")
+        })?;
 
         Ok(printer.bytes_written())
     }
@@ -51,6 +54,11 @@ impl FileOps for NetfilterRulesFileOps {
             .ok()
             .map(|command| command.trim())
             .ok_or_else(|| Error::with_message(Errno::EINVAL, "invalid netfilter command"))?;
+
+        if let Some(command) = parse_ip6tables_command(command)? {
+            apply_ipv6_command(command)?;
+            return Ok(bytes_read);
+        }
 
         if let Some(command) = parse_iptables_command(command)? {
             apply_command(command)?;
@@ -110,6 +118,16 @@ enum NetfilterCommand {
     ZeroNatCounters(Option<aster_bigtcp::netfilter::NatRuleChain>),
 }
 
+enum Ipv6NetfilterCommand {
+    Append(AppendIpv6Rule),
+    Flush(Option<aster_bigtcp::netfilter::HookPoint>),
+    SetPolicy(
+        aster_bigtcp::netfilter::HookPoint,
+        aster_bigtcp::netfilter::Ipv6RuleTarget,
+    ),
+    Zero(Option<aster_bigtcp::netfilter::HookPoint>),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IptablesTable {
     Filter,
@@ -138,6 +156,15 @@ struct AppendNatRule {
     target: aster_bigtcp::netfilter::NatRuleTarget,
     to_addr: Option<aster_bigtcp::wire::Ipv4Address>,
     to_port: Option<u16>,
+}
+
+struct AppendIpv6Rule {
+    chain: aster_bigtcp::netfilter::HookPoint,
+    protocol: aster_bigtcp::netfilter::Ipv6RuleProtocol,
+    src_addr: Option<aster_bigtcp::wire::Ipv6Address>,
+    dst_addr: Option<aster_bigtcp::wire::Ipv6Address>,
+    icmpv6_type: Option<u8>,
+    target: aster_bigtcp::netfilter::Ipv6RuleTarget,
 }
 
 fn apply_command(command: NetfilterCommand) -> Result<()> {
@@ -185,6 +212,33 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn apply_ipv6_command(command: Ipv6NetfilterCommand) -> Result<()> {
+    match command {
+        Ipv6NetfilterCommand::Append(rule) => {
+            if !aster_bigtcp::netfilter::append_ipv6_filter_rule(
+                rule.chain,
+                rule.protocol,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.icmpv6_type,
+                rule.target,
+            ) {
+                return_errno_with_message!(Errno::ENOSPC, "IPv6 netfilter rule table is full");
+            }
+        }
+        Ipv6NetfilterCommand::Flush(chain) => {
+            aster_bigtcp::netfilter::flush_ipv6_rules(chain);
+        }
+        Ipv6NetfilterCommand::SetPolicy(chain, target) => {
+            aster_bigtcp::netfilter::set_ipv6_chain_policy(chain, target);
+        }
+        Ipv6NetfilterCommand::Zero(chain) => {
+            aster_bigtcp::netfilter::zero_ipv6_counters(chain);
+        }
+    }
+    Ok(())
 }
 
 fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
@@ -446,6 +500,180 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
         },
     }
     .map(Some)
+}
+
+/// Parses the deliberately small `ip6tables` compatibility subset.  The
+/// command is written to `/proc/netfilter_rules`, so it remains usable even
+/// before a dedicated netlink nftables ABI exists.
+fn parse_ip6tables_command(command: &str) -> Result<Option<Ipv6NetfilterCommand>> {
+    const PREFIX: &str = "ip6tables ";
+
+    let Some(rest) = command.strip_prefix(PREFIX) else {
+        return Ok(None);
+    };
+    let mut words = rest.split_whitespace();
+    let Some(operation) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing ip6tables operation");
+    };
+
+    match operation {
+        "-A" | "--append" => parse_ip6tables_append(words).map(Some),
+        "-P" | "--policy" => {
+            let chain = parse_filter_chain(&mut words)?;
+            let Some(target) = words.next() else {
+                return_errno_with_message!(Errno::EINVAL, "missing ip6tables chain policy");
+            };
+            if words.next().is_some() {
+                return_errno_with_message!(Errno::EINVAL, "trailing ip6tables policy tokens");
+            }
+            Ok(Some(Ipv6NetfilterCommand::SetPolicy(
+                chain,
+                parse_ipv6_rule_target(target)?,
+            )))
+        }
+        "-F" | "--flush" => {
+            let chain = parse_optional_filter_chain(&mut words)?;
+            Ok(Some(Ipv6NetfilterCommand::Flush(chain)))
+        }
+        "-Z" | "--zero" => {
+            let chain = parse_optional_filter_chain(&mut words)?;
+            Ok(Some(Ipv6NetfilterCommand::Zero(chain)))
+        }
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables operation"),
+    }
+}
+
+fn parse_ip6tables_append(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<Ipv6NetfilterCommand> {
+    let chain = parse_filter_chain(&mut words)?;
+    let mut protocol = aster_bigtcp::netfilter::Ipv6RuleProtocol::Any;
+    let mut src_addr = None;
+    let mut dst_addr = None;
+    let mut icmpv6_type = None;
+    let mut target = None;
+
+    while let Some(word) = words.next() {
+        match word {
+            "-p" | "--protocol" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 protocol");
+                };
+                protocol = parse_ipv6_rule_protocol(value)?;
+            }
+            "-m" => {
+                let Some(module) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ip6tables matcher");
+                };
+                if module != "icmp6" && module != "icmpv6" {
+                    return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables matcher");
+                }
+            }
+            "-s" | "--source" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 source address");
+                };
+                src_addr = Some(parse_ipv6_addr(value)?);
+            }
+            "-d" | "--destination" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 destination address");
+                };
+                dst_addr = Some(parse_ipv6_addr(value)?);
+            }
+            "--icmpv6-type" | "--icmp6-type" | "--icmp-type" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ICMPv6 type");
+                };
+                icmpv6_type = Some(parse_icmpv6_type(value)?);
+                protocol = aster_bigtcp::netfilter::Ipv6RuleProtocol::Icmpv6;
+            }
+            "-j" | "--jump" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing ip6tables target");
+                };
+                target = Some(parse_ipv6_rule_target(value)?);
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables matcher"),
+        }
+    }
+
+    let Some(target) = target else {
+        return_errno_with_message!(Errno::EINVAL, "missing ip6tables target");
+    };
+    if icmpv6_type.is_some() && protocol != aster_bigtcp::netfilter::Ipv6RuleProtocol::Icmpv6 {
+        return_errno_with_message!(Errno::EINVAL, "ICMPv6 type requires ipv6-icmp protocol");
+    }
+
+    Ok(Ipv6NetfilterCommand::Append(AppendIpv6Rule {
+        chain,
+        protocol,
+        src_addr,
+        dst_addr,
+        icmpv6_type,
+        target,
+    }))
+}
+
+fn parse_optional_filter_chain(
+    words: &mut core::str::SplitWhitespace<'_>,
+) -> Result<Option<aster_bigtcp::netfilter::HookPoint>> {
+    let Some(chain) = words.next() else {
+        return Ok(None);
+    };
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing ip6tables chain tokens");
+    }
+    parse_filter_chain_name(chain).map(Some)
+}
+
+fn parse_filter_chain_name(
+    chain: &str,
+) -> Result<aster_bigtcp::netfilter::HookPoint> {
+    match chain {
+        "INPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalIn),
+        "FORWARD" => Ok(aster_bigtcp::netfilter::HookPoint::Forward),
+        "OUTPUT" => Ok(aster_bigtcp::netfilter::HookPoint::LocalOut),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables chain"),
+    }
+}
+
+fn parse_ipv6_rule_protocol(
+    value: &str,
+) -> Result<aster_bigtcp::netfilter::Ipv6RuleProtocol> {
+    match value {
+        "all" | "0" => Ok(aster_bigtcp::netfilter::Ipv6RuleProtocol::Any),
+        "ipv6-icmp" | "icmpv6" | "icmp6" | "58" => {
+            Ok(aster_bigtcp::netfilter::Ipv6RuleProtocol::Icmpv6)
+        }
+        "tcp" | "6" => Ok(aster_bigtcp::netfilter::Ipv6RuleProtocol::Tcp),
+        "udp" | "17" => Ok(aster_bigtcp::netfilter::Ipv6RuleProtocol::Udp),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported IPv6 protocol"),
+    }
+}
+
+fn parse_ipv6_rule_target(
+    value: &str,
+) -> Result<aster_bigtcp::netfilter::Ipv6RuleTarget> {
+    match value {
+        "ACCEPT" => Ok(aster_bigtcp::netfilter::Ipv6RuleTarget::Accept),
+        "DROP" => Ok(aster_bigtcp::netfilter::Ipv6RuleTarget::Drop),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables target"),
+    }
+}
+
+fn parse_icmpv6_type(value: &str) -> Result<u8> {
+    match value {
+        "echo-request" => Ok(128),
+        "echo-reply" => Ok(129),
+        "router-solicitation" => Ok(133),
+        "router-advertisement" => Ok(134),
+        "neighbor-solicitation" => Ok(135),
+        "neighbor-advertisement" => Ok(136),
+        _ => value
+            .parse::<u8>()
+            .map_err(|_| Error::with_message(Errno::EINVAL, "invalid ICMPv6 type")),
+    }
 }
 
 fn parse_optional_iptables_table(
@@ -1132,4 +1360,54 @@ fn parse_ipv4_addr(value: &str) -> Result<aster_bigtcp::wire::Ipv4Address> {
     Ok(aster_bigtcp::wire::Ipv4Address::new(
         octets[0], octets[1], octets[2], octets[3],
     ))
+}
+
+fn parse_ipv6_addr(value: &str) -> Result<aster_bigtcp::wire::Ipv6Address> {
+    let (value, prefix_len) = value.split_once('/').unwrap_or((value, "128"));
+    if prefix_len != "128" {
+        return_errno_with_message!(Errno::EINVAL, "only IPv6 /128 matchers are supported");
+    }
+
+    let mut groups = alloc::vec::Vec::new();
+    if let Some((left, right)) = value.split_once("::") {
+        if right.contains("::") {
+            return_errno_with_message!(Errno::EINVAL, "invalid compressed IPv6 address");
+        }
+        let left_groups = parse_ipv6_side(left)?;
+        let right_groups = parse_ipv6_side(right)?;
+        if left_groups.len() + right_groups.len() >= 8 {
+            return_errno_with_message!(Errno::EINVAL, "IPv6 compression has no zero groups");
+        }
+        groups.extend(left_groups);
+        groups.extend(core::iter::repeat(0).take(8 - groups.len() - right_groups.len()));
+        groups.extend(right_groups);
+    } else {
+        groups = parse_ipv6_side(value)?;
+        if groups.len() != 8 {
+            return_errno_with_message!(Errno::EINVAL, "IPv6 address must contain 8 groups");
+        }
+    }
+
+    if groups.len() != 8 {
+        return_errno_with_message!(Errno::EINVAL, "invalid IPv6 address");
+    }
+    Ok(aster_bigtcp::wire::Ipv6Address::new(
+        groups[0], groups[1], groups[2], groups[3], groups[4], groups[5], groups[6], groups[7],
+    ))
+}
+
+fn parse_ipv6_side(value: &str) -> Result<alloc::vec::Vec<u16>> {
+    let mut groups = alloc::vec::Vec::new();
+    if value.is_empty() {
+        return Ok(groups);
+    }
+    for part in value.split(':') {
+        if part.is_empty() || part.len() > 4 {
+            return_errno_with_message!(Errno::EINVAL, "invalid IPv6 group");
+        }
+        groups.push(u16::from_str_radix(part, 16).map_err(|_| {
+            Error::with_message(Errno::EINVAL, "invalid hexadecimal IPv6 group")
+        })?);
+    }
+    Ok(groups)
 }
