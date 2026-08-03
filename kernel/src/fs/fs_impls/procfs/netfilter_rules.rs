@@ -92,8 +92,12 @@ impl FileOps for NetfilterRulesFileOps {
 enum NetfilterCommand {
     Append(AppendOutputRule),
     Insert(AppendOutputRule, usize),
+    Check(AppendOutputRule),
+    Replace(AppendOutputRule, usize),
     AppendNat(AppendNatRule),
     InsertNat(AppendNatRule, usize),
+    CheckNat(AppendNatRule),
+    ReplaceNat(AppendNatRule, usize),
     DeleteOutputRule(aster_bigtcp::netfilter::HookPoint, usize),
     DeleteNatRule(aster_bigtcp::netfilter::NatRuleChain, usize),
     FlushOutput(aster_bigtcp::netfilter::HookPoint),
@@ -140,8 +144,12 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
     match command {
         NetfilterCommand::Append(rule) => apply_append_rule(rule),
         NetfilterCommand::Insert(rule, index) => apply_insert_rule(rule, index),
+        NetfilterCommand::Check(rule) => apply_check_rule(rule),
+        NetfilterCommand::Replace(rule, index) => apply_replace_rule(rule, index),
         NetfilterCommand::AppendNat(rule) => apply_append_nat_rule(rule),
         NetfilterCommand::InsertNat(rule, index) => apply_insert_nat_rule(rule, index),
+        NetfilterCommand::CheckNat(rule) => apply_check_nat_rule(rule),
+        NetfilterCommand::ReplaceNat(rule, index) => apply_replace_nat_rule(rule, index),
         NetfilterCommand::DeleteOutputRule(chain, index) => {
             if !aster_bigtcp::netfilter::delete_filter_rule(chain, index) {
                 return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
@@ -247,6 +255,74 @@ fn apply_insert_rule(rule: AppendOutputRule, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn apply_check_rule(rule: AppendOutputRule) -> Result<()> {
+    let matches = match rule.protocol {
+        aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
+            aster_bigtcp::netfilter::check_filter_icmp_echo_rule(
+                rule.chain,
+                rule.ident,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.target,
+            )
+        }
+        aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
+        | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
+            aster_bigtcp::netfilter::check_filter_transport_rule(
+                rule.chain,
+                rule.protocol,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.src_port,
+                rule.dst_port,
+                rule.conntrack_state,
+                rule.target,
+            )
+        }
+    };
+
+    if !matches {
+        return_errno_with_message!(Errno::EINVAL, "no matching netfilter rule");
+    }
+
+    Ok(())
+}
+
+fn apply_replace_rule(rule: AppendOutputRule, index: usize) -> Result<()> {
+    let replaced = match rule.protocol {
+        aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
+            aster_bigtcp::netfilter::replace_filter_icmp_echo_rule(
+                rule.chain,
+                index,
+                rule.ident,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.target,
+            )
+        }
+        aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
+        | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
+            aster_bigtcp::netfilter::replace_filter_transport_rule(
+                rule.chain,
+                index,
+                rule.protocol,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.src_port,
+                rule.dst_port,
+                rule.conntrack_state,
+                rule.target,
+            )
+        }
+    };
+
+    if !replaced {
+        return_errno_with_message!(Errno::EINVAL, "no such netfilter rule");
+    }
+
+    Ok(())
+}
+
 fn apply_append_nat_rule(rule: AppendNatRule) -> Result<()> {
     if !aster_bigtcp::netfilter::append_nat_rule(
         rule.chain,
@@ -287,6 +363,43 @@ fn apply_insert_nat_rule(rule: AppendNatRule, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn apply_check_nat_rule(rule: AppendNatRule) -> Result<()> {
+    if !aster_bigtcp::netfilter::check_nat_rule(
+        rule.chain,
+        rule.protocol,
+        rule.src_addr,
+        rule.dst_addr,
+        rule.src_port,
+        rule.dst_port,
+        rule.target,
+        rule.to_addr,
+        rule.to_port,
+    ) {
+        return_errno_with_message!(Errno::EINVAL, "no matching NAT rule");
+    }
+
+    Ok(())
+}
+
+fn apply_replace_nat_rule(rule: AppendNatRule, index: usize) -> Result<()> {
+    if !aster_bigtcp::netfilter::replace_nat_rule(
+        rule.chain,
+        index,
+        rule.protocol,
+        rule.src_addr,
+        rule.dst_addr,
+        rule.src_port,
+        rule.dst_port,
+        rule.target,
+        rule.to_addr,
+        rule.to_port,
+    ) {
+        return_errno_with_message!(Errno::EINVAL, "no such NAT rule");
+    }
+
+    Ok(())
+}
+
 fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
     const PREFIX: &str = "iptables ";
 
@@ -308,6 +421,9 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
             "-A" => parse_iptables_append_command(words).map(NetfilterCommand::Append),
             "-I" => parse_iptables_insert_command(words)
                 .map(|(rule, index)| NetfilterCommand::Insert(rule, index)),
+            "-C" => parse_iptables_append_command(words).map(NetfilterCommand::Check),
+            "-R" => parse_iptables_replace_command(words)
+                .map(|(rule, index)| NetfilterCommand::Replace(rule, index)),
             "-D" => parse_iptables_delete_command(words),
             "-F" => parse_iptables_chain_command(words).map(NetfilterCommand::FlushOutput),
             "-P" => parse_iptables_policy_command(words),
@@ -320,6 +436,9 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
             "-A" => parse_iptables_nat_append_command(words).map(NetfilterCommand::AppendNat),
             "-I" => parse_iptables_nat_insert_command(words)
                 .map(|(rule, index)| NetfilterCommand::InsertNat(rule, index)),
+            "-C" => parse_iptables_nat_append_command(words).map(NetfilterCommand::CheckNat),
+            "-R" => parse_iptables_nat_replace_command(words)
+                .map(|(rule, index)| NetfilterCommand::ReplaceNat(rule, index)),
             "-D" => parse_iptables_nat_delete_command(words),
             "-F" => parse_iptables_nat_flush_command(words).map(NetfilterCommand::FlushNat),
             "-Z" => parse_iptables_nat_flush_command(words).map(NetfilterCommand::ZeroNatCounters),
@@ -380,6 +499,23 @@ fn parse_iptables_insert_command(
     };
 
     parse_iptables_filter_rule(chain, words).map(|rule| (rule, index))
+}
+
+fn parse_iptables_replace_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<(AppendOutputRule, usize)> {
+    let chain = parse_filter_chain(&mut words)?;
+    let Some(index) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables replace position");
+    };
+    let index = index
+        .parse::<usize>()
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid iptables replace position"))?;
+    if index == 0 {
+        return_errno_with_message!(Errno::EINVAL, "iptables rule number is one-based");
+    }
+
+    parse_iptables_filter_rule(chain, words).map(|rule| (rule, index - 1))
 }
 
 fn parse_iptables_filter_rule(
@@ -563,6 +699,23 @@ fn parse_iptables_nat_insert_command(
     };
 
     parse_iptables_nat_rule(chain, words).map(|rule| (rule, index))
+}
+
+fn parse_iptables_nat_replace_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<(AppendNatRule, usize)> {
+    let chain = parse_nat_chain(&mut words)?;
+    let Some(index) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing NAT replace position");
+    };
+    let index = index
+        .parse::<usize>()
+        .map_err(|_| Error::with_message(Errno::EINVAL, "invalid NAT replace position"))?;
+    if index == 0 {
+        return_errno_with_message!(Errno::EINVAL, "NAT rule number is one-based");
+    }
+
+    parse_iptables_nat_rule(chain, words).map(|rule| (rule, index - 1))
 }
 
 fn parse_iptables_nat_rule(
