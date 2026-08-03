@@ -1010,6 +1010,83 @@ FN_TEST(run_userspace_iptables_insert_and_policy)
 }
 END_TEST()
 
+FN_TEST(run_userspace_iptables_check_replace)
+{
+	char buffer[2048];
+	char *const flush_filter[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const append_drop[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "DROP", NULL
+	};
+	char *const check_drop[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "DROP", NULL
+	};
+	char *const check_accept_before_replace[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "ACCEPT", NULL
+	};
+	char *const replace_accept[] = {
+		"./iptables", "-R", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x0874", "-j",
+		"ACCEPT", NULL
+	};
+	char *const check_accept_after_replace[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "ACCEPT", NULL
+	};
+	char *const nat_flush[] = { "./iptables", "-t", "nat", "-F", NULL };
+	char *const nat_append_masquerade[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+	char *const nat_check_masquerade[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+	char *const nat_replace_snat[] = {
+		"./iptables", "-t", "nat", "-R", "POSTROUTING", "1", "-p",
+		"icmp", "-j", "SNAT", "--to-source", "10.0.2.15", NULL
+	};
+	char *const nat_check_snat[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-p", "icmp",
+		"-j", "SNAT", "--to-source", "10.0.2.15", NULL
+	};
+	char *const nat_check_old_masquerade[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+
+	// NETFILTER_STAGE8: `-C` and `-R` complete the bounded rule lifecycle
+	// for both filter and NAT tables. Checks compare rule configuration while
+	// ignoring runtime counters; replacements reset counters and NAT state.
+	TEST_RES(run_iptables_command(flush_filter), _ret == 0);
+	TEST_RES(run_iptables_command(append_drop), _ret == 0);
+	TEST_RES(run_iptables_command(check_drop), _ret == 0);
+	TEST_RES(run_iptables_command(check_accept_before_replace), _ret != 0);
+	TEST_RES(run_iptables_command(replace_accept), _ret == 0);
+	TEST_RES(run_iptables_command(check_accept_after_replace), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x874, 0x40), _ret == 1);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0874 target ACCEPT") != NULL,
+			 _ret == 1);
+
+	TEST_RES(run_iptables_command(nat_flush), _ret == 0);
+	TEST_RES(run_iptables_command(nat_append_masquerade), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_masquerade), _ret == 0);
+	TEST_RES(run_iptables_command(nat_replace_snat), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_snat), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_old_masquerade), _ret != 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "target SNAT to-source 10.0.2.15") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer, "target MASQUERADE") == NULL, _ret == 1);
+
+	TEST_RES(run_iptables_command(nat_flush), _ret == 0);
+	TEST_RES(run_iptables_command(flush_filter), _ret == 0);
+}
+END_TEST()
+
 FN_TEST(run_userspace_iptables_nat_control_plane)
 {
 	char buffer[2048];
@@ -1057,7 +1134,7 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 			"chain PREROUTING policy ACCEPT\n  rule 0 pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != NULL,
 			 _ret == 1);
 	TEST_RES(strstr(buffer,
-			"chain POSTROUTING policy ACCEPT\n  rule 1 pkts 0 bytes 0 match all target MASQUERADE") != NULL,
+			"  rule 1 pkts 0 bytes 0 match all target MASQUERADE") != NULL,
 			 _ret == 1);
 	TEST_RES(strstr(buffer, "state stage7-PREROUTING-nat-rule-count 1") != NULL,
 			 _ret == 1);

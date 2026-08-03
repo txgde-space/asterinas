@@ -73,7 +73,7 @@ struct MutableNatRules {
     next_ephemeral_port: u16,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OutputRule {
     protocol: OutputRuleProtocol,
     icmp_echo_ident: Option<u16>,
@@ -87,7 +87,7 @@ struct OutputRule {
     bytes: u64,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NatRule {
     chain: NatRuleChain,
     protocol: Option<OutputRuleProtocol>,
@@ -275,6 +275,18 @@ impl NatRule {
         self.packets = self.packets.saturating_add(1);
         self.bytes = self.bytes.saturating_add(bytes as u64);
     }
+
+    fn same_configuration(self, other: Self) -> bool {
+        self.chain == other.chain
+            && self.protocol == other.protocol
+            && self.src_addr == other.src_addr
+            && self.dst_addr == other.dst_addr
+            && self.src_port == other.src_port
+            && self.dst_port == other.dst_port
+            && self.target == other.target
+            && self.to_addr == other.to_addr
+            && self.to_port == other.to_port
+    }
 }
 
 impl OutputRule {
@@ -385,6 +397,17 @@ impl OutputRule {
         true
     }
 
+    fn same_configuration(self, other: Self) -> bool {
+        self.protocol == other.protocol
+            && self.icmp_echo_ident == other.icmp_echo_ident
+            && self.src_addr == other.src_addr
+            && self.dst_addr == other.dst_addr
+            && self.src_port == other.src_port
+            && self.dst_port == other.dst_port
+            && self.conntrack_state == other.conntrack_state
+            && self.action == other.action
+    }
+
     fn record_match(&mut self, bytes: usize) {
         self.packets = self.packets.saturating_add(1);
         self.bytes = self.bytes.saturating_add(bytes as u64);
@@ -492,6 +515,33 @@ impl MutableNatRules {
         self.len += 1;
         self.reset_connections();
         true
+    }
+
+    fn check_rule(&self, rule: NatRule) -> bool {
+        self.rules[..self.len]
+            .iter()
+            .flatten()
+            .any(|current| current.same_configuration(rule))
+    }
+
+    fn replace_rule(&mut self, chain: NatRuleChain, index: usize, rule: NatRule) -> bool {
+        let mut chain_index = 0;
+        for current_index in 0..self.len {
+            let Some(current_rule) = self.rules[current_index] else {
+                continue;
+            };
+            if current_rule.chain != chain {
+                continue;
+            }
+            if chain_index == index {
+                self.rules[current_index] = Some(rule);
+                self.reset_connections();
+                return true;
+            }
+            chain_index += 1;
+        }
+
+        false
     }
 
     /// Deletes a zero-based rule position within one NAT chain.
@@ -1322,6 +1372,22 @@ impl MutableFilterRules {
         true
     }
 
+    fn check_rule(&self, rule: OutputRule) -> bool {
+        self.rules[..self.len]
+            .iter()
+            .flatten()
+            .any(|current| current.same_configuration(rule))
+    }
+
+    fn replace(&mut self, index: usize, rule: OutputRule) -> bool {
+        if index >= self.len {
+            return false;
+        }
+
+        self.rules[index] = Some(rule);
+        true
+    }
+
     fn delete(&mut self, index: usize) -> bool {
         if index >= self.len {
             return false;
@@ -1770,6 +1836,82 @@ pub fn insert_filter_transport_rule(
     )
 }
 
+/// Checks whether one filter-chain rule already exists.
+pub fn check_filter_icmp_echo_rule(
+    hook_point: HookPoint,
+    ident: Option<u16>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()]
+        .lock()
+        .check_rule(OutputRule::icmp_echo(ident, src_addr, dst_addr, target.into_action()))
+}
+
+/// Checks whether one TCP or UDP filter-chain rule already exists.
+pub fn check_filter_transport_rule(
+    hook_point: HookPoint,
+    protocol: OutputRuleProtocol,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()].lock().check_rule(OutputRule::transport(
+        protocol,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        conntrack_state,
+        target.into_action(),
+    ))
+}
+
+/// Replaces a zero-based rule in one filter chain.
+pub fn replace_filter_icmp_echo_rule(
+    hook_point: HookPoint,
+    index: usize,
+    ident: Option<u16>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()].lock().replace(
+        index,
+        OutputRule::icmp_echo(ident, src_addr, dst_addr, target.into_action()),
+    )
+}
+
+/// Replaces a zero-based TCP or UDP rule in one filter chain.
+pub fn replace_filter_transport_rule(
+    hook_point: HookPoint,
+    index: usize,
+    protocol: OutputRuleProtocol,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    conntrack_state: Option<ConntrackState>,
+    target: OutputRuleTarget,
+) -> bool {
+    FILTER_RULES[hook_point.index()].lock().replace(
+        index,
+        OutputRule::transport(
+            protocol,
+            src_addr,
+            dst_addr,
+            src_port,
+            dst_port,
+            conntrack_state,
+            target.into_action(),
+        ),
+    )
+}
+
 /// Sets the default policy for one built-in IPv4 filter chain.
 pub fn set_filter_chain_policy(hook_point: HookPoint, target: OutputRuleTarget) {
     FILTER_RULES[hook_point.index()]
@@ -1838,6 +1980,45 @@ pub fn insert_nat_rule(
     to_port: Option<u16>,
 ) -> bool {
     NAT_RULES.lock().insert_rule(
+        chain,
+        index,
+        NatRule::new(
+            chain, protocol, src_addr, dst_addr, src_port, dst_port, target, to_addr, to_port,
+        ),
+    )
+}
+
+/// Checks whether one NAT rule already exists in either built-in chain.
+pub fn check_nat_rule(
+    chain: NatRuleChain,
+    protocol: Option<OutputRuleProtocol>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: NatRuleTarget,
+    to_addr: Option<Ipv4Address>,
+    to_port: Option<u16>,
+) -> bool {
+    NAT_RULES.lock().check_rule(NatRule::new(
+        chain, protocol, src_addr, dst_addr, src_port, dst_port, target, to_addr, to_port,
+    ))
+}
+
+/// Replaces a zero-based rule position within one NAT chain.
+pub fn replace_nat_rule(
+    chain: NatRuleChain,
+    index: usize,
+    protocol: Option<OutputRuleProtocol>,
+    src_addr: Option<Ipv4Address>,
+    dst_addr: Option<Ipv4Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: NatRuleTarget,
+    to_addr: Option<Ipv4Address>,
+    to_port: Option<u16>,
+) -> bool {
+    NAT_RULES.lock().replace_rule(
         chain,
         index,
         NatRule::new(
