@@ -121,6 +121,7 @@ impl<E: Ext> PollContext<'_, E> {
             if !packet.postrouting_nat_applied() {
                 netfilter::rewrite_forwarded_ipv4_postrouting(
                     &mut packet.ip_repr,
+                    &mut packet.payload,
                     self.iface.context().ipv4_addr(),
                 );
                 packet.mark_postrouting_nat_applied();
@@ -246,18 +247,23 @@ impl<E: Ext> PollContext<'_, E> {
         // NAT PREROUTING runs before the local-delivery versus forwarding
         // decision. This permits DNAT to select a routed backend and permits
         // a tracked reply addressed to the router to re-enter forwarding.
-        netfilter::rewrite_forwarded_ipv4_prerouting(&mut repr);
+        // The ingress DMA buffer is immutable here.  Keep a private forwarded
+        // payload so NAT can rewrite TCP/UDP ports and checksums before the
+        // packet is queued, while local delivery still observes its original
+        // wire representation.
+        let mut forwarded_payload = pkt.payload().to_vec();
+        netfilter::rewrite_forwarded_ipv4_prerouting(&mut repr, &mut forwarded_payload);
 
         if !repr.dst_addr.is_broadcast() && !self.is_unicast_local(IpAddress::Ipv4(repr.dst_addr)) {
             if !self.accept_ipv4_at(HookPoint::Forward, &repr)
-                || !self.accept_forwarded_transport(&repr, pkt.payload())
+                || !self.accept_forwarded_transport(&repr, &forwarded_payload)
             {
                 return None;
             }
 
             let result = E::forward_ipv4_packet(
                 self.ingress_ifindex,
-                ForwardedIpv4Packet::new(repr, pkt.payload().to_vec()),
+                ForwardedIpv4Packet::new(repr, forwarded_payload),
             );
 
             return match result {

@@ -13,6 +13,9 @@ use super::{
 const MAX_FILTER_RULES: usize = 64;
 const MAX_NAT_RULES: usize = 8;
 const MAX_NAT_ICMP_CONNECTIONS: usize = 32;
+const MAX_NAT_TRANSPORT_CONNECTIONS: usize = 64;
+const NAT_EPHEMERAL_PORT_FIRST: u16 = 40_000;
+const NAT_EPHEMERAL_PORT_LAST: u16 = 59_999;
 const IPV4_MIN_HEADER_LEN: usize = 20;
 
 static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
@@ -58,6 +61,8 @@ struct MutableNatRules {
     rules: [Option<NatRule>; MAX_NAT_RULES],
     len: usize,
     icmp_connections: [Option<NatIcmpConnection>; MAX_NAT_ICMP_CONNECTIONS],
+    transport_connections: [Option<NatTransportConnection>; MAX_NAT_TRANSPORT_CONNECTIONS],
+    next_ephemeral_port: u16,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -101,6 +106,25 @@ struct NatIcmpConnection {
     original_dst: Ipv4Address,
     translated_src: Ipv4Address,
     translated_dst: Ipv4Address,
+}
+
+/// A bounded stateful TCP or UDP NAT mapping.
+///
+/// The tuple is deliberately kept in a fixed-size table: the forwarding path
+/// cannot allocate memory, and a translated source port is never reused while
+/// an active mapping owns the same egress tuple.  Lifecycle expiry is the
+/// next conntrack stage; Stage 4 makes exhaustion deterministic instead.
+#[derive(Clone, Copy, Debug)]
+struct NatTransportConnection {
+    protocol: OutputRuleProtocol,
+    original_src: Ipv4Address,
+    original_dst: Ipv4Address,
+    original_src_port: u16,
+    original_dst_port: u16,
+    translated_src: Ipv4Address,
+    translated_dst: Ipv4Address,
+    translated_src_port: u16,
+    translated_dst_port: u16,
 }
 
 impl NatRule {
@@ -172,6 +196,32 @@ impl NatRule {
         }
 
         matches!(self.target, NatRuleTarget::Masquerade | NatRuleTarget::Snat)
+    }
+
+    fn matches_prerouting_transport(
+        self,
+        protocol: OutputRuleProtocol,
+        ipv4_repr: &Ipv4Repr,
+        src_port: u16,
+        dst_port: u16,
+    ) -> bool {
+        if self.chain != NatRuleChain::PreRouting || !self.matches_common_ipv4(ipv4_repr) {
+            return false;
+        }
+
+        if self.protocol.is_some_and(|expected| expected != protocol) {
+            return false;
+        }
+
+        if self.src_port.is_some_and(|expected| expected != src_port) {
+            return false;
+        }
+
+        if self.dst_port.is_some_and(|expected| expected != dst_port) {
+            return false;
+        }
+
+        self.target == NatRuleTarget::Dnat && self.to_addr.is_some()
     }
 
     fn matches_postrouting_icmp(self, ipv4_repr: &Ipv4Repr) -> bool {
@@ -329,6 +379,8 @@ impl MutableNatRules {
             rules: [None, None, None, None, None, None, None, None],
             len: 0,
             icmp_connections: [None; MAX_NAT_ICMP_CONNECTIONS],
+            transport_connections: [None; MAX_NAT_TRANSPORT_CONNECTIONS],
+            next_ephemeral_port: NAT_EPHEMERAL_PORT_FIRST,
         }
     }
 
@@ -369,6 +421,10 @@ impl MutableNatRules {
         for connection in &mut self.icmp_connections {
             *connection = None;
         }
+        for connection in &mut self.transport_connections {
+            *connection = None;
+        }
+        self.next_ephemeral_port = NAT_EPHEMERAL_PORT_FIRST;
     }
 
     fn len(&self) -> usize {
@@ -444,7 +500,7 @@ impl MutableNatRules {
         ipv4_repr
     }
 
-    fn rewrite_forwarded_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr) {
+    fn rewrite_forwarded_icmp_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr) {
         if ipv4_repr.next_header != smoltcp::wire::IpProtocol::Icmp {
             return;
         }
@@ -485,7 +541,7 @@ impl MutableNatRules {
         });
     }
 
-    fn rewrite_forwarded_postrouting(
+    fn rewrite_forwarded_icmp_postrouting(
         &mut self,
         ipv4_repr: &mut Ipv4Repr,
         masquerade_addr: Option<Ipv4Address>,
@@ -536,6 +592,279 @@ impl MutableNatRules {
         });
     }
 
+    fn rewrite_forwarded_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr, payload: &mut [u8]) {
+        let Some(protocol) = transport_protocol(ipv4_repr) else {
+            self.rewrite_forwarded_icmp_prerouting(ipv4_repr);
+            return;
+        };
+        let Some((src_port, dst_port)) = transport_ports(payload) else {
+            return;
+        };
+
+        // Reply traffic has a translated destination tuple.  Restore both
+        // addresses and ports before route lookup, so a reply to a router
+        // address is forwarded rather than mistaken for local traffic.
+        if let Some(connection) = self
+            .transport_connections
+            .iter()
+            .flatten()
+            .find(|connection| {
+                connection.protocol == protocol
+                    && connection.translated_dst == ipv4_repr.src_addr
+                    && connection.translated_src == ipv4_repr.dst_addr
+                    && connection.translated_dst_port == src_port
+                    && connection.translated_src_port == dst_port
+            })
+            .copied()
+        {
+            apply_transport_translation(
+                protocol,
+                ipv4_repr,
+                payload,
+                connection.original_dst,
+                connection.original_src,
+                connection.original_dst_port,
+                connection.original_src_port,
+            );
+            return;
+        }
+
+        // Reuse a DNAT mapping for every packet in the original direction.
+        // SNAT mappings are deliberately deferred to POSTROUTING because the
+        // selected egress interface supplies the MASQUERADE address.
+        if let Some(connection) = self
+            .transport_connections
+            .iter()
+            .flatten()
+            .find(|connection| {
+                connection.protocol == protocol
+                    && connection.original_src == ipv4_repr.src_addr
+                    && connection.original_dst == ipv4_repr.dst_addr
+                    && connection.original_src_port == src_port
+                    && connection.original_dst_port == dst_port
+                    && (connection.original_dst != connection.translated_dst
+                        || connection.original_dst_port != connection.translated_dst_port)
+            })
+            .copied()
+        {
+            apply_transport_translation(
+                protocol,
+                ipv4_repr,
+                payload,
+                connection.translated_src,
+                connection.translated_dst,
+                connection.translated_src_port,
+                connection.translated_dst_port,
+            );
+            return;
+        }
+
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+        let Some(rule_index) = (0..self.len).find(|index| {
+            self.rules[*index].is_some_and(|rule| {
+                rule.matches_prerouting_transport(protocol, ipv4_repr, src_port, dst_port)
+            })
+        }) else {
+            return;
+        };
+        let Some(rule) = self.rules[rule_index] else {
+            return;
+        };
+        let Some(translated_dst) = rule.to_addr else {
+            return;
+        };
+        if !self.transport_connections.iter().any(Option::is_none) {
+            return;
+        }
+        let translated_dst_port = rule.to_port.unwrap_or(dst_port);
+        self.rules[rule_index]
+            .as_mut()
+            .expect("matched NAT rule remains installed")
+            .record_match(packet_len);
+
+        let original_src = ipv4_repr.src_addr;
+        let original_dst = ipv4_repr.dst_addr;
+        apply_transport_translation(
+            protocol,
+            ipv4_repr,
+            payload,
+            original_src,
+            translated_dst,
+            src_port,
+            translated_dst_port,
+        );
+        self.upsert_transport_connection(NatTransportConnection {
+            protocol,
+            original_src,
+            original_dst,
+            original_src_port: src_port,
+            original_dst_port: dst_port,
+            translated_src: original_src,
+            translated_dst,
+            translated_src_port: src_port,
+            translated_dst_port,
+        });
+    }
+
+    fn rewrite_forwarded_postrouting(
+        &mut self,
+        ipv4_repr: &mut Ipv4Repr,
+        payload: &mut [u8],
+        masquerade_addr: Option<Ipv4Address>,
+    ) {
+        let Some(protocol) = transport_protocol(ipv4_repr) else {
+            self.rewrite_forwarded_icmp_postrouting(ipv4_repr, masquerade_addr);
+            return;
+        };
+        let Some((src_port, dst_port)) = transport_ports(payload) else {
+            return;
+        };
+
+        // A repeated original-direction packet reuses the allocated NAT
+        // tuple. This covers TCP retransmissions and UDP datagrams without
+        // changing their translated source port.
+        if let Some(connection) = self
+            .transport_connections
+            .iter()
+            .flatten()
+            .find(|connection| {
+                connection.protocol == protocol
+                    && connection.original_src == ipv4_repr.src_addr
+                    && connection.original_dst == ipv4_repr.dst_addr
+                    && connection.original_src_port == src_port
+                    && connection.original_dst_port == dst_port
+            })
+            .copied()
+        {
+            apply_transport_translation(
+                protocol,
+                ipv4_repr,
+                payload,
+                connection.translated_src,
+                connection.translated_dst,
+                connection.translated_src_port,
+                connection.translated_dst_port,
+            );
+            return;
+        }
+
+        // A DNAT flow was already translated at PREROUTING and needs no
+        // further mutation unless a future stage explicitly supports paired
+        // DNAT+SNAT rules.
+        if self.transport_connections.iter().flatten().any(|connection| {
+            connection.protocol == protocol
+                && connection.translated_src == ipv4_repr.src_addr
+                && connection.translated_dst == ipv4_repr.dst_addr
+                && connection.translated_src_port == src_port
+                && connection.translated_dst_port == dst_port
+        }) {
+            return;
+        }
+
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+        let Some(rule_index) = (0..self.len).find(|index| {
+            self.rules[*index].is_some_and(|rule| {
+                rule.matches_postrouting_transport(protocol, ipv4_repr, src_port, dst_port)
+            })
+        }) else {
+            return;
+        };
+        let Some(rule) = self.rules[rule_index] else {
+            return;
+        };
+        let translated_src = match rule.target {
+            NatRuleTarget::Masquerade => masquerade_addr,
+            NatRuleTarget::Snat => rule.to_addr,
+            NatRuleTarget::Dnat => None,
+        };
+        let Some(translated_src) = translated_src else {
+            return;
+        };
+        if !self.transport_connections.iter().any(Option::is_none) {
+            return;
+        }
+
+        let translated_src_port = match rule.to_port {
+            Some(port) if self.translated_tuple_available(protocol, translated_src, port, ipv4_repr.dst_addr, dst_port) => port,
+            Some(_) => return,
+            None => match self.allocate_translated_port(
+                protocol,
+                translated_src,
+                ipv4_repr.dst_addr,
+                dst_port,
+            ) {
+                Some(port) => port,
+                None => return,
+            },
+        };
+        self.rules[rule_index]
+            .as_mut()
+            .expect("matched NAT rule remains installed")
+            .record_match(packet_len);
+
+        let original_src = ipv4_repr.src_addr;
+        let original_dst = ipv4_repr.dst_addr;
+        apply_transport_translation(
+            protocol,
+            ipv4_repr,
+            payload,
+            translated_src,
+            original_dst,
+            translated_src_port,
+            dst_port,
+        );
+        self.upsert_transport_connection(NatTransportConnection {
+            protocol,
+            original_src,
+            original_dst,
+            original_src_port: src_port,
+            original_dst_port: dst_port,
+            translated_src,
+            translated_dst: original_dst,
+            translated_src_port,
+            translated_dst_port: dst_port,
+        });
+    }
+
+    fn translated_tuple_available(
+        &self,
+        protocol: OutputRuleProtocol,
+        src_addr: Ipv4Address,
+        src_port: u16,
+        dst_addr: Ipv4Address,
+        dst_port: u16,
+    ) -> bool {
+        !self.transport_connections.iter().flatten().any(|connection| {
+            connection.protocol == protocol
+                && connection.translated_src == src_addr
+                && connection.translated_src_port == src_port
+                && connection.translated_dst == dst_addr
+                && connection.translated_dst_port == dst_port
+        })
+    }
+
+    fn allocate_translated_port(
+        &mut self,
+        protocol: OutputRuleProtocol,
+        src_addr: Ipv4Address,
+        dst_addr: Ipv4Address,
+        dst_port: u16,
+    ) -> Option<u16> {
+        let port_count = usize::from(NAT_EPHEMERAL_PORT_LAST - NAT_EPHEMERAL_PORT_FIRST + 1);
+        for _ in 0..port_count {
+            let candidate = self.next_ephemeral_port;
+            self.next_ephemeral_port = if candidate == NAT_EPHEMERAL_PORT_LAST {
+                NAT_EPHEMERAL_PORT_FIRST
+            } else {
+                candidate + 1
+            };
+            if self.translated_tuple_available(protocol, src_addr, candidate, dst_addr, dst_port) {
+                return Some(candidate);
+            }
+        }
+        None
+    }
+
     fn upsert_icmp_connection(&mut self, connection: NatIcmpConnection) {
         if let Some(slot) = self.icmp_connections.iter_mut().find(|slot| {
             slot.as_ref().is_some_and(|existing| {
@@ -551,6 +880,130 @@ impl MutableNatRules {
             *slot = Some(connection);
         }
     }
+
+    fn upsert_transport_connection(&mut self, connection: NatTransportConnection) {
+        if let Some(slot) = self.transport_connections.iter_mut().find(|slot| {
+            slot.as_ref().is_some_and(|existing| {
+                existing.protocol == connection.protocol
+                    && existing.original_src == connection.original_src
+                    && existing.original_dst == connection.original_dst
+                    && existing.original_src_port == connection.original_src_port
+                    && existing.original_dst_port == connection.original_dst_port
+            })
+        }) {
+            *slot = Some(connection);
+            return;
+        }
+
+        if let Some(slot) = self.transport_connections.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(connection);
+        }
+    }
+}
+
+fn transport_protocol(ipv4_repr: &Ipv4Repr) -> Option<OutputRuleProtocol> {
+    match ipv4_repr.next_header {
+        smoltcp::wire::IpProtocol::Tcp => Some(OutputRuleProtocol::Tcp),
+        smoltcp::wire::IpProtocol::Udp => Some(OutputRuleProtocol::Udp),
+        _ => None,
+    }
+}
+
+fn transport_ports(payload: &[u8]) -> Option<(u16, u16)> {
+    (payload.len() >= 4).then(|| {
+        (
+            u16::from_be_bytes([payload[0], payload[1]]),
+            u16::from_be_bytes([payload[2], payload[3]]),
+        )
+    })
+}
+
+fn apply_transport_translation(
+    protocol: OutputRuleProtocol,
+    ipv4_repr: &mut Ipv4Repr,
+    payload: &mut [u8],
+    src_addr: Ipv4Address,
+    dst_addr: Ipv4Address,
+    src_port: u16,
+    dst_port: u16,
+) {
+    if payload.len() < transport_header_len(protocol) {
+        return;
+    }
+
+    ipv4_repr.src_addr = src_addr;
+    ipv4_repr.dst_addr = dst_addr;
+    payload[0..2].copy_from_slice(&src_port.to_be_bytes());
+    payload[2..4].copy_from_slice(&dst_port.to_be_bytes());
+    update_transport_checksum(protocol, ipv4_repr, payload);
+}
+
+fn transport_header_len(protocol: OutputRuleProtocol) -> usize {
+    match protocol {
+        OutputRuleProtocol::Tcp => 20,
+        OutputRuleProtocol::Udp => 8,
+        OutputRuleProtocol::Icmp => usize::MAX,
+    }
+}
+
+/// Recomputes a TCP or UDP checksum after a forwarded NAT rewrite.
+///
+/// smoltcp computes checksums when it emits locally generated packet
+/// representations. Forwarded packets intentionally preserve a raw transport
+/// payload, so this bounded helper performs the RFC 793/768 pseudo-header
+/// checksum update before Ethernet/IP serialization.
+fn update_transport_checksum(
+    protocol: OutputRuleProtocol,
+    ipv4_repr: &Ipv4Repr,
+    payload: &mut [u8],
+) {
+    let checksum_offset = match protocol {
+        OutputRuleProtocol::Tcp => 16,
+        OutputRuleProtocol::Udp => 6,
+        OutputRuleProtocol::Icmp => return,
+    };
+    if payload.len() < checksum_offset + 2 {
+        return;
+    }
+
+    payload[checksum_offset..checksum_offset + 2].fill(0);
+    let protocol_number = match protocol {
+        OutputRuleProtocol::Tcp => 6,
+        OutputRuleProtocol::Udp => 17,
+        OutputRuleProtocol::Icmp => return,
+    };
+    let mut sum = 0u32;
+    sum = checksum_add(sum, &ipv4_repr.src_addr.octets());
+    sum = checksum_add(sum, &ipv4_repr.dst_addr.octets());
+    sum = sum.saturating_add(protocol_number);
+    sum = sum.saturating_add(payload.len() as u32);
+    sum = checksum_add(sum, payload);
+
+    let mut checksum = checksum_finish(sum);
+    // RFC 768 encodes a computed UDP checksum of zero as all ones.
+    if protocol == OutputRuleProtocol::Udp && checksum == 0 {
+        checksum = u16::MAX;
+    }
+    payload[checksum_offset..checksum_offset + 2].copy_from_slice(&checksum.to_be_bytes());
+}
+
+fn checksum_add(mut sum: u32, bytes: &[u8]) -> u32 {
+    for chunk in bytes.chunks(2) {
+        let word = match chunk {
+            [high, low] => u16::from_be_bytes([*high, *low]),
+            [high] => u16::from_be_bytes([*high, 0]),
+            _ => 0,
+        };
+        sum = sum.saturating_add(u32::from(word));
+    }
+    sum
+}
+
+fn checksum_finish(mut sum: u32) -> u16 {
+    while sum >> 16 != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 impl MutableFilterRules {
@@ -1021,27 +1474,29 @@ pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
     NAT_RULES.lock().flush(chain);
 }
 
-/// Applies the stateful ICMP subset of NAT before an IPv4 forwarding decision.
+/// Applies bounded stateful NAT before an IPv4 forwarding decision.
 ///
-/// This covers a DNAT rule for a new Echo flow and reverse translations for
-/// replies to previously translated flows. TCP/UDP NAT remains intentionally
-/// unsupported until transport-tuple tracking is added.
-pub fn rewrite_forwarded_ipv4_prerouting(ipv4_repr: &mut Ipv4Repr) {
-    NAT_RULES.lock().rewrite_forwarded_prerouting(ipv4_repr);
+/// ICMP keeps its Stage 3 address-only mapping. TCP and UDP additionally
+/// rewrite their four-tuple and checksum for DNAT or reverse NAT replies.
+pub fn rewrite_forwarded_ipv4_prerouting(ipv4_repr: &mut Ipv4Repr, payload: &mut [u8]) {
+    NAT_RULES
+        .lock()
+        .rewrite_forwarded_prerouting(ipv4_repr, payload);
 }
 
-/// Applies the stateful ICMP subset of NAT after an egress interface is known.
+/// Applies bounded stateful NAT after an egress interface is known.
 ///
 /// A MASQUERADE target takes the selected interface's IPv4 address; an SNAT
-/// target takes its configured `--to-source` address. The resulting mapping
-/// is retained so the reverse Echo packet is restored at PREROUTING.
+/// target takes its configured `--to-source` address. TCP/UDP source ports
+/// are allocated collision-free from a fixed range when a rule omits one.
 pub fn rewrite_forwarded_ipv4_postrouting(
     ipv4_repr: &mut Ipv4Repr,
+    payload: &mut [u8],
     masquerade_addr: Option<Ipv4Address>,
 ) {
     NAT_RULES
         .lock()
-        .rewrite_forwarded_postrouting(ipv4_repr, masquerade_addr);
+        .rewrite_forwarded_postrouting(ipv4_repr, payload, masquerade_addr);
 }
 
 /// Applies POSTROUTING NAT to an IPv4 TCP packet representation.
