@@ -28,6 +28,8 @@ static const char *normalize_operation(const char *operation)
 {
 	if (strcmp(operation, "--append") == 0)
 		return "-A";
+	if (strcmp(operation, "--insert") == 0)
+		return "-I";
 	if (strcmp(operation, "--delete") == 0)
 		return "-D";
 	if (strcmp(operation, "--flush") == 0)
@@ -36,6 +38,8 @@ static const char *normalize_operation(const char *operation)
 		return "-Z";
 	if (strcmp(operation, "--list") == 0)
 		return "-L";
+	if (strcmp(operation, "--policy") == 0)
+		return "-P";
 
 	return operation;
 }
@@ -108,7 +112,7 @@ int main(int argc, char *argv[])
 	int first_copied_arg;
 
 	if (argc < 2) {
-		fprintf(stderr, "usage: iptables [-t filter|nat] -A|-D|-F|-Z|-L CHAIN ...\n");
+		fprintf(stderr, "usage: iptables [-t filter|nat] -A|-I|-D|-F|-P|-Z|-L CHAIN ...\n");
 		return 2;
 	}
 
@@ -129,15 +133,18 @@ int main(int argc, char *argv[])
 	}
 
 	operation = normalize_operation(argv[operation_index]);
-	if (strcmp(operation, "-A") != 0 && strcmp(operation, "-D") != 0 &&
-	    strcmp(operation, "-F") != 0 && strcmp(operation, "-Z") != 0 &&
+	if (strcmp(operation, "-A") != 0 && strcmp(operation, "-I") != 0 &&
+	    strcmp(operation, "-D") != 0 && strcmp(operation, "-F") != 0 &&
+	    strcmp(operation, "-P") != 0 && strcmp(operation, "-Z") != 0 &&
 	    strcmp(operation, "-L") != 0) {
 		fprintf(stderr, "iptables: unsupported operation %s\n",
 			argv[operation_index]);
 		return 2;
 	}
-	if (table_is_nat(table) && strcmp(operation, "-Z") == 0) {
-		fprintf(stderr, "iptables: NAT counter zeroing is unsupported\n");
+	if (table_is_nat(table) && (strcmp(operation, "-I") == 0 ||
+			      strcmp(operation, "-P") == 0 ||
+			      strcmp(operation, "-Z") == 0)) {
+		fprintf(stderr, "iptables: operation unsupported for NAT table\n");
 		return 2;
 	}
 

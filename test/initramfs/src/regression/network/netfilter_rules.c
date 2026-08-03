@@ -914,6 +914,63 @@ FN_TEST(run_userspace_iptables_input_forward_filter_chains)
 }
 END_TEST()
 
+FN_TEST(run_userspace_iptables_insert_and_policy)
+{
+	char buffer[1024];
+	char *const flush_command[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const policy_accept_command[] = {
+		"./iptables", "--policy", "OUTPUT", "ACCEPT", NULL
+	};
+	char *const policy_drop_command[] = {
+		"./iptables", "-P", "OUTPUT", "DROP", NULL
+	};
+	char *const append_drop_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0870", "-j", "DROP", NULL
+	};
+	char *const insert_accept_command[] = {
+		"./iptables", "--insert", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x0870", "-j",
+		"ACCEPT", NULL
+	};
+	char *const insert_policy_override_command[] = {
+		"./iptables", "-I", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0871", "-j", "ACCEPT", NULL
+	};
+	char *const restore_default_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0828", "-j", "DROP", NULL
+	};
+
+	// Stage 5 makes the chain default verdict and first-rule insertion
+	// user-visible. This is the smallest useful policy workflow used by
+	// common firewall setup scripts: default DROP plus explicit exceptions.
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
+	TEST_RES(run_iptables_command(append_drop_command), _ret == 0);
+	TEST_RES(run_iptables_command(insert_accept_command), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x870, 0x30), _ret == 1);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "rule 0 pkts") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0870 target ACCEPT") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(policy_drop_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "chain OUTPUT policy DROP") != NULL, _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x871, 0x31), _ret == 0);
+
+	TEST_RES(run_iptables_command(insert_policy_override_command), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x871, 0x32), _ret == 1);
+
+	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(restore_default_command), _ret == 0);
+}
+END_TEST()
+
 FN_TEST(run_userspace_iptables_nat_control_plane)
 {
 	char buffer[2048];

@@ -91,10 +91,15 @@ impl FileOps for NetfilterRulesFileOps {
 
 enum NetfilterCommand {
     Append(AppendOutputRule),
+    Insert(AppendOutputRule, usize),
     AppendNat(AppendNatRule),
     DeleteOutputRule(aster_bigtcp::netfilter::HookPoint, usize),
     FlushOutput(aster_bigtcp::netfilter::HookPoint),
     FlushNat(Option<aster_bigtcp::netfilter::NatRuleChain>),
+    SetFilterPolicy(
+        aster_bigtcp::netfilter::HookPoint,
+        aster_bigtcp::netfilter::OutputRuleTarget,
+    ),
     ZeroOutputCounters(aster_bigtcp::netfilter::HookPoint),
 }
 
@@ -130,6 +135,7 @@ struct AppendNatRule {
 fn apply_command(command: NetfilterCommand) -> Result<()> {
     match command {
         NetfilterCommand::Append(rule) => apply_append_rule(rule),
+        NetfilterCommand::Insert(rule, index) => apply_insert_rule(rule, index),
         NetfilterCommand::AppendNat(rule) => apply_append_nat_rule(rule),
         NetfilterCommand::DeleteOutputRule(chain, index) => {
             if !aster_bigtcp::netfilter::delete_filter_rule(chain, index) {
@@ -144,6 +150,10 @@ fn apply_command(command: NetfilterCommand) -> Result<()> {
         }
         NetfilterCommand::FlushNat(chain) => {
             aster_bigtcp::netfilter::flush_nat_rules(chain);
+            Ok(())
+        }
+        NetfilterCommand::SetFilterPolicy(chain, target) => {
+            aster_bigtcp::netfilter::set_filter_chain_policy(chain, target);
             Ok(())
         }
         NetfilterCommand::ZeroOutputCounters(chain) => {
@@ -180,6 +190,40 @@ fn apply_append_rule(rule: AppendOutputRule) -> Result<()> {
 
     if !appended {
         return_errno_with_message!(Errno::ENOSPC, "netfilter rule table is full");
+    }
+
+    Ok(())
+}
+
+fn apply_insert_rule(rule: AppendOutputRule, index: usize) -> Result<()> {
+    let inserted = match rule.protocol {
+        aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
+            aster_bigtcp::netfilter::insert_filter_icmp_echo_rule(
+                rule.chain,
+                index,
+                rule.ident,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.target,
+            )
+        }
+        aster_bigtcp::netfilter::OutputRuleProtocol::Tcp
+        | aster_bigtcp::netfilter::OutputRuleProtocol::Udp => {
+            aster_bigtcp::netfilter::insert_filter_transport_rule(
+                rule.chain,
+                index,
+                rule.protocol,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.src_port,
+                rule.dst_port,
+                rule.target,
+            )
+        }
+    };
+
+    if !inserted {
+        return_errno_with_message!(Errno::ENOSPC, "netfilter rule table is full or index is invalid");
     }
 
     Ok(())
@@ -222,8 +266,11 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
     match table {
         IptablesTable::Filter => match operation {
             "-A" => parse_iptables_append_command(words).map(NetfilterCommand::Append),
+            "-I" => parse_iptables_insert_command(words)
+                .map(|(rule, index)| NetfilterCommand::Insert(rule, index)),
             "-D" => parse_iptables_delete_command(words),
             "-F" => parse_iptables_chain_command(words).map(NetfilterCommand::FlushOutput),
+            "-P" => parse_iptables_policy_command(words),
             "-Z" => {
                 parse_iptables_chain_command(words).map(NetfilterCommand::ZeroOutputCounters)
             }
@@ -266,6 +313,35 @@ fn parse_iptables_append_command(
     mut words: core::str::SplitWhitespace<'_>,
 ) -> Result<AppendOutputRule> {
     let chain = parse_filter_chain(&mut words)?;
+
+    parse_iptables_filter_rule(chain, words)
+}
+
+fn parse_iptables_insert_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<(AppendOutputRule, usize)> {
+    let chain = parse_filter_chain(&mut words)?;
+    let index = match words.clone().next() {
+        Some(value) if !value.starts_with('-') => {
+            let _ = words.next();
+            let one_based = value
+                .parse::<usize>()
+                .map_err(|_| Error::with_message(Errno::EINVAL, "invalid iptables insert position"))?;
+            if one_based == 0 {
+                return_errno_with_message!(Errno::EINVAL, "iptables insert position is one-based");
+            }
+            one_based - 1
+        }
+        _ => 0,
+    };
+
+    parse_iptables_filter_rule(chain, words).map(|rule| (rule, index))
+}
+
+fn parse_iptables_filter_rule(
+    chain: aster_bigtcp::netfilter::HookPoint,
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<AppendOutputRule> {
 
     let mut protocol = None;
     let mut echo_request = false;
@@ -381,6 +457,20 @@ fn parse_iptables_append_command(
         dst_port,
         target,
     })
+}
+
+fn parse_iptables_policy_command(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<NetfilterCommand> {
+    let chain = parse_filter_chain(&mut words)?;
+    let Some(target) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing iptables chain policy");
+    };
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing iptables policy tokens");
+    }
+
+    Ok(NetfilterCommand::SetFilterPolicy(chain, parse_rule_target(target)?))
 }
 
 fn parse_iptables_nat_append_command(
