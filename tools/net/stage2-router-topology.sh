@@ -358,6 +358,13 @@ test_tcp_masquerade() {
     capture=$(mktemp)
     trap 'rm -f "$capture" "$capture.server"' RETURN
 
+    # Prime both ARP paths before opening the first TCP flow.  A fresh QEMU
+    # instance otherwise has to resolve both neighbours while the five-second
+    # application timeout is already running, which makes the first SYN test
+    # unnecessarily timing-sensitive on a nested VMware/KVM host.
+    ip netns exec "$LEFT_NS" ping -4 -n -c 1 -W 1 10.0.3.2 \
+        >/dev/null 2>&1 || true
+
     ip netns exec "$RIGHT_NS" python3 -c '
 import socket
 s = socket.socket()
@@ -372,9 +379,23 @@ for _ in range(2):
 s.close()
 ' >"$capture.server" 2>&1 &
     server_pid=$!
+    # Wait until the server has completed bind/listen instead of relying on a
+    # fixed sleep. This also leaves a useful diagnostic if startup failed.
+    for _ in $(seq 1 40); do
+        if ip netns exec "$RIGHT_NS" ss -H -ltn 'sport = :9000' \
+            2>/dev/null | grep -q ':9000'; then
+            break
+        fi
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            cat "$capture.server" >&2 || true
+            echo "TCP echo server exited before listening on 10.0.3.2:9000." >&2
+            return 1
+        fi
+        sleep 0.05
+    done
     tcpdump -n -l -i "$RIGHT_BR" -c 2 'tcp dst port 9000 and tcp[tcpflags] & tcp-syn != 0' >"$capture" 2>&1 &
     capture_pid=$!
-    sleep 0.2
+    sleep 0.3
 
     echo "Testing two TCP MASQUERADE flows through Asterinas..."
     if ! output=$(ip netns exec "$LEFT_NS" python3 -c '
@@ -562,7 +583,10 @@ run_ping() {
 }
 
 show() {
-    ip -br link show "$LEFT_BR" "$RIGHT_BR" "$LEFT_TAP" "$RIGHT_TAP"
+    local link
+    for link in "$LEFT_BR" "$RIGHT_BR" "$LEFT_TAP" "$RIGHT_TAP"; do
+        ip -br link show dev "$link"
+    done
     ip -n "$LEFT_NS" -br addr show
     ip -n "$RIGHT_NS" -br addr show
     ip -n "$LEFT_NS" route show
