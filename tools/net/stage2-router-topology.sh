@@ -152,6 +152,38 @@ test_ipv6_forwarding() {
     echo "netfilter-stage10d: bidirectional IPv6 forwarding passed"
 }
 
+test_ipv6_forward_drop() {
+    if ! topology_is_ready; then
+        echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
+        exit 1
+    fi
+
+    local blocked_output allowed_output
+    echo "Testing IPv6 ICMPv6 FORWARD DROP through Asterinas..."
+    if blocked_output=$(ip netns exec "$LEFT_NS" ping -6 -n -c 2 -W 1 "$RIGHT_IPV6" 2>&1); then
+        printf '%s\n' "$blocked_output"
+        echo "Stage 11 expected the left-to-right IPv6 Echo Request to be dropped." >&2
+        return 1
+    fi
+    printf '%s\n' "$blocked_output"
+    if ! grep -q '100% packet loss' <<<"$blocked_output"; then
+        echo "Stage 11 IPv6 FORWARD DROP did not produce complete packet loss." >&2
+        return 1
+    fi
+
+    if ! allowed_output=$(ip netns exec "$RIGHT_NS" ping -6 -n -c 2 -W 2 "$LEFT_IPV6" 2>&1); then
+        printf '%s\n' "$allowed_output"
+        return 1
+    fi
+    printf '%s\n' "$allowed_output"
+    if ! grep -q ' 0% packet loss' <<<"$allowed_output"; then
+        echo "Stage 11 reverse IPv6 flow did not meet the acceptance policy." >&2
+        return 1
+    fi
+
+    echo "netfilter-stage11: IPv6 ICMPv6 FORWARD DROP passed"
+}
+
 test_forwarding() {
     if ! topology_is_ready; then
         echo "Topology is incomplete; run '$0 teardown' and then '$0 setup'." >&2
@@ -479,7 +511,7 @@ teardown() {
 }
 
 usage() {
-    echo "Usage: $0 {setup|test|test-ipv6|test-ipv6-forward|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
+    echo "Usage: $0 {setup|test|test-ipv6|test-ipv6-forward|test-ipv6-forward-drop|test-nat|test-dnat|test-forward-drop|test-tcp-nat|test-udp-nat|test-tcp-dnat|show|teardown}" >&2
 }
 
 require_root
@@ -488,6 +520,7 @@ case "${1:-}" in
     test) test_forwarding ;;
     test-ipv6) test_ipv6_ethernet ;;
     test-ipv6-forward) test_ipv6_forwarding ;;
+    test-ipv6-forward-drop) test_ipv6_forward_drop ;;
     test-nat) test_icmp_masquerade ;;
     test-dnat) test_icmp_dnat ;;
     test-forward-drop) test_icmp_forward_drop ;;
