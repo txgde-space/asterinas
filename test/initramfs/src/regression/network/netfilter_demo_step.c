@@ -201,10 +201,9 @@ static int run_probe_command(const char *command)
 			return E2BIG;
 		argv[argc++] = token;
 	}
-	if (argc != 4 ||
-	    (strcmp(argv[0], "ping4") != 0 && strcmp(argv[0], "ping6") != 0))
+	if (argc != 4 || strcmp(argv[0], "ping4") != 0)
 		return EINVAL;
-	family = strcmp(argv[0], "ping6") == 0 ? "ipv6" : "ipv4";
+	family = "ipv4";
 	target = argv[1];
 	if (strlen(target) == 0 || strlen(target) > 64 ||
 	    strpbrk(target, "\r\n \t\"'"))
@@ -217,7 +216,7 @@ static int run_probe_command(const char *command)
 	snprintf(timeout_text, sizeof(timeout_text), "%d", timeout);
 	{
 		char *probe_argv[] = {
-			"/bin/ping", strcmp(argv[0], "ping6") == 0 ? "-6" : "-4",
+			"/bin/ping", "-4",
 			"-n", "-c", count_text, "-W", timeout_text, (char *)target,
 			NULL,
 		};
@@ -237,6 +236,11 @@ static int reset_rules(void)
 	char *const nat_flush[] = { "./iptables", "-t", "nat", "-F", NULL };
 	char *const filter_policy[] = { "./iptables", "-P", "OUTPUT", "ACCEPT", NULL };
 	char *const forward_policy[] = { "./iptables", "-P", "FORWARD", "ACCEPT", NULL };
+	char *const filter6_flush[] = { "./ip6tables", "-F", "OUTPUT", NULL };
+	char *const forward6_flush[] = { "./ip6tables", "-F", "FORWARD", NULL };
+	char *const nat6_flush[] = { "./ip6tables", "-t", "nat", "-F", NULL };
+	char *const filter6_policy[] = { "./ip6tables", "-P", "OUTPUT", "ACCEPT", NULL };
+	char *const forward6_policy[] = { "./ip6tables", "-P", "FORWARD", "ACCEPT", NULL };
 	int rc = 0;
 
 	rc |= run_iptables("reset-filter-flush", filter_flush) != 0;
@@ -244,7 +248,38 @@ static int reset_rules(void)
 	rc |= run_iptables("reset-nat-flush", nat_flush) != 0;
 	rc |= run_iptables("reset-filter-policy", filter_policy) != 0;
 	rc |= run_iptables("reset-forward-policy", forward_policy) != 0;
+	/* IPv6 rules are reset as part of the same dashboard operation so the
+	 * IPv6 rule table remains inspectable even though this demo exposes only
+	 * IPv4 ping probes. */
+	if (access("./ip6tables", X_OK) == 0) {
+		rc |= run_iptables("reset-ipv6-filter-flush", filter6_flush) != 0;
+		rc |= run_iptables("reset-ipv6-forward-flush", forward6_flush) != 0;
+		rc |= run_iptables("reset-ipv6-nat-flush", nat6_flush) != 0;
+		rc |= run_iptables("reset-ipv6-filter-policy", filter6_policy) != 0;
+		rc |= run_iptables("reset-ipv6-forward-policy", forward6_policy) != 0;
+	}
 	fprintf(stderr, "NETFILTER_DEMO reset rc=%d\n", rc);
+	fflush(stderr);
+	return rc;
+}
+
+static int run_probe_suite(const char *suite)
+{
+	static const char *const local[] = { "ping4 10.0.3.2 2 2", NULL };
+	static const char *const external[] = { "ping4 1.1.1.1 2 3", NULL };
+	const char *const *probes;
+	int rc = 0;
+
+	if (strcmp(suite, "local") == 0)
+		probes = local;
+	else if (strcmp(suite, "external") == 0)
+		probes = external;
+	else
+		return EINVAL;
+
+	for (size_t i = 0; probes[i] != NULL; i++)
+		rc |= run_probe_command(probes[i]) != 0;
+	fprintf(stderr, "NETFILTER_DEMO probe-suite=%s rc=%d\n", suite, rc);
 	fflush(stderr);
 	return rc;
 }
@@ -271,11 +306,14 @@ static int run_filter_step(const char *id)
 {
 	char *const flush[] = { "./iptables", "-F", "OUTPUT", NULL };
 	char *const append_drop[] = { "./iptables", "-A", "OUTPUT", "-p",
-					      "icmp", "-j", "DROP", NULL };
+						      "icmp", "--icmp-type", "echo-request",
+						      "-j", "DROP", NULL };
 	char *const check_drop[] = { "./iptables", "-C", "OUTPUT", "-p",
-					     "icmp", "-j", "DROP", NULL };
+						     "icmp", "--icmp-type", "echo-request",
+						     "-j", "DROP", NULL };
 	char *const replace_accept[] = { "./iptables", "-R", "OUTPUT", "1",
-						"-p", "icmp", "-j", "ACCEPT", NULL };
+										"-p", "icmp", "--icmp-type", "echo-request",
+										"-j", "ACCEPT", NULL };
 
 	if (strcmp(id, "filter-baseline") == 0) {
 		if (run_iptables("filter-flush", flush) != 0)
@@ -434,12 +472,7 @@ int main(void)
 			emit_step(step, "running");
 			if (run_step(next) != 0) {
 				emit_step(step, "fail");
-				fprintf(stderr,
-					"NETFILTER_DEMO recovery=manual step=%s "
-					"hint=reset-or-rule-command\n",
-					step->id);
-				fflush(stderr);
-				continue;
+				return 1;
 			}
 			emit_step(step, "done");
 			next++;
@@ -455,16 +488,8 @@ int main(void)
 			continue;
 		}
 		if (strncmp(command, "scenario ", 9) == 0) {
-			if (reset_rules() != 0)
+			if (reset_rules() != 0 || run_scenario(command + 9) != 0)
 				return 1;
-			if (run_scenario(command + 9) != 0) {
-				fprintf(stderr,
-					"NETFILTER_DEMO recovery=manual scenario=%s "
-					"hint=use-rule-or-ping-controls\n",
-					command + 9);
-				fflush(stderr);
-				continue;
-			}
 			if (strcmp(command + 9, "all") == 0) {
 				next = sizeof(STEPS) / sizeof(STEPS[0]);
 			} else {
@@ -484,11 +509,18 @@ int main(void)
 			fflush(stderr);
 			continue;
 		}
-		if (strncmp(command, "ping4 ", 6) == 0 ||
-		    strncmp(command, "ping6 ", 6) == 0) {
+		if (strncmp(command, "ping4 ", 6) == 0) {
 			if (run_probe_command(command) != 0)
 				fprintf(stderr,
 					"NETFILTER_DEMO control-error=ping command=invalid\n");
+			fflush(stderr);
+			continue;
+		}
+		if (strncmp(command, "probe-suite ", 13) == 0) {
+			if (run_probe_suite(command + 13) != 0)
+				fprintf(stderr,
+					"NETFILTER_DEMO control-error=probe-suite suite=%s\n",
+					command + 13);
 			fflush(stderr);
 			continue;
 		}
