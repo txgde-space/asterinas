@@ -20,6 +20,8 @@ use crate::prelude::println;
 static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
 static IPV6_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
 static STAGE11_IPV6_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE12_IPV6_SNAT_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE12_IPV6_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
@@ -34,6 +36,8 @@ aster_cmdline::define_flag_param!(
     "netfilter.stage11_ipv6_forward_drop",
     STAGE11_IPV6_FORWARD_DROP_TEST
 );
+aster_cmdline::define_flag_param!("netfilter.stage12_ipv6_snat", STAGE12_IPV6_SNAT_TEST);
+aster_cmdline::define_flag_param!("netfilter.stage12_ipv6_dnat", STAGE12_IPV6_DNAT_TEST);
 aster_cmdline::define_flag_param!(
     "netfilter.stage3_icmp_masquerade",
     STAGE3_ICMP_MASQUERADE_TEST
@@ -77,6 +81,38 @@ pub fn init() {
         );
         if installed {
             println!("netfilter-stage11: IPv6 ICMPv6 FORWARD DROP acceptance rule installed");
+        }
+    }
+
+    if STAGE12_IPV6_SNAT_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_ipv6_nat_rule(
+            aster_bigtcp::netfilter::Ipv6NatRuleChain::PostRouting,
+            aster_bigtcp::netfilter::Ipv6RuleProtocol::Any,
+            Some(Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2)),
+            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 2)),
+            None,
+            None,
+            aster_bigtcp::netfilter::Ipv6NatRuleTarget::Masquerade,
+            None,
+        );
+        if installed {
+            println!("netfilter-stage12: IPv6 POSTROUTING MASQUERADE rule installed");
+        }
+    }
+
+    if STAGE12_IPV6_DNAT_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_ipv6_nat_rule(
+            aster_bigtcp::netfilter::Ipv6NatRuleChain::PreRouting,
+            aster_bigtcp::netfilter::Ipv6RuleProtocol::Any,
+            Some(Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2)),
+            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 15)),
+            None,
+            None,
+            aster_bigtcp::netfilter::Ipv6NatRuleTarget::Dnat,
+            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 2)),
+        );
+        if installed {
+            println!("netfilter-stage12: IPv6 PREROUTING DNAT rule installed");
         }
     }
 
@@ -279,6 +315,14 @@ pub fn forward_ipv6_packet(
     let Some(egress) = lookup_ipv6_iface(packet.dst_addr, Some(ingress_ifindex)) else {
         return ForwardingResult::NoRoute;
     };
+
+    // POSTROUTING is evaluated only after the egress interface is known so a
+    // MASQUERADE rule can use that interface's IPv6 address.  The NAT module
+    // also records the mapping used by the reverse PREROUTING path.
+    aster_bigtcp::netfilter::apply_ipv6_nat_postrouting(
+        &mut packet,
+        egress.ipv6_addr(),
+    );
 
     if !egress.enqueue_forwarded_ipv6(packet) {
         return ForwardingResult::QueueFull;

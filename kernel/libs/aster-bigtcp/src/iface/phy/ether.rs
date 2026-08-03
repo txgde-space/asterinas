@@ -218,6 +218,14 @@ impl<D, E: Ext> EtherIface<D, E> {
             return;
         }
 
+        // PREROUTING owns both configured DNAT and the reverse half of an
+        // existing NAT66 connection.  Work on a bounded copy so the
+        // Ethernet receive buffer remains immutable while the translated
+        // addresses and transport checksum are validated below.
+        let mut translated_packet = packet[..IPV6_HEADER_LEN + payload_len].to_vec();
+        crate::netfilter::apply_ipv6_nat_prerouting(&mut translated_packet);
+        let packet = translated_packet.as_slice();
+
         let Some(source) = Self::ipv6_from_bytes(&packet[8..24]) else {
             return;
         };
@@ -256,8 +264,7 @@ impl<D, E: Ext> EtherIface<D, E> {
                 .ipv6_addr()
                 .map_or(true, |local| destination != local)
         {
-            let forwarded_bytes = packet[..IPV6_HEADER_LEN + payload_len].to_vec();
-            let Some(forwarded) = ForwardedIpv6Packet::new(forwarded_bytes) else {
+            let Some(forwarded) = ForwardedIpv6Packet::new(translated_packet) else {
                 return;
             };
             let _ = E::forward_ipv6_packet(self.common.index(), forwarded);

@@ -9,6 +9,7 @@
 mod chain;
 mod hook;
 mod ipv6;
+mod ipv6_nat;
 mod rule;
 mod table;
 
@@ -20,6 +21,13 @@ pub use ipv6::{
     Ipv6PacketContext, Ipv6RuleProtocol, Ipv6RuleTarget, append_filter_rule as append_ipv6_filter_rule,
     evaluate_ipv6, flush_rules as flush_ipv6_rules, set_chain_policy as set_ipv6_chain_policy,
     write_snapshot as write_ipv6_filter_snapshot, zero_counters as zero_ipv6_counters,
+};
+pub use ipv6_nat::{
+    Ipv6NatRuleChain, Ipv6NatRuleTarget, append_nat_rule as append_ipv6_nat_rule,
+    apply_postrouting as apply_ipv6_nat_postrouting,
+    apply_prerouting as apply_ipv6_nat_prerouting,
+    flush_rules as flush_ipv6_nat_rules, write_snapshot as write_ipv6_nat_snapshot,
+    zero_counters as zero_ipv6_nat_counters,
 };
 pub use table::{
     ConntrackState, NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,

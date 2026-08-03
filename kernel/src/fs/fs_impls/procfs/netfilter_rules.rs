@@ -39,6 +39,9 @@ impl FileOps for NetfilterRulesFileOps {
         aster_bigtcp::netfilter::write_ipv6_filter_snapshot(&mut printer).map_err(|_| {
             Error::with_message(Errno::EIO, "failed to render IPv6 netfilter rule table")
         })?;
+        aster_bigtcp::netfilter::write_ipv6_nat_snapshot(&mut printer).map_err(|_| {
+            Error::with_message(Errno::EIO, "failed to render IPv6 NAT rule table")
+        })?;
 
         Ok(printer.bytes_written())
     }
@@ -120,12 +123,15 @@ enum NetfilterCommand {
 
 enum Ipv6NetfilterCommand {
     Append(AppendIpv6Rule),
+    AppendNat(AppendIpv6NatRule),
     Flush(Option<aster_bigtcp::netfilter::HookPoint>),
+    FlushNat(Option<aster_bigtcp::netfilter::Ipv6NatRuleChain>),
     SetPolicy(
         aster_bigtcp::netfilter::HookPoint,
         aster_bigtcp::netfilter::Ipv6RuleTarget,
     ),
     Zero(Option<aster_bigtcp::netfilter::HookPoint>),
+    ZeroNat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -165,6 +171,17 @@ struct AppendIpv6Rule {
     dst_addr: Option<aster_bigtcp::wire::Ipv6Address>,
     icmpv6_type: Option<u8>,
     target: aster_bigtcp::netfilter::Ipv6RuleTarget,
+}
+
+struct AppendIpv6NatRule {
+    chain: aster_bigtcp::netfilter::Ipv6NatRuleChain,
+    protocol: aster_bigtcp::netfilter::Ipv6RuleProtocol,
+    src_addr: Option<aster_bigtcp::wire::Ipv6Address>,
+    dst_addr: Option<aster_bigtcp::wire::Ipv6Address>,
+    src_port: Option<u16>,
+    dst_port: Option<u16>,
+    target: aster_bigtcp::netfilter::Ipv6NatRuleTarget,
+    to_addr: Option<aster_bigtcp::wire::Ipv6Address>,
 }
 
 fn apply_command(command: NetfilterCommand) -> Result<()> {
@@ -228,14 +245,34 @@ fn apply_ipv6_command(command: Ipv6NetfilterCommand) -> Result<()> {
                 return_errno_with_message!(Errno::ENOSPC, "IPv6 netfilter rule table is full");
             }
         }
+        Ipv6NetfilterCommand::AppendNat(rule) => {
+            if !aster_bigtcp::netfilter::append_ipv6_nat_rule(
+                rule.chain,
+                rule.protocol,
+                rule.src_addr,
+                rule.dst_addr,
+                rule.src_port,
+                rule.dst_port,
+                rule.target,
+                rule.to_addr,
+            ) {
+                return_errno_with_message!(Errno::ENOSPC, "IPv6 NAT rule table is full");
+            }
+        }
         Ipv6NetfilterCommand::Flush(chain) => {
             aster_bigtcp::netfilter::flush_ipv6_rules(chain);
+        }
+        Ipv6NetfilterCommand::FlushNat(chain) => {
+            aster_bigtcp::netfilter::flush_ipv6_nat_rules(chain);
         }
         Ipv6NetfilterCommand::SetPolicy(chain, target) => {
             aster_bigtcp::netfilter::set_ipv6_chain_policy(chain, target);
         }
         Ipv6NetfilterCommand::Zero(chain) => {
             aster_bigtcp::netfilter::zero_ipv6_counters(chain);
+        }
+        Ipv6NetfilterCommand::ZeroNat => {
+            aster_bigtcp::netfilter::zero_ipv6_nat_counters();
         }
     }
     Ok(())
@@ -512,6 +549,37 @@ fn parse_ip6tables_command(command: &str) -> Result<Option<Ipv6NetfilterCommand>
         return Ok(None);
     };
     let mut words = rest.split_whitespace();
+
+    // Keep the nat-table parser next to the filter parser so the procfs ABI
+    // accepts the familiar `ip6tables -t nat ...` spelling directly.
+    if matches!(words.clone().next(), Some("-t") | Some("--table")) {
+        let _ = words.next();
+        let Some(table) = words.next() else {
+            return_errno_with_message!(Errno::EINVAL, "missing ip6tables table name");
+        };
+        if table != "nat" {
+            return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables table");
+        }
+        let Some(operation) = words.next() else {
+            return_errno_with_message!(Errno::EINVAL, "missing ip6tables NAT operation");
+        };
+        return match operation {
+            "-A" | "--append" => parse_ip6tables_nat_append(words).map(Some),
+            "-F" | "--flush" => {
+                parse_optional_ipv6_nat_chain(&mut words).map(|chain| {
+                    Some(Ipv6NetfilterCommand::FlushNat(chain))
+                })
+            }
+            "-Z" | "--zero" => {
+                if words.next().is_some() {
+                    return_errno_with_message!(Errno::EINVAL, "trailing ip6tables NAT zero tokens");
+                }
+                Ok(Some(Ipv6NetfilterCommand::ZeroNat))
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables NAT operation"),
+        };
+    }
+
     let Some(operation) = words.next() else {
         return_errno_with_message!(Errno::EINVAL, "missing ip6tables operation");
     };
@@ -613,6 +681,132 @@ fn parse_ip6tables_append(
         icmpv6_type,
         target,
     }))
+}
+
+fn parse_ip6tables_nat_append(
+    mut words: core::str::SplitWhitespace<'_>,
+) -> Result<Ipv6NetfilterCommand> {
+    let chain = parse_ipv6_nat_chain(&mut words)?;
+    let mut protocol = aster_bigtcp::netfilter::Ipv6RuleProtocol::Any;
+    let mut src_addr = None;
+    let mut dst_addr = None;
+    let mut src_port = None;
+    let mut dst_port = None;
+    let mut target = None;
+    let mut to_addr = None;
+
+    while let Some(word) = words.next() {
+        match word {
+            "-p" | "--protocol" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT protocol");
+                };
+                protocol = parse_ipv6_rule_protocol(value)?;
+            }
+            "-s" | "--source" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT source address");
+                };
+                src_addr = Some(parse_ipv6_addr(value)?);
+            }
+            "-d" | "--destination" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT destination address");
+                };
+                dst_addr = Some(parse_ipv6_addr(value)?);
+            }
+            "--sport" | "--source-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT source port");
+                };
+                src_port = Some(parse_u16(value)?);
+            }
+            "--dport" | "--destination-port" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT destination port");
+                };
+                dst_port = Some(parse_u16(value)?);
+            }
+            "-j" | "--jump" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT target");
+                };
+                target = Some(parse_ipv6_nat_target(value)?);
+            }
+            "--to-source" | "--to-destination" => {
+                let Some(value) = words.next() else {
+                    return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT translation address");
+                };
+                to_addr = Some(parse_ipv6_addr(value)?);
+            }
+            _ => return_errno_with_message!(Errno::EINVAL, "unsupported ip6tables NAT matcher"),
+        }
+    }
+
+    let Some(target) = target else {
+        return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT target");
+    };
+    if matches!(target, aster_bigtcp::netfilter::Ipv6NatRuleTarget::Dnat | aster_bigtcp::netfilter::Ipv6NatRuleTarget::Snat)
+        && to_addr.is_none()
+    {
+        return_errno_with_message!(Errno::EINVAL, "IPv6 DNAT/SNAT requires a translation address");
+    }
+    if matches!(target, aster_bigtcp::netfilter::Ipv6NatRuleTarget::Masquerade)
+        && chain != aster_bigtcp::netfilter::Ipv6NatRuleChain::PostRouting
+    {
+        return_errno_with_message!(Errno::EINVAL, "IPv6 MASQUERADE requires POSTROUTING");
+    }
+
+    Ok(Ipv6NetfilterCommand::AppendNat(AppendIpv6NatRule {
+        chain,
+        protocol,
+        src_addr,
+        dst_addr,
+        src_port,
+        dst_port,
+        target,
+        to_addr,
+    }))
+}
+
+fn parse_ipv6_nat_chain(
+    words: &mut core::str::SplitWhitespace<'_>,
+) -> Result<aster_bigtcp::netfilter::Ipv6NatRuleChain> {
+    let Some(chain) = words.next() else {
+        return_errno_with_message!(Errno::EINVAL, "missing IPv6 NAT chain");
+    };
+    match chain {
+        "PREROUTING" => Ok(aster_bigtcp::netfilter::Ipv6NatRuleChain::PreRouting),
+        "POSTROUTING" => Ok(aster_bigtcp::netfilter::Ipv6NatRuleChain::PostRouting),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported IPv6 NAT chain"),
+    }
+}
+
+fn parse_optional_ipv6_nat_chain(
+    words: &mut core::str::SplitWhitespace<'_>,
+) -> Result<Option<aster_bigtcp::netfilter::Ipv6NatRuleChain>> {
+    let Some(chain) = words.next() else {
+        return Ok(None);
+    };
+    if words.next().is_some() {
+        return_errno_with_message!(Errno::EINVAL, "trailing IPv6 NAT chain tokens");
+    }
+    match chain {
+        "PREROUTING" => Ok(Some(aster_bigtcp::netfilter::Ipv6NatRuleChain::PreRouting)),
+        "POSTROUTING" => Ok(Some(aster_bigtcp::netfilter::Ipv6NatRuleChain::PostRouting)),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported IPv6 NAT chain"),
+    }
+}
+
+fn parse_ipv6_nat_target(
+    value: &str,
+) -> Result<aster_bigtcp::netfilter::Ipv6NatRuleTarget> {
+    match value {
+        "DNAT" => Ok(aster_bigtcp::netfilter::Ipv6NatRuleTarget::Dnat),
+        "SNAT" => Ok(aster_bigtcp::netfilter::Ipv6NatRuleTarget::Snat),
+        "MASQUERADE" => Ok(aster_bigtcp::netfilter::Ipv6NatRuleTarget::Masquerade),
+        _ => return_errno_with_message!(Errno::EINVAL, "unsupported IPv6 NAT target"),
+    }
 }
 
 fn parse_optional_filter_chain(
