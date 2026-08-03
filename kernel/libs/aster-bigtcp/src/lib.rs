@@ -21,6 +21,7 @@ pub mod boolean_value;
 pub mod device;
 pub mod errors;
 pub mod ext;
+pub mod forwarding;
 pub mod iface;
 pub mod netfilter;
 pub mod socket;

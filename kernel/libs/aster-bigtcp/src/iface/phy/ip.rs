@@ -11,6 +11,7 @@ use smoltcp::{
 use crate::{
     device::WithDevice,
     ext::Ext,
+    forwarding::ForwardedIpv4Packet,
     iface::{
         Iface, ScheduleNextPoll,
         common::{IfaceCommon, InterfaceFlags, InterfaceType},
@@ -72,6 +73,13 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
                             &mut buffer[ip_repr.header_len()..],
                             &iface_cx.caps,
                         );
+                    });
+                },
+                |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
+                    tx_token.consume(pkt.ip_repr.buffer_len(), |buffer| {
+                        let mut ip_packet = Ipv4Packet::new_unchecked(buffer);
+                        pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
+                        ip_packet.payload_mut().copy_from_slice(&pkt.payload);
                     });
                 },
             );
