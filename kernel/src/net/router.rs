@@ -10,14 +10,15 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use alloc::sync::Arc;
 
 use aster_bigtcp::{
-    forwarding::{ForwardedIpv4Packet, ForwardingResult},
-    wire::Ipv4Address,
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet, ForwardingResult},
+    wire::{Ipv4Address, Ipv6Address},
 };
 
 use super::iface::{Iface, iter_all_ifaces};
 use crate::prelude::println;
 
 static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
+static IPV6_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
@@ -27,6 +28,7 @@ static STAGE4_TCP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
 static STAGE6_TCP_CONNTRACK_POLICY_TEST: AtomicBool = AtomicBool::new(false);
 
 aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
+aster_cmdline::define_flag_param!("netfilter.ipv6_forward", IPV6_FORWARDING_ENABLED);
 aster_cmdline::define_flag_param!(
     "netfilter.stage3_icmp_masquerade",
     STAGE3_ICMP_MASQUERADE_TEST
@@ -54,6 +56,9 @@ aster_cmdline::define_flag_param!(
 pub fn init() {
     if IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
         println!("netfilter-stage2b: ipv4 forwarding pipeline enabled");
+    }
+    if IPV6_FORWARDING_ENABLED.load(Ordering::Relaxed) {
+        println!("netfilter-stage10d: ipv6 forwarding pipeline enabled");
     }
 
     // The TAP acceptance topology cannot run an interactive userspace command
@@ -239,6 +244,31 @@ pub fn forward_ipv4_packet(
     ForwardingResult::Queued
 }
 
+/// Selects a directly connected IPv6 egress route and queues the packet.
+pub fn forward_ipv6_packet(
+    ingress_ifindex: u32,
+    mut packet: ForwardedIpv6Packet,
+) -> ForwardingResult {
+    if !IPV6_FORWARDING_ENABLED.load(Ordering::Relaxed) {
+        return ForwardingResult::Disabled;
+    }
+
+    if !packet.decrement_hop_limit() {
+        return ForwardingResult::HopLimitExceeded;
+    }
+
+    let Some(egress) = lookup_ipv6_iface(packet.dst_addr, Some(ingress_ifindex)) else {
+        return ForwardingResult::NoRoute;
+    };
+
+    if !egress.enqueue_forwarded_ipv6(packet) {
+        return ForwardingResult::QueueFull;
+    }
+
+    egress.poll();
+    ForwardingResult::Queued
+}
+
 /// Looks up the egress interface for an IPv4 destination.
 ///
 /// Connected prefixes win by longest-prefix match.  If no connected route
@@ -279,6 +309,41 @@ pub(crate) fn lookup_ipv4_iface(
         .cloned()
 }
 
+/// Looks up the egress interface for an IPv6 destination.
+pub(crate) fn lookup_ipv6_iface(
+    destination: Ipv6Address,
+    exclude_ifindex: Option<u32>,
+) -> Option<Arc<Iface>> {
+    let mut best_connected: Option<(u8, Arc<Iface>)> = None;
+
+    for iface in iter_all_ifaces() {
+        if exclude_ifindex.is_some_and(|index| iface.index() == index) {
+            continue;
+        }
+
+        let Some(address) = iface.ipv6_addr() else {
+            continue;
+        };
+        let prefix_len = iface.ipv6_prefix_len().unwrap_or(0).min(128);
+        if route_matches_ipv6(destination, address, prefix_len)
+            && best_connected
+                .as_ref()
+                .map_or(true, |(best_prefix, _)| prefix_len > *best_prefix)
+        {
+            best_connected = Some((prefix_len, iface.clone()));
+        }
+    }
+
+    if let Some((_, iface)) = best_connected {
+        return Some(iface);
+    }
+
+    iter_all_ifaces()
+        .filter(|iface| !exclude_ifindex.is_some_and(|index| iface.index() == index))
+        .find(|iface| iface.ipv6_addr().is_some() && iface.ipv6_gateway().is_some())
+        .cloned()
+}
+
 fn route_matches(destination: Ipv4Address, address: Ipv4Address, prefix_len: u8) -> bool {
     let prefix_len = prefix_len.min(32);
     let mask = if prefix_len == 0 {
@@ -290,10 +355,28 @@ fn route_matches(destination: Ipv4Address, address: Ipv4Address, prefix_len: u8)
         == (u32::from_be_bytes(address.octets()) & mask)
 }
 
+fn route_matches_ipv6(destination: Ipv6Address, address: Ipv6Address, prefix_len: u8) -> bool {
+    let prefix_len = prefix_len.min(128) as usize;
+    let destination = destination.octets();
+    let address = address.octets();
+    let full_bytes = prefix_len / 8;
+    let remaining_bits = prefix_len % 8;
+
+    if destination[..full_bytes] != address[..full_bytes] {
+        return false;
+    }
+    if remaining_bits == 0 {
+        return true;
+    }
+
+    let mask = 0xffu8 << (8 - remaining_bits);
+    destination[full_bytes] & mask == address[full_bytes] & mask
+}
+
 #[cfg(test)]
 mod tests {
-    use super::route_matches;
-    use aster_bigtcp::wire::Ipv4Address;
+    use super::{route_matches, route_matches_ipv6};
+    use aster_bigtcp::wire::{Ipv4Address, Ipv6Address};
 
     #[test]
     fn route_matching_honors_prefix_length() {
@@ -307,6 +390,21 @@ mod tests {
             Ipv4Address::new(10, 0, 2, 2),
             network_address,
             24
+        ));
+    }
+
+    #[test]
+    fn ipv6_route_matching_honors_prefix_length() {
+        let network_address = Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 15);
+        assert!(route_matches_ipv6(
+            Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 2),
+            network_address,
+            64
+        ));
+        assert!(!route_matches_ipv6(
+            Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2),
+            network_address,
+            64
         ));
     }
 }

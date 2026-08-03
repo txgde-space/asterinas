@@ -16,7 +16,7 @@ use ostd::sync::{SpinLock, SpinLockGuard};
 use smoltcp::{
     iface::{Context, packet::Packet},
     phy::Device,
-    wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv4Packet},
+    wire::{IpAddress, IpEndpoint, Ipv4Address, Ipv4Packet, Ipv6Address},
 };
 
 use super::{
@@ -29,7 +29,7 @@ use super::{
 use crate::{
     errors::BindError,
     ext::Ext,
-    forwarding::ForwardedIpv4Packet,
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet},
     socket::{RawIpSocketBg, RawIpv4TxPacket, TcpListenerBg, UdpSocketBg},
     socket_table::SocketTable,
 };
@@ -40,9 +40,11 @@ pub struct IfaceCommon<E: Ext> {
     type_: InterfaceType,
     flags: InterfaceFlags,
     gateway: Option<Ipv4Address>,
+    ipv6_gateway: Option<Ipv6Address>,
 
     interface: SpinLock<PollableIface<E>, BottomHalfDisabled>,
     forwarded_packets: SpinLock<VecDeque<ForwardedIpv4Packet>, BottomHalfDisabled>,
+    forwarded_ipv6_packets: SpinLock<VecDeque<ForwardedIpv6Packet>, BottomHalfDisabled>,
     used_ports: SpinLock<BTreeMap<u16, PortState>, BottomHalfDisabled>,
     sockets: SpinLock<SocketTable<E>, BottomHalfDisabled>,
     sched_poll: E::ScheduleNextPoll,
@@ -54,6 +56,7 @@ impl<E: Ext> IfaceCommon<E> {
         type_: InterfaceType,
         flags: InterfaceFlags,
         gateway: Option<Ipv4Address>,
+        ipv6_gateway: Option<Ipv6Address>,
         interface: smoltcp::iface::Interface,
         sched_poll: E::ScheduleNextPoll,
     ) -> Self {
@@ -65,8 +68,10 @@ impl<E: Ext> IfaceCommon<E> {
             type_,
             flags,
             gateway,
+            ipv6_gateway,
             interface: SpinLock::new(PollableIface::new(interface)),
             forwarded_packets: SpinLock::new(VecDeque::new()),
+            forwarded_ipv6_packets: SpinLock::new(VecDeque::new()),
             used_ports: SpinLock::new(BTreeMap::new()),
             sockets: SpinLock::new(SocketTable::new()),
             sched_poll,
@@ -101,6 +106,18 @@ impl<E: Ext> IfaceCommon<E> {
         self.gateway
     }
 
+    pub(super) fn ipv6_addr(&self) -> Option<Ipv6Address> {
+        self.interface.lock().ipv6_addr()
+    }
+
+    pub(super) fn ipv6_prefix_len(&self) -> Option<u8> {
+        self.interface.lock().ipv6_prefix_len()
+    }
+
+    pub(super) fn ipv6_gateway(&self) -> Option<Ipv6Address> {
+        self.ipv6_gateway
+    }
+
     pub(super) fn sched_poll(&self) -> &E::ScheduleNextPoll {
         &self.sched_poll
     }
@@ -121,6 +138,18 @@ impl<E: Ext> IfaceCommon<E> {
         const FORWARD_QUEUE_LIMIT: usize = 256;
 
         let mut packets = self.forwarded_packets.lock();
+        if packets.len() >= FORWARD_QUEUE_LIMIT {
+            return false;
+        }
+        packets.push_back(packet);
+        true
+    }
+
+    /// Queues a routed IPv6 datagram for this interface.
+    pub(crate) fn enqueue_forwarded_ipv6(&self, packet: ForwardedIpv6Packet) -> bool {
+        const FORWARD_QUEUE_LIMIT: usize = 256;
+
+        let mut packets = self.forwarded_ipv6_packets.lock();
         if packets.len() >= FORWARD_QUEUE_LIMIT {
             return false;
         }
@@ -259,12 +288,13 @@ impl<E: Ext> IfaceCommon<E> {
 }
 
 impl<E: Ext> IfaceCommon<E> {
-    pub(super) fn poll<D, P, Q, R, S>(
+    pub(super) fn poll<D, P, Q, R, V, S>(
         &self,
         device: &mut D,
         mut process_phy: P,
         mut dispatch_phy: Q,
         mut dispatch_forwarded_phy: R,
+        mut dispatch_forwarded_ipv6_phy: V,
         mut dispatch_raw_phy: S,
     ) -> Option<u64>
     where
@@ -277,6 +307,7 @@ impl<E: Ext> IfaceCommon<E> {
         >,
         Q: FnMut(&Packet, &mut Context, D::TxToken<'_>),
         R: FnMut(&ForwardedIpv4Packet, &mut Context, D::TxToken<'_>) -> bool,
+        V: FnMut(&ForwardedIpv6Packet, &mut Context, D::TxToken<'_>) -> bool,
         S: FnMut(&RawIpv4TxPacket, &mut Context, D::TxToken<'_>),
     {
         let mut interface = self.interface();
@@ -296,6 +327,11 @@ impl<E: Ext> IfaceCommon<E> {
             device,
             &self.forwarded_packets,
             &mut dispatch_forwarded_phy,
+        );
+        context.poll_forwarded_ipv6_egress(
+            device,
+            &self.forwarded_ipv6_packets,
+            &mut dispatch_forwarded_ipv6_phy,
         );
         context.poll_egress(device, &mut dispatch_phy, &mut dispatch_raw_phy);
 

@@ -22,7 +22,7 @@ use super::poll_iface::PollableIfaceMut;
 use crate::{
     ext::Ext,
     netfilter::{self, HookPoint, Ipv4PacketContext},
-    forwarding::{ForwardedIpv4Packet, ForwardingResult},
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet, ForwardingResult},
     socket::{RawIpv4TxPacket, TcpConnectionBg, TcpProcessResult},
     socket_table::{ConnectionKey, ListenerKey, SocketTable},
 };
@@ -143,7 +143,11 @@ impl<E: Ext> PollContext<'_, E> {
     }
 
     fn accept_ip_repr_at(&self, hook_point: HookPoint, repr: &IpRepr) -> bool {
-        let IpRepr::Ipv4(ipv4_repr) = repr;
+        let IpRepr::Ipv4(ipv4_repr) = repr else {
+            // IPv6 packet filtering is added with the IPv6 packet path. Drop
+            // it here instead of accidentally treating it as IPv4.
+            return false;
+        };
 
         self.accept_ipv4_at(hook_point, ipv4_repr)
     }
@@ -158,21 +162,27 @@ impl<E: Ext> PollContext<'_, E> {
         repr: &IpRepr,
         icmp_repr: &Icmpv4Repr<'_>,
     ) -> bool {
-        let IpRepr::Ipv4(ipv4_repr) = repr;
+        let IpRepr::Ipv4(ipv4_repr) = repr else {
+            return false;
+        };
 
         netfilter::evaluate_ipv4_icmpv4(Ipv4PacketContext::new(hook_point, ipv4_repr), icmp_repr)
             .is_accept()
     }
 
     fn accept_tcp_at(&self, hook_point: HookPoint, repr: &IpRepr, tcp_repr: &TcpRepr<'_>) -> bool {
-        let IpRepr::Ipv4(ipv4_repr) = repr;
+        let IpRepr::Ipv4(ipv4_repr) = repr else {
+            return false;
+        };
 
         netfilter::evaluate_ipv4_tcp(Ipv4PacketContext::new(hook_point, ipv4_repr), tcp_repr)
             .is_accept()
     }
 
     fn accept_udp_at(&self, hook_point: HookPoint, repr: &IpRepr, udp_repr: &UdpRepr) -> bool {
-        let IpRepr::Ipv4(ipv4_repr) = repr;
+        let IpRepr::Ipv4(ipv4_repr) = repr else {
+            return false;
+        };
 
         netfilter::evaluate_ipv4_udp(Ipv4PacketContext::new(hook_point, ipv4_repr), udp_repr)
             .is_accept()
@@ -193,6 +203,7 @@ impl<E: Ext> PollContext<'_, E> {
 
                 (IpRepr::Ipv4(ipv4_repr), tcp_repr)
             }
+            IpRepr::Ipv6(ipv6_repr) => (IpRepr::Ipv6(ipv6_repr), tcp_repr),
         }
     }
 
@@ -207,6 +218,7 @@ impl<E: Ext> PollContext<'_, E> {
 
                 (IpRepr::Ipv4(ipv4_repr), udp_repr)
             }
+            IpRepr::Ipv6(ipv6_repr) => (IpRepr::Ipv6(ipv6_repr), udp_repr),
         }
     }
 
@@ -289,7 +301,7 @@ impl<E: Ext> PollContext<'_, E> {
         let checksum_caps = self.iface.context().checksum_caps();
         let next_header = repr.next_header;
         let ip_repr = IpRepr::Ipv4(repr);
-        let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
+        let ipv4_repr = &repr;
 
         // Deliver the complete IPv4 datagram to matching raw sockets before
         // transport-specific parsing.  This is important for TCP/UDP raw
@@ -392,7 +404,9 @@ impl<E: Ext> PollContext<'_, E> {
 
     fn process_locally_generated_raw_ipv4(&self, packet: &Packet<'_>) {
         let ip_repr = packet.ip_repr();
-        let IpRepr::Ipv4(ipv4_repr) = &ip_repr;
+        let IpRepr::Ipv4(ipv4_repr) = &ip_repr else {
+            return;
+        };
 
         let mut bytes = vec![0; ip_repr.buffer_len()];
         // raw socket 交付给用户态的是完整 IPv4 报文，不能暴露 loopback/offload
@@ -629,6 +643,9 @@ impl<E: Ext> PollContext<'_, E> {
                     seq_no,
                     data,
                 };
+                let IpAddress::Ipv4(src_addr) = ip_repr.src_addr() else {
+                    return None;
+                };
                 Some(Packet::new_ipv4(
                     Ipv4Repr {
                         src_addr: self
@@ -636,9 +653,7 @@ impl<E: Ext> PollContext<'_, E> {
                             .context()
                             .ipv4_addr()
                             .unwrap_or(Ipv4Address::UNSPECIFIED),
-                        dst_addr: match ip_repr.src_addr() {
-                            IpAddress::Ipv4(src_addr) => src_addr,
-                        },
+                        dst_addr: src_addr,
                         next_header: IpProtocol::Icmp,
                         payload_len: icmp_reply.buffer_len(),
                         hop_limit: 64,
@@ -660,7 +675,9 @@ impl<E: Ext> PollContext<'_, E> {
             return None;
         }
 
-        let IpRepr::Ipv4(ipv4_repr) = ip_repr;
+        let IpRepr::Ipv4(ipv4_repr) = ip_repr else {
+            return None;
+        };
 
         let reply_len = icmp_reply_payload_len(ip_payload.len(), IPV4_MIN_MTU, IPV4_HEADER_LEN);
         let icmp_repr = Icmpv4Repr::DstUnreachable {
@@ -696,6 +713,7 @@ impl<E: Ext> PollContext<'_, E> {
                 .context()
                 .ipv4_addr()
                 .is_some_and(|addr| addr == dst_addr),
+            IpAddress::Ipv6(_) => false,
         }
     }
 }
@@ -714,6 +732,32 @@ impl<E: Ext> PollContext<'_, E> {
     {
         while let Some(tx_token) = device.transmit(self.iface.context().now()) {
             if !self.dispatch_ipv4(tx_token, dispatch_phy, dispatch_raw_phy) {
+                break;
+            }
+        }
+    }
+
+    /// Drains IPv6 datagrams accepted by the router into the egress device.
+    ///
+    /// Neighbor discovery may consume the available transmit token while the
+    /// packet remains queued. The caller therefore requeues the packet when
+    /// the physical dispatcher reports that resolution is still pending.
+    pub(super) fn poll_forwarded_ipv6_egress<D, Q>(
+        &mut self,
+        device: &mut D,
+        forwarded_packets: &SpinLock<VecDeque<ForwardedIpv6Packet>, BottomHalfDisabled>,
+        dispatch_forwarded_phy: &mut Q,
+    ) where
+        D: Device + ?Sized,
+        Q: FnMut(&ForwardedIpv6Packet, &mut Context, D::TxToken<'_>) -> bool,
+    {
+        while let Some(tx_token) = device.transmit(self.iface.context().now()) {
+            let Some(packet) = forwarded_packets.lock().pop_front() else {
+                break;
+            };
+
+            if !dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token) {
+                forwarded_packets.lock().push_front(packet);
                 break;
             }
         }
@@ -1061,6 +1105,10 @@ impl<E: Ext> PollContext<'_, E> {
                     return (true, tx_token);
                 }
 
+                // `packet` owns a view into `tx_packet`'s payload through the
+                // parsed ICMP representation. Release that view before
+                // rewriting the raw packet endpoints below.
+                drop(packet);
                 tx_packet.set_endpoints(ipv4_repr.src_addr, ipv4_repr.dst_addr);
                 dispatch_raw_phy(
                     &tx_packet,

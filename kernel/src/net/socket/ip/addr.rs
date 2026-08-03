@@ -3,7 +3,7 @@
 use aster_bigtcp::wire::{IpAddress, IpEndpoint, Ipv4Address};
 
 use crate::{
-    net::{iface::BoundPort, socket::util::SocketAddr},
+    net::{iface::BoundPort, socket::util::{Ipv6Address as SocketIpv6Address, SocketAddr}},
     prelude::*,
 };
 
@@ -26,7 +26,12 @@ impl From<IpEndpoint> for SocketAddr {
         let port = endpoint.port;
         match endpoint.addr {
             IpAddress::Ipv4(addr) => SocketAddr::IPv4(addr, port),
-            // TODO: support IPv6
+            IpAddress::Ipv6(addr) => SocketAddr::IPv6(
+                SocketIpv6Address::new(addr.octets()),
+                port,
+                0,
+                0,
+            ),
         }
     }
 }

@@ -4,7 +4,7 @@ use super::SyscallReturn;
 use crate::{
     fs::file::{FileLike, file_table::FdFlags},
     net::socket::{
-        ip::{DatagramSocket, RawSocket, StreamSocket},
+        ip::{DatagramSocket, Ipv6RawSocket, RawSocket, StreamSocket},
         netlink::{
             NetlinkRouteSocket, NetlinkUeventSocket, StandardNetlinkProtocol, is_valid_protocol,
         },
@@ -68,6 +68,16 @@ pub fn sys_socket(domain: i32, type_: i32, protocol: i32, ctx: &Context) -> Resu
             }
             debug!("raw IPv4 protocol = {}", protocol);
             RawSocket::new(is_nonblocking, protocol)? as Arc<dyn FileLike>
+        }
+        (CSocketAddrFamily::AF_INET6, SockType::SOCK_RAW) => {
+            if !(1..=255).contains(&protocol) {
+                return_errno_with_message!(
+                    Errno::EPROTONOSUPPORT,
+                    "raw IPv6 protocol must be in the range 1..=255"
+                );
+            }
+            debug!("raw IPv6 protocol = {}", protocol);
+            Ipv6RawSocket::new(is_nonblocking, protocol)? as Arc<dyn FileLike>
         }
         (CSocketAddrFamily::AF_NETLINK, SockType::SOCK_RAW | SockType::SOCK_DGRAM) => {
             let netlink_family = StandardNetlinkProtocol::try_from(protocol as u32);

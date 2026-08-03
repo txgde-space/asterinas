@@ -186,6 +186,63 @@ FN_TEST(get_ipv4_route_dump)
 }
 END_TEST()
 
+FN_TEST(get_ipv6_route_dump)
+{
+	int sock_fd;
+	struct sockaddr_nl sa;
+	struct {
+		struct nlmsghdr hdr;
+		struct rtmsg route;
+	} req;
+	struct iovec iov;
+	struct msghdr msg;
+	int found_routes = 0;
+
+	sock_fd = TEST_SUCC(socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE));
+
+	memset(&sa, 0, sizeof(sa));
+	sa.nl_family = AF_NETLINK;
+	TEST_SUCC(bind(sock_fd, (struct sockaddr *)&sa, sizeof(sa)));
+
+	memset(&req, 0, sizeof(req));
+	req.hdr.nlmsg_len = NLMSG_LENGTH(sizeof(req.route));
+	req.hdr.nlmsg_type = RTM_GETROUTE;
+	req.hdr.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+	req.hdr.nlmsg_seq = 3;
+	req.route.rtm_family = AF_INET6;
+
+	iov = (struct iovec){ .iov_base = &req, .iov_len = req.hdr.nlmsg_len };
+	msg = (struct msghdr){
+		.msg_name = &sa,
+		.msg_namelen = sizeof(sa),
+		.msg_iov = &iov,
+		.msg_iovlen = 1,
+	};
+
+	TEST_SUCC(sendmsg(sock_fd, &msg, 0));
+
+	int found_done = 0;
+	while (!found_done) {
+		size_t recv_len = TEST_SUCC(recv(sock_fd, buffer, BUFFER_SIZE, 0));
+		struct nlmsghdr *nlh = (struct nlmsghdr *)buffer;
+
+		for (; NLMSG_OK(nlh, recv_len); nlh = NLMSG_NEXT(nlh, recv_len)) {
+			if (nlh->nlmsg_type == NLMSG_DONE) {
+				found_done = 1;
+				break;
+			}
+			TEST_RES(nlh->nlmsg_type, _ret == RTM_NEWROUTE);
+			TEST_RES(((struct rtmsg *)NLMSG_DATA(nlh))->rtm_family,
+				 _ret == AF_INET6);
+			found_routes++;
+		}
+	}
+
+	TEST_RES(found_routes, _ret >= 1);
+	TEST_SUCC(close(sock_fd));
+}
+END_TEST()
+
 int find_new_addr_until_done(char *buffer, size_t len, int *found_new_addr)
 {
 	struct nlmsghdr *nlh = (struct nlmsghdr *)buffer;
