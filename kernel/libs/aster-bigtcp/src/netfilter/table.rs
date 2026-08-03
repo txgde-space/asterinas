@@ -12,6 +12,7 @@ use super::{
 
 const MAX_FILTER_RULES: usize = 64;
 const MAX_NAT_RULES: usize = 8;
+const MAX_NAT_ICMP_CONNECTIONS: usize = 32;
 const IPV4_MIN_HEADER_LEN: usize = 20;
 
 static FILTER_RULES: [SpinLock<MutableFilterRules, BottomHalfDisabled>; 5] = [
@@ -56,6 +57,7 @@ struct MutableFilterRules {
 struct MutableNatRules {
     rules: [Option<NatRule>; MAX_NAT_RULES],
     len: usize,
+    icmp_connections: [Option<NatIcmpConnection>; MAX_NAT_ICMP_CONNECTIONS],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +86,21 @@ struct NatRule {
     to_port: Option<u16>,
     packets: u64,
     bytes: u64,
+}
+
+/// A bounded, address-only ICMP NAT mapping.
+///
+/// This is deliberately narrower than Linux conntrack: it gives the first
+/// usable stateful NAT path to Echo traffic without pretending that TCP/UDP
+/// port and lifecycle tracking are complete. `original_*` names the packet as
+/// received before NAT, while `translated_*` names the packet emitted after
+/// PREROUTING and POSTROUTING translations.
+#[derive(Clone, Copy, Debug)]
+struct NatIcmpConnection {
+    original_src: Ipv4Address,
+    original_dst: Ipv4Address,
+    translated_src: Ipv4Address,
+    translated_dst: Ipv4Address,
 }
 
 impl NatRule {
@@ -172,6 +189,24 @@ impl NatRule {
         self.src_port.is_none()
             && self.dst_port.is_none()
             && matches!(self.target, NatRuleTarget::Masquerade | NatRuleTarget::Snat)
+    }
+
+    fn matches_prerouting_icmp(self, ipv4_repr: &Ipv4Repr) -> bool {
+        if self.chain != NatRuleChain::PreRouting || !self.matches_common_ipv4(ipv4_repr) {
+            return false;
+        }
+
+        if self
+            .protocol
+            .is_some_and(|expected| expected != OutputRuleProtocol::Icmp)
+        {
+            return false;
+        }
+
+        self.src_port.is_none()
+            && self.dst_port.is_none()
+            && matches!(self.target, NatRuleTarget::Dnat)
+            && self.to_addr.is_some()
     }
 
     fn record_match(&mut self, bytes: usize) {
@@ -293,6 +328,7 @@ impl MutableNatRules {
         Self {
             rules: [None, None, None, None, None, None, None, None],
             len: 0,
+            icmp_connections: [None; MAX_NAT_ICMP_CONNECTIONS],
         }
     }
 
@@ -326,6 +362,13 @@ impl MutableNatRules {
             *rule = None;
         }
         self.len = next_len;
+
+        // A rule flush is also a NAT state reset. Keeping mappings that were
+        // created by deleted rules would make the control plane surprising
+        // and could route reply traffic through an obsolete translation.
+        for connection in &mut self.icmp_connections {
+            *connection = None;
+        }
     }
 
     fn len(&self) -> usize {
@@ -399,6 +442,114 @@ impl MutableNatRules {
         }
 
         ipv4_repr
+    }
+
+    fn rewrite_forwarded_prerouting(&mut self, ipv4_repr: &mut Ipv4Repr) {
+        if ipv4_repr.next_header != smoltcp::wire::IpProtocol::Icmp {
+            return;
+        }
+
+        // Reverse translations take precedence over new DNAT rules. A reply
+        // to an SNAT/MASQUERADE address is addressed to the router itself, so
+        // this happens before local-delivery selection in the caller.
+        if let Some(connection) = self.icmp_connections.iter().flatten().find(|connection| {
+            connection.translated_dst == ipv4_repr.src_addr
+                && connection.translated_src == ipv4_repr.dst_addr
+        }) {
+            ipv4_repr.src_addr = connection.original_dst;
+            ipv4_repr.dst_addr = connection.original_src;
+            return;
+        }
+
+        let original_src = ipv4_repr.src_addr;
+        let original_dst = ipv4_repr.dst_addr;
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+        let translated_dst = self.rules[..self.len]
+            .iter_mut()
+            .filter_map(Option::as_mut)
+            .find(|rule| rule.matches_prerouting_icmp(ipv4_repr))
+            .and_then(|rule| {
+                rule.record_match(packet_len);
+                rule.to_addr
+            });
+        let Some(translated_dst) = translated_dst else {
+            return;
+        };
+
+        ipv4_repr.dst_addr = translated_dst;
+        self.upsert_icmp_connection(NatIcmpConnection {
+            original_src,
+            original_dst,
+            translated_src: original_src,
+            translated_dst,
+        });
+    }
+
+    fn rewrite_forwarded_postrouting(
+        &mut self,
+        ipv4_repr: &mut Ipv4Repr,
+        masquerade_addr: Option<Ipv4Address>,
+    ) {
+        if ipv4_repr.next_header != smoltcp::wire::IpProtocol::Icmp {
+            return;
+        }
+
+        let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(ipv4_repr.payload_len);
+        let translated_src = self.rules[..self.len]
+            .iter_mut()
+            .filter_map(Option::as_mut)
+            .find(|rule| rule.matches_postrouting_icmp(ipv4_repr))
+            .and_then(|rule| {
+                let translated_src = match rule.target {
+                    NatRuleTarget::Masquerade => masquerade_addr,
+                    NatRuleTarget::Snat => rule.to_addr,
+                    NatRuleTarget::Dnat => None,
+                };
+                translated_src.inspect(|_| rule.record_match(packet_len))
+            });
+        let Some(translated_src) = translated_src else {
+            return;
+        };
+
+        let translated_dst = ipv4_repr.dst_addr;
+        let connection = self
+            .icmp_connections
+            .iter()
+            .flatten()
+            .find(|connection| {
+                connection.translated_src == ipv4_repr.src_addr
+                    && connection.translated_dst == translated_dst
+            })
+            .copied()
+            .unwrap_or(NatIcmpConnection {
+                original_src: ipv4_repr.src_addr,
+                original_dst: translated_dst,
+                translated_src: ipv4_repr.src_addr,
+                translated_dst,
+            });
+
+        ipv4_repr.src_addr = translated_src;
+        self.upsert_icmp_connection(NatIcmpConnection {
+            translated_src,
+            translated_dst,
+            ..connection
+        });
+    }
+
+    fn upsert_icmp_connection(&mut self, connection: NatIcmpConnection) {
+        if let Some(slot) = self.icmp_connections.iter_mut().find(|slot| {
+            slot.as_ref().is_some_and(|existing| {
+                existing.original_src == connection.original_src
+                    && existing.original_dst == connection.original_dst
+            })
+        }) {
+            *slot = Some(connection);
+            return;
+        }
+
+        if let Some(slot) = self.icmp_connections.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(connection);
+        }
     }
 }
 
@@ -868,6 +1019,29 @@ pub fn append_nat_rule(
 /// Flushes NAT rules from one chain or from the whole NAT table.
 pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
     NAT_RULES.lock().flush(chain);
+}
+
+/// Applies the stateful ICMP subset of NAT before an IPv4 forwarding decision.
+///
+/// This covers a DNAT rule for a new Echo flow and reverse translations for
+/// replies to previously translated flows. TCP/UDP NAT remains intentionally
+/// unsupported until transport-tuple tracking is added.
+pub fn rewrite_forwarded_ipv4_prerouting(ipv4_repr: &mut Ipv4Repr) {
+    NAT_RULES.lock().rewrite_forwarded_prerouting(ipv4_repr);
+}
+
+/// Applies the stateful ICMP subset of NAT after an egress interface is known.
+///
+/// A MASQUERADE target takes the selected interface's IPv4 address; an SNAT
+/// target takes its configured `--to-source` address. The resulting mapping
+/// is retained so the reverse Echo packet is restored at PREROUTING.
+pub fn rewrite_forwarded_ipv4_postrouting(
+    ipv4_repr: &mut Ipv4Repr,
+    masquerade_addr: Option<Ipv4Address>,
+) {
+    NAT_RULES
+        .lock()
+        .rewrite_forwarded_postrouting(ipv4_repr, masquerade_addr);
 }
 
 /// Applies POSTROUTING NAT to an IPv4 TCP packet representation.

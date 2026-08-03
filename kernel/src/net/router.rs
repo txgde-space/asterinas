@@ -17,13 +17,75 @@ use super::iface::iter_all_ifaces;
 use crate::prelude::println;
 
 static IPV4_FORWARDING_ENABLED: AtomicBool = AtomicBool::new(false);
+static STAGE3_ICMP_MASQUERADE_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE3_ICMP_DNAT_TEST: AtomicBool = AtomicBool::new(false);
+static STAGE3_ICMP_FORWARD_DROP_TEST: AtomicBool = AtomicBool::new(false);
 
 aster_cmdline::define_flag_param!("netfilter.ipv4_forward", IPV4_FORWARDING_ENABLED);
+aster_cmdline::define_flag_param!(
+    "netfilter.stage3_icmp_masquerade",
+    STAGE3_ICMP_MASQUERADE_TEST
+);
+aster_cmdline::define_flag_param!("netfilter.stage3_icmp_dnat", STAGE3_ICMP_DNAT_TEST);
+aster_cmdline::define_flag_param!(
+    "netfilter.stage3_icmp_forward_drop",
+    STAGE3_ICMP_FORWARD_DROP_TEST
+);
 
 /// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
 pub fn init() {
     if IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
         println!("netfilter-stage2b: ipv4 forwarding pipeline enabled");
+    }
+
+    // The TAP acceptance topology cannot run an interactive userspace command
+    // in the guest. Install the same in-kernel rule that its iptables parser
+    // would create, solely when this explicit test flag is present.
+    if STAGE3_ICMP_MASQUERADE_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PostRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Icmp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+            None,
+            aster_bigtcp::netfilter::NatRuleTarget::Masquerade,
+            None,
+            None,
+        );
+        if installed {
+            println!("netfilter-stage3: ICMP MASQUERADE acceptance rule installed");
+        }
+    }
+
+    if STAGE3_ICMP_DNAT_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_nat_rule(
+            aster_bigtcp::netfilter::NatRuleChain::PreRouting,
+            Some(aster_bigtcp::netfilter::OutputRuleProtocol::Icmp),
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 2, 15)),
+            None,
+            None,
+            aster_bigtcp::netfilter::NatRuleTarget::Dnat,
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            None,
+        );
+        if installed {
+            println!("netfilter-stage3: ICMP DNAT acceptance rule installed");
+        }
+    }
+
+    if STAGE3_ICMP_FORWARD_DROP_TEST.load(Ordering::Relaxed) {
+        let installed = aster_bigtcp::netfilter::append_filter_icmp_echo_rule(
+            aster_bigtcp::netfilter::HookPoint::Forward,
+            None,
+            Some(Ipv4Address::new(10, 0, 2, 2)),
+            Some(Ipv4Address::new(10, 0, 3, 2)),
+            aster_bigtcp::netfilter::OutputRuleTarget::Drop,
+        );
+        if installed {
+            println!("netfilter-stage3: ICMP FORWARD DROP acceptance rule installed");
+        }
     }
 }
 

@@ -9,8 +9,9 @@
 #  - OVMF: "on" or "off";
 #  - BOOT_METHOD: "qemu-direct", "grub-rescue-iso" or "grub-qcow2";
 #  - BOOT_PROTOCOL: "multiboot", "multiboot2", "linux-legacy32", "linux-efi-pe64" or "linux-efi-handover64";
-#  - NETDEV: "user" or "tap";
+#  - NETDEV: "user", "tap", or "router-tap";
 #  - MULTI_NET: "on" to attach a second user-mode network (development only);
+#  - ROUTER_TAP0, ROUTER_TAP1: host TAP names for NETDEV=router-tap;
 #  - VHOST: "off" or "on";
 #  - VSOCK: "off" or "on";
 #  - CONSOLE: "hvc0" to enable virtio console;
@@ -45,6 +46,20 @@ elif [ "$NETDEV" = "tap" ]; then
     QEMU_IFUP_SCRIPT_PATH=$THIS_SCRIPT_DIR/net/qemu-ifup.sh
     QEMU_IFDOWN_SCRIPT_PATH=$THIS_SCRIPT_DIR/net/qemu-ifdown.sh
     NETDEV_ARGS="-netdev tap,id=net01,script=$QEMU_IFUP_SCRIPT_PATH,downscript=$QEMU_IFDOWN_SCRIPT_PATH,vhost=$VHOST"
+    VIRTIO_NET_FEATURES=",csum=off,guest_csum=off,ctrl_guest_offloads=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,guest_ufo=off,host_tso4=off,host_tso6=off,host_ecn=off,host_ufo=off,mrg_rxbuf=off,ctrl_vq=off,ctrl_rx=off,ctrl_vlan=off,ctrl_rx_extra=off,guest_announce=off,ctrl_mac_addr=off,host_ufo=off,guest_uso4=off,guest_uso6=off,host_uso=off"
+elif [ "$NETDEV" = "router-tap" ]; then
+    if [ -z "$ROUTER_TAP0" ] || [ -z "$ROUTER_TAP1" ]; then
+        echo "NETDEV=router-tap requires ROUTER_TAP0 and ROUTER_TAP1" 1>&2
+        exit 1
+    fi
+    if [ "$1" = "tdx" ] || [ "$1" = "microvm" ]; then
+        echo "NETDEV=router-tap currently supports the normal QEMU scheme only" 1>&2
+        exit 1
+    fi
+    # The acceptance harness owns TAP lifecycle.  Do not let QEMU run the
+    # normal single-TAP ifup/down scripts, which would attach these endpoints
+    # to the host's default bridge instead of the isolated router bridges.
+    NETDEV_ARGS="-netdev tap,id=net01,ifname=$ROUTER_TAP0,script=no,downscript=no,vhost=$VHOST -netdev tap,id=net02,ifname=$ROUTER_TAP1,script=no,downscript=no,vhost=$VHOST"
     VIRTIO_NET_FEATURES=",csum=off,guest_csum=off,ctrl_guest_offloads=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,guest_ufo=off,host_tso4=off,host_tso6=off,host_ecn=off,host_ufo=off,mrg_rxbuf=off,ctrl_vq=off,ctrl_rx=off,ctrl_vlan=off,ctrl_rx_extra=off,guest_announce=off,ctrl_mac_addr=off,host_ufo=off,guest_uso4=off,guest_uso6=off,host_uso=off"
 else 
     echo "Invalid netdev" 1>&2
@@ -131,7 +146,7 @@ if [ "$1" = "iommu" ]; then
     # TODO: Add support for enabling IOMMU on AMD platforms
 fi
 
-if [ "$MULTI_NET" = "on" ]; then
+if [ "$MULTI_NET" = "on" ] || [ "$NETDEV" = "router-tap" ]; then
     MULTI_NET_DEVICE_ARGS="-device virtio-net-pci,netdev=net02,disable-legacy=on,disable-modern=off$VIRTIO_NET_FEATURES$IOMMU_DEV_EXTRA"
 fi
 
