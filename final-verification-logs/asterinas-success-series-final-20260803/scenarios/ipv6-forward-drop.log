@@ -1,0 +1,14 @@
+===== ipv6-forward-drop / test-ipv6-forward-drop =====
+Testing IPv6 ICMPv6 FORWARD DROP through Asterinas...
+PING fd00:0:0:3::2 (fd00:0:0:3::2) 56 data bytes
+
+--- fd00:0:0:3::2 ping statistics ---
+2 packets transmitted, 0 received, 100% packet loss, time 1028ms
+PING fd00:0:0:2::2 (fd00:0:0:2::2) 56 data bytes
+64 bytes from fd00:0:0:2::2: icmp_seq=1 ttl=63 time=1.07 ms
+64 bytes from fd00:0:0:2::2: icmp_seq=2 ttl=63 time=0.368 ms
+
+--- fd00:0:0:2::2 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1002ms
+rtt min/avg/max/mdev = 0.368/0.719/1.070/0.351 ms
+netfilter-stage11: IPv6 ICMPv6 FORWARD DROP passed

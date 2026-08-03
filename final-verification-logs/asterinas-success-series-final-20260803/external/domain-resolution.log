@@ -1,0 +1,7 @@
+--- Ubuntu IPv4 DNS resolution ---
+198.18.0.5      STREAM baidu.com
+198.18.0.5      DGRAM  
+198.18.0.5      RAW    
+198.18.0.7      STREAM qq.com
+198.18.0.7      DGRAM  
+198.18.0.7      RAW    

@@ -1,0 +1,10 @@
+===== tcp-dnat / test-tcp-dnat =====
+Testing TCP port-DNAT through Asterinas...
+stage4 TCP DNAT application reply passed
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on as2br1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+22:19:58.180423 IP 10.0.2.2.33001 > 10.0.3.2.9002: Flags [S], seq 1489370283, win 64240, options [mss 1460,sackOK,TS val 566230632 ecr 0,nop,wscale 10], length 0
+1 packet captured
+1 packet received by filter
+0 packets dropped by kernel
+netfilter-stage4: stateful TCP DNAT passed
