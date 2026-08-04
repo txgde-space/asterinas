@@ -7,7 +7,9 @@
 The page is deliberately local-only by default.  It reads the guest's
 NETFILTER_DEMO serial trace and sends a small, validated command language to
 the demo-step guest over its UNIX serial socket.  The guest still performs
-the actual iptables write, procfs snapshot, and ping operation.
+the actual iptables write, procfs snapshot, and ping operation.  Hostname
+lookups are performed here on Ubuntu and only the resulting numeric IPv4
+address is sent to the guest.
 """
 
 from __future__ import annotations
@@ -48,20 +50,71 @@ OPERATION_ALIASES = {
 
 # Targets on the isolated Stage 2 topology are deterministic and do not
 # depend on the Ubuntu VM's uplink or DNS.  Internet targets are kept as
-# explicit presets, but are labelled as requiring a guest default route/NAT.
+# explicit IPv4 presets; the dashboard intentionally does not issue IPv6 pings.
 PROBE_PRESETS = [
     {"id": "v4-left", "family": "4", "label": "IPv4 左端点", "target": "10.0.2.2", "scope": "local"},
     {"id": "v4-right", "family": "4", "label": "IPv4 右端点", "target": "10.0.3.2", "scope": "local"},
     {"id": "v4-router-left", "family": "4", "label": "IPv4 路由器左侧", "target": "10.0.2.15", "scope": "local"},
     {"id": "v4-router-right", "family": "4", "label": "IPv4 路由器右侧", "target": "10.0.3.15", "scope": "local"},
     {"id": "v4-internet", "family": "4", "label": "IPv4 外网（需上行）", "target": "1.1.1.1", "scope": "external"},
-    {"id": "v6-left", "family": "6", "label": "IPv6 左端点", "target": "fd00:0:0:2::2", "scope": "local"},
-    {"id": "v6-right", "family": "6", "label": "IPv6 右端点", "target": "fd00:0:0:3::2", "scope": "local"},
-    {"id": "v6-router-left", "family": "6", "label": "IPv6 路由器左侧", "target": "fd00:0:0:2::15", "scope": "local"},
-    {"id": "v6-router-right", "family": "6", "label": "IPv6 路由器右侧", "target": "fd00:0:0:3::15", "scope": "local"},
-    {"id": "v6-internet", "family": "6", "label": "IPv6 外网（需上行）", "target": "2606:4700:4700::1111", "scope": "external"},
 ]
 LOCAL_PROBE_TARGETS = {item["target"] for item in PROBE_PRESETS if item["scope"] == "local"}
+PROBE_SUITES = {
+    "local": "IPv4 isolated-topology smoke",
+    "external": "IPv4 external-uplink smoke",
+}
+HOSTNAME_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
+    """Resolve a numeric IPv4 address or hostname on the Ubuntu host.
+
+    The guest still receives only a numeric address, so this feature does not
+    require a DNS resolver inside Asterinas.  Only A/IPv4 answers are used;
+    IPv6 ping remains deliberately outside the Stage14 demo.
+    """
+    if not isinstance(target, str):
+        return False, "target must be an IPv4 address or hostname", ""
+    value = target.strip()
+    if not value or len(value) > 253:
+        return False, "target must be an IPv4 address or hostname", ""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        hostname = value.rstrip(".")
+        try:
+            ascii_name = hostname.encode("idna").decode("ascii")
+        except UnicodeError:
+            return False, "hostname cannot be IDNA encoded", ""
+        if (not ascii_name or len(ascii_name) > 253 or
+                any(not HOSTNAME_LABEL_RE.fullmatch(label)
+                    for label in ascii_name.split("."))):
+            return False, "target must be a valid hostname or IPv4 address", ""
+        try:
+            answers = socket.getaddrinfo(
+                ascii_name, None, socket.AF_INET, socket.SOCK_DGRAM
+            )
+        except socket.gaierror as exc:
+            return False, f"IPv4 DNS lookup failed for {value!r}: {exc}", ""
+        addresses: List[str] = []
+        for answer in answers:
+            sockaddr = answer[4]
+            if not sockaddr:
+                continue
+            candidate = sockaddr[0]
+            try:
+                parsed = ipaddress.IPv4Address(candidate)
+            except ipaddress.AddressValueError:
+                continue
+            rendered = str(parsed)
+            if rendered not in addresses:
+                addresses.append(rendered)
+        if not addresses:
+            return False, f"hostname {value!r} has no IPv4 A record", ""
+        return True, "", addresses[0]
+    if address.version != 4:
+        return False, "only IPv4 ping probes are exposed", ""
+    return True, "", str(address)
 
 
 def classify_probe(target: str, rc: int) -> Tuple[str, str]:
@@ -179,7 +232,9 @@ def empty_state(log_path: Path) -> dict:
                       for name in ("filter", "conntrack", "nat")},
         "actions": [], "flows": [], "controls": [], "probes": [],
         "probe_presets": PROBE_PRESETS,
+        "probe_suites": PROBE_SUITES,
         "probe_summary": {"passed": 0, "failed": 0, "last": None},
+        "resolutions": [],
         "rules": [], "chains": {}, "snapshots": {}, "snapshot": "waiting",
         "message": "Start demo-step in QEMU, then keep this page open.",
     }
@@ -385,24 +440,24 @@ def validate_rule(family: str, args: object) -> Tuple[bool, str, str]:
 
 
 def validate_ping(family: object, target: object, count: object, timeout: object) -> Tuple[bool, str, str]:
-    if family not in (4, 6, "4", "6"):
-        return False, "family must be 4 or 6", ""
-    if not isinstance(target, str) or len(target) > 64:
-        return False, "target must be a numeric IP address", ""
-    try:
-        address = ipaddress.ip_address(target)
-    except ValueError:
-        return False, "DNS names are intentionally disabled; enter a numeric IP", ""
-    version = int(family)
-    if address.version != version:
-        return False, f"target is IPv{address.version}, but IPv{version} was selected", ""
+    if family not in (4, "4"):
+        return False, "only IPv4 ping probes are exposed", ""
+    ok, error, resolved_target = resolve_ipv4_target(target)
+    if not ok:
+        return False, error, ""
     try:
         count_i, timeout_i = int(count), int(timeout)
     except (TypeError, ValueError):
         return False, "count and timeout must be integers", ""
     if not (1 <= count_i <= 5 and 1 <= timeout_i <= 5):
         return False, "count and timeout are limited to 1..5 seconds/packets", ""
-    return True, "", f"ping{version} {target} {count_i} {timeout_i}"
+    return True, "", f"ping4 {resolved_target} {count_i} {timeout_i}"
+
+
+def validate_probe_suite(suite: object) -> Tuple[bool, str, str]:
+    if suite not in PROBE_SUITES:
+        return False, "suite must be local or external", ""
+    return True, "", f"probe-suite {suite}"
 
 
 HTML = r'''<!doctype html>
@@ -411,12 +466,12 @@ HTML = r'''<!doctype html>
 <style>
 :root{color-scheme:dark;--bg:#08121f;--card:#12243d;--line:#2e527d;--text:#eaf2ff;--muted:#9db5d3;--blue:#75baff;--green:#42e09a;--red:#ff7184;--gold:#ffc56f}
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,var(--bg),#112a4b);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}header{padding:20px 26px 14px;border-bottom:1px solid var(--line)}h1{margin:0;font-size:24px}.sub{color:var(--muted)}main{max-width:1600px;margin:auto;padding:16px 22px 40px}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}.card{background:#12243dee;border:1px solid var(--line);border-radius:12px;padding:14px}.wide{grid-column:span 12}.half{grid-column:span 6}.third{grid-column:span 4}h2{font-size:15px;margin:0 0 10px;color:#cfe4ff}.topo{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}.node{min-width:170px;text-align:center;background:#183554;border:1px solid #4a7db3;border-radius:9px;padding:8px 12px}.node strong{display:block;color:var(--blue);font-size:16px}.arrow{color:var(--gold);font-size:21px}.badge{border-radius:999px;padding:2px 8px;background:#294463;color:var(--muted);font-size:12px}.pass{background:#123f30;color:var(--green)}.fail{background:#471f2d;color:var(--red)}.running{background:#4c371d;color:var(--gold)}.waiting{background:#253f62;color:var(--blue)}.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.current{flex:1;min-width:260px}button,select,input{border:1px solid #4b78ac;border-radius:7px;background:#183554;color:var(--text);padding:8px 10px;font:inherit}input{min-width:170px}button{cursor:pointer}button:hover{background:#24507b}button:disabled{opacity:.55;cursor:wait}.message{color:var(--gold);margin-top:9px}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}.route{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted)}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #2b496b;vertical-align:top}th{color:var(--muted);font-weight:500}.scroll{max-height:410px;overflow:auto}.flow{border-left:3px solid var(--blue);padding:6px 10px;margin:6px 0;background:#102039}.form{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}.hint{color:var(--muted);font-size:12px}.error{color:var(--red);min-height:20px}.pill{display:inline-block;padding:2px 7px;border-radius:999px;background:#294463}.small{font-size:12px;color:var(--muted)}@media(max-width:950px){.half,.third{grid-column:span 12}main{padding:12px}}
-</style></head><body><header><h1>Asterinas Netfilter Control Lab</h1><div class="sub">Live IPv4/IPv6 rules, counters, packet-flow events, manual rule control, and raw-socket ping probes.</div></header>
+</style></head><body><header><h1>Asterinas Netfilter Control Lab</h1><div class="sub">Live IPv4/IPv6 rules, counters, packet-flow events, manual rule control, and IPv4 raw-socket ping probes.</div></header>
 <main><div class="grid">
 <section class="card wide"><h2>Topology <span id="conn" class="badge">socket unknown</span></h2><div class="topo"><div class="node"><strong>Left host</strong><span id="left"></span></div><span class="arrow">→</span><div class="node"><strong>Asterinas router</strong><span id="router"></span></div><span class="arrow">→</span><div class="node"><strong>Right host</strong><span id="right"></span></div></div><div id="message" class="message"></div></section>
 <section class="card wide"><h2>Interactive walkthrough</h2><div class="controls"><span id="current" class="current"></span><button data-command="next">Next step</button><button data-command="reset">Reset</button><select id="scenario"><option value="filter">Filter scenario</option><option value="conntrack">Conntrack scenario</option><option value="nat">NAT scenario</option><option value="all">Run all</option></select><button id="runScenario">Run scenario</button><button data-command="snapshot">Refresh snapshot</button></div></section>
 <section class="card half"><h2>Manual iptables / ip6tables</h2><div class="form"><select id="ruleFamily"><option value="iptables">iptables (IPv4)</option><option value="ip6tables">ip6tables (IPv6)</option></select><input id="ruleArgs" class="mono" style="flex:1;min-width:300px" placeholder="-A OUTPUT -p icmp --icmp-type echo-request -j DROP"><button id="applyRule">Apply</button></div><div class="form"><button data-rule="-L">Refresh all tables</button><button data-rule="-F OUTPUT">Flush OUTPUT</button><button data-rule="-F FORWARD">Flush FORWARD</button><button data-rule="-Z">Zero counters</button></div><div class="form"><button data-preset="v4drop">IPv4 DROP echo</button><button data-preset="v4accept">IPv4 ACCEPT echo</button><button data-preset="v4nat">IPv4 MASQUERADE</button><button data-preset="v6drop">IPv6 FORWARD DROP</button></div><div class="hint">Supported subset is intentionally explicit: filter/nat, append/insert/delete/flush/policy/zero/list, and the matches implemented by the guest parser. This is not a shell.</div><div id="ruleError" class="error"></div></section>
-<section class="card half"><h2>Raw-socket ping probe</h2><div class="form"><select id="pingFamily"><option value="4">IPv4</option><option value="6">IPv6</option></select><input id="pingTarget" class="mono" value="1.1.1.1" placeholder="numeric IP only"><label>count <input id="pingCount" type="number" min="1" max="5" value="2" style="width:65px"></label><label>timeout <input id="pingTimeout" type="number" min="1" max="5" value="2" style="width:65px"></label><button id="ping">Ping in guest</button></div><div class="hint">The guest runs /bin/ping -4 or -6, so this exercises the corresponding raw ICMP/ICMPv6 socket path. DNS names are disabled for reproducibility.</div><div id="pingError" class="error"></div><div class="scroll"><table><thead><tr><th>Family</th><th>Target</th><th>Packets</th><th>Timeout</th><th>Result</th></tr></thead><tbody id="probes"></tbody></table></div></section>
+<section class="card half"><h2>IPv4 raw-socket ping probe</h2><div class="form"><select id="pingFamily"><option value="4">IPv4</option></select><input id="pingTarget" class="mono" value="1.1.1.1" placeholder="IPv4 address or hostname (e.g. baidu.com)"><label>count <input id="pingCount" type="number" min="1" max="5" value="2" style="width:65px"></label><label>timeout <input id="pingTimeout" type="number" min="1" max="5" value="2" style="width:65px"></label><button id="ping">Ping in guest</button></div><div class="form"><button id="pingLocalSuite">Run local IPv4</button><button id="pingExternalSuite">Run external IPv4</button></div><div class="hint">The dashboard resolves a hostname's IPv4 A record on Ubuntu, then sends only the numeric address to the guest's <span class="mono">/bin/ping -4</span>. Local smoke uses the isolated right endpoint; external smoke requires the reversible Ubuntu uplink helper (<span class="mono">sudo tools/net/netfilter-demo.sh setup-uplink</span>).</div><div id="pingError" class="error"></div><div class="scroll"><table><thead><tr><th>Family</th><th>Target</th><th>Packets</th><th>Timeout</th><th>Result</th></tr></thead><tbody id="probes"></tbody></table></div></section>
 <section class="card wide"><h2>Live rule snapshot <select id="familyFilter"><option value="all">All families</option><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select> <select id="snapshotSelect"></select></h2><div class="scroll"><table><thead><tr><th>Family</th><th>Table</th><th>Chain</th><th>#</th><th>pkts</th><th>bytes</th><th>match</th><th>target</th></tr></thead><tbody id="rules"></tbody></table></div></section>
 <section class="card third"><h2>Chain policies</h2><div id="chains" class="scroll"></div></section><section class="card third"><h2>Packet flows</h2><div id="flows" class="scroll"></div></section><section class="card third"><h2>Control / action timeline</h2><div id="timeline" class="scroll"></div></section>
 </div></main>
@@ -433,10 +488,10 @@ let events=[...s.actions.map(x=>({...x,type:'action'})),...s.controls.map(x=>({.
 $('probes').innerHTML=s.probes.slice().reverse().map(p=>`<tr><td>${esc(p.family)}</td><td class="mono">${esc(p.target)}</td><td>${p.count}</td><td>${p.timeout}s</td><td>${badge(p.status)} <span class="small">rc=${p.rc}</span></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No probes yet.</td></tr>';
 }
 async function refresh(){try{let r=await fetch('/api/state');render(await r.json());}catch(e){$('message').textContent='Dashboard request failed: '+e;}}
-async function control(payload){document.querySelectorAll('button').forEach(b=>b.disabled=true);$('ruleError').textContent='';$('pingError').textContent='';try{let r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'control failed');await refresh();}catch(e){$('message').textContent=String(e);$('ruleError').textContent=String(e);}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function control(payload){document.querySelectorAll('button').forEach(b=>b.disabled=true);$('ruleError').textContent='';$('pingError').textContent='';try{let r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'control failed');await refresh();if(d.resolved_target&&d.requested_target!==d.resolved_target)$('message').textContent=`Resolved ${d.requested_target} -> ${d.resolved_target}; guest IPv4 ping sent.`;}catch(e){$('message').textContent=String(e);$('ruleError').textContent=String(e);}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
 document.querySelectorAll('[data-command]').forEach(b=>b.onclick=()=>control({command:b.dataset.command}));$('runScenario').onclick=()=>control({command:'scenario',scenario:$('scenario').value});$('familyFilter').onchange=refresh;
 $('snapshotSelect').onchange=()=>{let x=$('snapshotSelect').value;if(x&&state.snapshots[x]){state.rules=state.snapshots[x].rules;state.chains=state.snapshots[x].chains;render(state);}};
-document.querySelectorAll('[data-rule]').forEach(b=>b.onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:b.dataset.rule}));document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{let p={v4drop:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j DROP'],v4accept:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT'],v4nat:['iptables','-t nat -A POSTROUTING -j MASQUERADE'],v6drop:['ip6tables','-A FORWARD -p ipv6-icmp --icmpv6-type echo-request -j DROP']}[b.dataset.preset];$('ruleFamily').value=p[0];$('ruleArgs').value=p[1];control({command:'rule',family:p[0],args:p[1]});});$('applyRule').onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:$('ruleArgs').value});$('pingFamily').onchange=()=>{$('pingTarget').value=$('pingFamily').value==='6'?'2606:4700:4700::1111':'1.1.1.1';};$('ping').onclick=()=>control({command:'ping',family:$('pingFamily').value,target:$('pingTarget').value,count:$('pingCount').value,timeout:$('pingTimeout').value});refresh();setInterval(refresh,700);
+document.querySelectorAll('[data-rule]').forEach(b=>b.onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:b.dataset.rule}));document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{let p={v4drop:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j DROP'],v4accept:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT'],v4nat:['iptables','-t nat -A POSTROUTING -j MASQUERADE'],v6drop:['ip6tables','-A FORWARD -p ipv6-icmp --icmpv6-type echo-request -j DROP']}[b.dataset.preset];$('ruleFamily').value=p[0];$('ruleArgs').value=p[1];control({command:'rule',family:p[0],args:p[1]});});$('applyRule').onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:$('ruleArgs').value});$('ping').onclick=()=>control({command:'ping',family:'4',target:$('pingTarget').value,count:$('pingCount').value,timeout:$('pingTimeout').value});$('pingLocalSuite').onclick=()=>control({command:'probe-suite',suite:'local'});$('pingExternalSuite').onclick=()=>control({command:'probe-suite',suite:'external'});refresh();setInterval(refresh,700);
 </script>
 <script>
 /* Stage13E: keep the guest trace immutable while making the live view usable
@@ -523,7 +578,9 @@ function renderProbeDiagnostics(s){
   const summary=s.probe_summary||{}; const last=summary.last;
   const hint=$('pingError'); if(!hint) return;
   hint.className='hint';
-  hint.textContent=last?(last.status==='PASS'?`Last probe passed: ${last.target}. ${summary.passed||0} passed, ${summary.failed||0} failed.`:`Last probe did not receive a reply: ${last.target}. ${last.reason||'Check routes and firewall rules.'}`):'Local presets exercise the isolated topology; Internet presets require a guest default route and NAT.';
+  const resolution=(s.resolutions||[]).slice(-1)[0];
+  const prefix=resolution?`Last DNS: ${resolution.requested} -> ${resolution.resolved}. `:'';
+  hint.textContent=prefix+(last?(last.status==='PASS'?`Last probe passed: ${last.target}. ${summary.passed||0} passed, ${summary.failed||0} failed.`:`Last probe did not receive a reply: ${last.target}. ${last.reason||'Check IPv4 routes and firewall rules.'}`):'Local IPv4 presets exercise the isolated topology; the external preset requires the guest default route and IPv4 NAT.');
 }
 function addPingPresets(){
   const family=$('pingFamily'),target=$('pingTarget'); if(!family||!target||$('pingPreset')) return;
@@ -532,9 +589,9 @@ function addPingPresets(){
   presets.forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.label+' · '+p.target;select.appendChild(o);});
   const form=target.closest('.form'); form.insertBefore(select,form.firstChild);
   const hint=document.createElement('div'); hint.id='pingNetworkHint'; hint.className='hint'; form.parentElement.insertBefore(hint,form.nextSibling);
-  function sync(id){const p=presets.find(x=>x.id===id)||presets.find(x=>x.id==='v4-right');if(!p)return;family.value=p.family;target.value=p.target;hint.textContent=p.scope==='local'?'Local topology target: requires stage2-router-topology setup and a live demo-step guest.':'External target: requires an uplink/default route in the guest; failure is expected in the isolated demo.';}
+  function sync(id){const p=presets.find(x=>x.id===id)||presets.find(x=>x.id==='v4-right');if(!p)return;family.value='4';target.value=p.target;hint.textContent=p.scope==='local'?'Local IPv4 target: requires stage2-router-topology setup and a live demo-step guest.':'External IPv4 target: requires setup-uplink and the guest default route.';}
   select.onchange=()=>sync(select.value);
-  family.onchange=()=>{const p=presets.find(x=>x.family===family.value&&x.scope==='local')||presets.find(x=>x.family===family.value);if(p){select.value=p.id;sync(p.id);}};
+  family.onchange=()=>{family.value='4';};
   select.value='v4-right'; sync(select.value);
 }
 const renderBase=render;
@@ -564,6 +621,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 state = empty_state(self.server.log_path)
                 state["connected"] = self.server.control.is_connected()
                 state["message"] = f"State reader error: {type(exc).__name__}: {exc}"
+            state["resolutions"] = self.server.resolution_snapshot()
             self._json(state)
             return
         if path in ("/", "/index.html"):
@@ -605,7 +663,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "error": error}, 400)
                 return
         elif command == "ping":
-            ok, error, wire = validate_ping(data.get("family"), data.get("target"), data.get("count"), data.get("timeout"))
+            requested_target = data.get("target")
+            resolved_target = ""
+            ok, error, resolved_target = resolve_ipv4_target(requested_target)
+            if not ok:
+                self._json({"ok": False, "error": error}, 400)
+                return
+            ok, error, wire = validate_ping(
+                data.get("family"), resolved_target,
+                data.get("count"), data.get("timeout")
+            )
+            if not ok:
+                self._json({"ok": False, "error": error}, 400)
+                return
+        elif command == "probe-suite":
+            ok, error, wire = validate_probe_suite(data.get("suite"))
             if not ok:
                 self._json({"ok": False, "error": error}, 400)
                 return
@@ -613,7 +685,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json({"ok": False, "error": "unsupported control command"}, 400)
             return
         ok, result = self.server.control.send(wire)
-        self._json({"ok": ok, "command": result} if ok else {"ok": False, "error": result}, 200 if ok else 409)
+        if not ok:
+            self._json({"ok": False, "error": result}, 409)
+            return
+        response = {"ok": True, "command": result}
+        if command == "ping":
+            requested_text = str(requested_target)
+            self.server.record_resolution(requested_text, resolved_target)
+            response.update(
+                requested_target=requested_text,
+                resolved_target=resolved_target,
+            )
+        self._json(response)
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -629,7 +712,30 @@ class DashboardServer(ThreadingHTTPServer):
     def __init__(self, address: Tuple[str, int], log_path: Path, socket_path: Path):
         self.log_path = log_path
         self.control = ControlChannel(socket_path)
+        self.resolution_lock = threading.Lock()
+        self.resolutions: List[dict] = []
+        self.resolution_log_path = log_path.with_name("netfilter-dashboard-resolution.log")
         super().__init__(address, DashboardHandler)
+
+    def record_resolution(self, requested: str, resolved: str) -> None:
+        entry = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "requested": requested,
+            "resolved": resolved,
+        }
+        with self.resolution_lock:
+            self.resolutions.append(entry)
+            del self.resolutions[:-40]
+            try:
+                self.resolution_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.resolution_log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+
+    def resolution_snapshot(self) -> List[dict]:
+        with self.resolution_lock:
+            return list(self.resolutions)
 
 
 def main() -> None:
