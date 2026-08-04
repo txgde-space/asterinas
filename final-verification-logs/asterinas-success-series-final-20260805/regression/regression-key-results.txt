@@ -1,0 +1,12 @@
+501:test_create_icmp_raw_socket summary: 2 tests passed, 0 tests failed
+508:test_create_multi_protocol_raw_sockets summary: 6 tests passed, 0 tests failed
+523:test_send_loopback_raw_udp_payload summary: 14 tests passed, 0 tests failed
+550:test_raw_ip_recverr_local_error_queue summary: 12 tests passed, 0 tests failed
+565:test_receive_local_port_unreachable summary: 14 tests passed, 0 tests failed
+575:test_send_loopback_echo_request summary: 9 tests passed, 0 tests failed
+587:test_send_hdrincl_loopback_echo_request summary: 11 tests passed, 0 tests failed
+604:test_send_ipproto_raw_hdrincl_preserves_options summary: 16 tests passed, 0 tests failed
+746:test_match_netfilter_iptables_command_compat summary: 28 tests passed, 0 tests failed
+945:test_run_userspace_iptables_check_replace summary: 20 tests passed, 0 tests failed
+3300:All test in /test/network passed.
+11139:All regression tests passed.

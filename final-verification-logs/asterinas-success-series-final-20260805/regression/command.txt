@@ -1,0 +1,7 @@
+AUTO_TEST=regression \
+CONSOLE=ttyS0 \
+LOG_LEVEL=error \
+ENABLE_KVM=1 \
+SMP=4 \
+RELEASE=1 \
+make run_kernel 2>&1 | tee target/regression-network.log
