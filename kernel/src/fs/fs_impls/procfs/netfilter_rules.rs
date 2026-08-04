@@ -1042,6 +1042,10 @@ fn parse_iptables_filter_rule(
         return_errno_with_message!(Errno::EINVAL, "--ctstate requires -m conntrack");
     }
 
+    if conntrack_state.is_some() && !conntrack_module {
+        return_errno_with_message!(Errno::EINVAL, "--ctstate requires -m conntrack");
+    }
+
     match protocol {
         aster_bigtcp::netfilter::OutputRuleProtocol::Icmp => {
             if !echo_request {
