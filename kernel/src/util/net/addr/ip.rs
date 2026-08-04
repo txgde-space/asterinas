@@ -3,7 +3,7 @@
 use aster_bigtcp::wire::{Ipv4Address, PortNum};
 
 use super::family::CSocketAddrFamily;
-use crate::prelude::*;
+use crate::{net::socket::util::Ipv6Address, prelude::*};
 
 /// IPv4 socket address.
 ///
@@ -43,6 +43,48 @@ impl From<CSocketAddrInet> for (Ipv4Address, PortNum) {
     }
 }
 
+/// IPv6 socket address.
+///
+/// The field order and widths match Linux's `struct sockaddr_in6`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+pub(super) struct CSocketAddrInet6 {
+    /// Address family (AF_INET6).
+    sin6_family: u16,
+    /// Port number.
+    sin6_port: CPortNum,
+    /// IPv6 flow label and traffic class.
+    sin6_flowinfo: u32,
+    /// IPv6 address.
+    sin6_addr: CInet6Addr,
+    /// Scope identifier for link-local addresses.
+    sin6_scope_id: u32,
+}
+
+impl From<(Ipv6Address, PortNum, u32, u32)> for CSocketAddrInet6 {
+    fn from(value: (Ipv6Address, PortNum, u32, u32)) -> Self {
+        Self {
+            sin6_family: CSocketAddrFamily::AF_INET6 as u16,
+            sin6_port: value.1.into(),
+            sin6_flowinfo: value.2,
+            sin6_addr: value.0.into(),
+            sin6_scope_id: value.3,
+        }
+    }
+}
+
+impl From<CSocketAddrInet6> for (Ipv6Address, PortNum, u32, u32) {
+    fn from(value: CSocketAddrInet6) -> Self {
+        debug_assert_eq!(value.sin6_family, CSocketAddrFamily::AF_INET6 as u16);
+        (
+            value.sin6_addr.into(),
+            value.sin6_port.into(),
+            value.sin6_flowinfo,
+            value.sin6_scope_id,
+        )
+    }
+}
+
 /// IPv4 4-byte address.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
@@ -61,6 +103,27 @@ impl From<Ipv4Address> for CInetAddr {
 impl From<CInetAddr> for Ipv4Address {
     fn from(value: CInetAddr) -> Self {
         Self::from(value.s_addr)
+    }
+}
+
+/// IPv6 16-byte address.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod)]
+struct CInet6Addr {
+    s6_addr: [u8; 16],
+}
+
+impl From<Ipv6Address> for CInet6Addr {
+    fn from(value: Ipv6Address) -> Self {
+        Self {
+            s6_addr: value.octets(),
+        }
+    }
+}
+
+impl From<CInet6Addr> for Ipv6Address {
+    fn from(value: CInet6Addr) -> Self {
+        Self::new(value.s6_addr)
     }
 }
 

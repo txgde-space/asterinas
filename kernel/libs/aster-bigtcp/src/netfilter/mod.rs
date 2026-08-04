@@ -8,6 +8,8 @@
 
 mod chain;
 mod hook;
+mod ipv6;
+mod ipv6_nat;
 mod rule;
 mod table;
 
@@ -15,10 +17,30 @@ pub use hook::{
     HookPoint, Ipv4PacketContext, Verdict, evaluate_ipv4, evaluate_ipv4_icmpv4, evaluate_ipv4_tcp,
     evaluate_ipv4_udp,
 };
+pub use ipv6::{
+    Ipv6PacketContext, Ipv6RuleProtocol, Ipv6RuleTarget, append_filter_rule as append_ipv6_filter_rule,
+    evaluate_ipv6, flush_rules as flush_ipv6_rules, set_chain_policy as set_ipv6_chain_policy,
+    write_snapshot as write_ipv6_filter_snapshot, zero_counters as zero_ipv6_counters,
+};
+pub use ipv6_nat::{
+    Ipv6NatRuleChain, Ipv6NatRuleTarget, append_nat_rule as append_ipv6_nat_rule,
+    apply_postrouting as apply_ipv6_nat_postrouting,
+    apply_prerouting as apply_ipv6_nat_prerouting,
+    flush_rules as flush_ipv6_nat_rules, write_snapshot as write_ipv6_nat_snapshot,
+    zero_counters as zero_ipv6_nat_counters,
+};
 pub use table::{
-    NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,
-    append_output_icmp_echo_rule, append_output_transport_rule, delete_output_rule,
-    flush_nat_rules, flush_output_rules, rewrite_ipv4_icmp_postrouting,
-    rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting, write_filter_table_snapshot,
+    ConntrackState, NatRuleChain, NatRuleTarget, OutputRuleProtocol, OutputRuleTarget, append_nat_rule,
+    append_filter_icmp_echo_rule, append_filter_transport_rule, append_output_icmp_echo_rule,
+    append_output_transport_rule, delete_filter_rule, delete_output_rule, flush_filter_rules,
+    check_filter_icmp_echo_rule, check_filter_transport_rule, check_nat_rule,
+    delete_nat_rule, flush_nat_rules, flush_output_rules, insert_filter_icmp_echo_rule,
+    insert_nat_rule,
+    insert_filter_transport_rule, rewrite_ipv4_icmp_postrouting,
+    rewrite_ipv4_tcp_postrouting, rewrite_ipv4_udp_postrouting,
+    replace_filter_icmp_echo_rule, replace_filter_transport_rule, replace_nat_rule,
+    rewrite_forwarded_ipv4_postrouting, rewrite_forwarded_ipv4_prerouting,
+    set_filter_chain_policy, write_filter_table_snapshot, zero_filter_rule_counters,
+    zero_nat_rule_counters,
     zero_output_rule_counters,
 };

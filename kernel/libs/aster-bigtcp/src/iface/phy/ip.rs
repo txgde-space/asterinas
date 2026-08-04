@@ -3,14 +3,16 @@
 use alloc::{string::String, sync::Arc};
 
 use smoltcp::{
-    iface::Config,
+    iface::{Config, Context},
     phy::{Device, TxToken},
-    wire::{self, Ipv4Cidr, Ipv4Packet},
+    wire::{self, Ipv4Cidr, Ipv4Packet, Ipv6Cidr},
 };
 
 use crate::{
     device::WithDevice,
     ext::Ext,
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet},
+    socket::RawIpv4TxPacket,
     iface::{
         Iface, ScheduleNextPoll,
         common::{IfaceCommon, InterfaceFlags, InterfaceType},
@@ -28,6 +30,7 @@ impl<D: WithDevice, E: Ext> IpIface<D, E> {
     pub fn new(
         driver: D,
         ip_cidr: Ipv4Cidr,
+        ipv6_cidr: Option<Ipv6Cidr>,
         name: String,
         sched_poll: E::ScheduleNextPoll,
         type_: InterfaceType,
@@ -41,11 +44,14 @@ impl<D: WithDevice, E: Ext> IpIface<D, E> {
             interface.update_ip_addrs(|ip_addrs| {
                 debug_assert!(ip_addrs.is_empty());
                 ip_addrs.push(wire::IpCidr::Ipv4(ip_cidr)).unwrap();
+                if let Some(ipv6_cidr) = ipv6_cidr {
+                    ip_addrs.push(wire::IpCidr::Ipv6(ipv6_cidr)).unwrap();
+                }
             });
             interface
         });
 
-        let common = IfaceCommon::new(name, type_, flags, interface, sched_poll);
+        let common = IfaceCommon::new(name, type_, flags, None, None, interface, sched_poll);
 
         Arc::new(Self { driver, common })
     }
@@ -74,6 +80,21 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
                         );
                     });
                 },
+                |pkt: &ForwardedIpv4Packet, iface_cx, tx_token| {
+                    tx_token.consume(pkt.buffer_len(), |buffer| {
+                        let mut ip_packet = Ipv4Packet::new_unchecked(buffer);
+                        pkt.ip_repr.emit(&mut ip_packet, &iface_cx.checksum_caps());
+                        ip_packet.payload_mut().copy_from_slice(&pkt.payload);
+                    });
+                    true
+                },
+                |pkt: &ForwardedIpv6Packet, _iface_cx, tx_token| {
+                    tx_token.consume(pkt.buffer_len(), |buffer| {
+                        buffer.copy_from_slice(pkt.bytes());
+                    });
+                    true
+                },
+                |pkt, iface_cx, tx_token| self.dispatch_raw(pkt, iface_cx, tx_token),
             );
             self.common.sched_poll().schedule_next_poll(next_poll);
         });
@@ -82,5 +103,18 @@ impl<D: WithDevice + 'static, E: Ext> Iface<E> for IpIface<D, E> {
     fn mtu(&self) -> usize {
         self.driver
             .with(|device| device.capabilities().max_transmission_unit)
+    }
+}
+
+impl<D: WithDevice + 'static, E: Ext> IpIface<D, E> {
+    fn dispatch_raw<T: TxToken>(
+        &self,
+        pkt: &RawIpv4TxPacket,
+        iface_cx: &mut Context,
+        tx_token: T,
+    ) {
+        tx_token.consume(pkt.buffer_len(), |buffer| {
+            pkt.emit_ipv4(buffer, &iface_cx.checksum_caps());
+        });
     }
 }

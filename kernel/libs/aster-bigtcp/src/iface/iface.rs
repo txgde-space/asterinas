@@ -2,10 +2,14 @@
 
 use alloc::sync::Arc;
 
-use smoltcp::wire::{Ipv4Address, Ipv4Cidr};
+use smoltcp::wire::{Ipv4Address, Ipv4Cidr, Ipv6Address, Ipv6Cidr};
 
 use super::{BoundPort, InterfaceFlags, InterfaceType, port::BindPortConfig};
-use crate::{errors::BindError, ext::Ext};
+use crate::{
+    errors::BindError,
+    ext::Ext,
+    forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet},
+};
 
 /// A network interface.
 ///
@@ -13,12 +17,22 @@ use crate::{errors::BindError, ext::Ext};
 /// computer to a network. Network interfaces can be physical components like Ethernet ports or
 /// wireless adapters. They can also be virtual interfaces created by software, such as virtual
 /// private network (VPN) connections.
-pub trait Iface<E>: internal::IfaceInternal<E> + Send + Sync {
+pub trait Iface<E: Ext>: internal::IfaceInternal<E> + Send + Sync {
     /// Transmits or receives packets queued in the iface, and updates socket status accordingly.
     fn poll(&self);
 
     /// Returns the maximum transmission unit.
     fn mtu(&self) -> usize;
+
+    /// Queues a routed IPv4 datagram for egress from this interface.
+    fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
+        self.common().enqueue_forwarded_ipv4(packet)
+    }
+
+    /// Queues a routed IPv6 datagram for egress from this interface.
+    fn enqueue_forwarded_ipv6(&self, packet: ForwardedIpv6Packet) -> bool {
+        self.common().enqueue_forwarded_ipv6(packet)
+    }
 }
 
 impl<E: Ext> dyn Iface<E> {
@@ -76,6 +90,31 @@ impl<E: Ext> dyn Iface<E> {
     /// or both will return `None`.
     pub fn prefix_len(&self) -> Option<u8> {
         self.common().prefix_len()
+    }
+
+    /// Gets the configured IPv4 next-hop gateway, if any.
+    pub fn ipv4_gateway(&self) -> Option<Ipv4Address> {
+        self.common().ipv4_gateway()
+    }
+
+    /// Gets the configured IPv6 address of the iface, if any.
+    pub fn ipv6_addr(&self) -> Option<Ipv6Address> {
+        self.common().ipv6_addr()
+    }
+
+    /// Retrieves the prefix length of the interface's IPv6 address.
+    pub fn ipv6_prefix_len(&self) -> Option<u8> {
+        self.common().ipv6_prefix_len()
+    }
+
+    /// Gets the configured IPv6 next-hop gateway, if any.
+    pub fn ipv6_gateway(&self) -> Option<Ipv6Address> {
+        self.common().ipv6_gateway()
+    }
+
+    /// Returns the configured IPv6 CIDR, if this interface has one.
+    pub fn ipv6_cidr(&self) -> Option<Ipv6Cidr> {
+        Some(Ipv6Cidr::new(self.ipv6_addr()?, self.ipv6_prefix_len()?))
     }
 
     /// Gets the broadcast address of the iface, if any.

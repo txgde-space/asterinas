@@ -30,15 +30,17 @@ enum AddrAttrClass {
 #[derive(Debug)]
 pub enum AddrAttr {
     Address([u8; 4]),
+    AddressV6([u8; 16]),
     Local([u8; 4]),
+    LocalV6([u8; 16]),
     Label(CString),
 }
 
 impl AddrAttr {
     fn class(&self) -> AddrAttrClass {
         match self {
-            AddrAttr::Address(_) => AddrAttrClass::ADDRESS,
-            AddrAttr::Local(_) => AddrAttrClass::LOCAL,
+            AddrAttr::Address(_) | AddrAttr::AddressV6(_) => AddrAttrClass::ADDRESS,
+            AddrAttr::Local(_) | AddrAttr::LocalV6(_) => AddrAttrClass::LOCAL,
             AddrAttr::Label(_) => AddrAttrClass::LABEL,
         }
     }
@@ -51,8 +53,8 @@ impl Attribute for AddrAttr {
 
     fn payload_as_bytes(&self) -> &[u8] {
         match self {
-            AddrAttr::Address(address) => address,
-            AddrAttr::Local(local) => local,
+            AddrAttr::Address(address) | AddrAttr::Local(address) => address,
+            AddrAttr::AddressV6(address) | AddrAttr::LocalV6(address) => address,
             AddrAttr::Label(label) => label.as_bytes_with_nul(),
         }
     }

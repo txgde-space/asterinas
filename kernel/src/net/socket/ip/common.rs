@@ -9,13 +9,19 @@ use aster_bigtcp::{
 use crate::{
     net::{
         iface::{BoundPort, Iface, iter_all_ifaces, loopback_iface},
+        router::lookup_ipv4_iface,
         socket::util::check_port_privilege,
     },
     prelude::*,
 };
 
 pub(super) fn get_iface_to_bind(ip_addr: &IpAddress) -> Option<Arc<Iface>> {
-    let IpAddress::Ipv4(ipv4_addr) = ip_addr;
+    let IpAddress::Ipv4(ipv4_addr) = ip_addr else {
+        // The current transport socket tables are IPv4-only. Do not bind an
+        // IPv6 endpoint to an IPv4 interface until the IPv6 transport path is
+        // enabled.
+        return None;
+    };
     if *ipv4_addr == Ipv4Address::UNSPECIFIED {
         // Linux 将 INADDR_ANY 视为服务端通配绑定。Asterinas 目前的 socket
         // 表还未跨接口共享，因此这里选择一个可提供 IPv4 服务的默认接口；
@@ -40,15 +46,17 @@ pub(super) fn get_iface_to_bind(ip_addr: &IpAddress) -> Option<Arc<Iface>> {
 /// If the remote address is the same as that of some iface, we will use the iface.
 /// Otherwise, we will use a default interface.
 fn get_ephemeral_iface(remote_ip_addr: &IpAddress) -> Arc<Iface> {
-    let IpAddress::Ipv4(remote_ipv4_addr) = remote_ip_addr;
+    let IpAddress::Ipv4(remote_ipv4_addr) = remote_ip_addr else {
+        return default_service_iface();
+    };
     if let Some(iface) = iter_all_ifaces().find(|iface| {
-        if let Some(iface_ipv4_addr) = iface.ipv4_addr() {
-            iface_ipv4_addr == *remote_ipv4_addr
-        } else {
-            false
-        }
+        iface.ipv4_addr().is_some_and(|address| address == *remote_ipv4_addr)
     }) {
         return iface.clone();
+    }
+
+    if let Some(iface) = lookup_ipv4_iface(*remote_ipv4_addr, None) {
+        return iface;
     }
 
     // FIXME: 当前先选择第一个可提供 IPv4 服务的接口；后续应按路由表选择默认接口。

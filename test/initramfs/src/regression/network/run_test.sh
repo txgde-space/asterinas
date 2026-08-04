@@ -12,8 +12,20 @@ sleep 0.2
 sleep 0.2
 ./udp_client
 
+rm -f /tmp/test.sock
 ./unix_server &
-sleep 0.2
+unix_server_ready=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	if [ -e /tmp/test.sock ]; then
+		unix_server_ready=1
+		break
+	fi
+	sleep 0.1
+done
+if [ "$unix_server_ready" -ne 1 ]; then
+	echo "unix_server did not create /tmp/test.sock" >&2
+	exit 1
+fi
 ./unix_client
 
 ./linux_socket_compat_common
@@ -21,6 +33,7 @@ sleep 0.2
 ./icmp_raw_socket
 ./netfilter_rules
 sh ./ping_loopback.sh
+sh ./route_dump.sh
 ./listen_autobind
 ./listen_backlog
 ./inaddr_any

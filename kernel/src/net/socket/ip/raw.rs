@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use alloc::collections::VecDeque;
 use core::{
     fmt,
     sync::atomic::{AtomicBool, Ordering},
@@ -20,11 +21,15 @@ use crate::{
     fs::{pseudofs::SockFs, vfs::path::Path},
     net::{
         iface::{RawIpSocket as BigtcpRawIpSocket, iter_all_ifaces},
+        router::lookup_ipv4_iface,
         socket::{
             Socket,
             options::SocketOption,
             private::SocketPrivate,
-            util::{MessageHeader, SendRecvFlags, SocketAddr},
+            util::{
+                ControlMessage, IpControlMessage, IpExtendedError, MessageHeader, SendRecvFlags,
+                SocketAddr,
+            },
         },
     },
     prelude::*,
@@ -33,37 +38,43 @@ use crate::{
         posix_thread::AsPosixThread,
         signal::{PollHandle, Pollable, Pollee},
     },
-    util::{MultiRead, MultiWrite, net::Protocol},
+    util::{MultiRead, MultiWrite},
 };
 
 /// An IPv4 raw socket.
 ///
-/// This initial implementation establishes the Linux ABI and privilege boundary. Packet queues
-/// will be connected to `aster-bigtcp` in the next implementation stage.
+/// The socket owns one `aster-bigtcp` raw queue per registered IPv4 interface;
+/// the queues preserve the requested protocol number on both ingress and
+/// egress.
 pub struct RawSocket {
-    protocol: Protocol,
+    /// `None` represents Linux's IPPROTO_RAW send-any-protocol socket.
+    protocol: Option<IpProtocol>,
     raw_sockets: Vec<BigtcpRawIpSocket>,
     local_endpoint: RwLock<Option<IpEndpoint>>,
     remote_endpoint: RwLock<Option<IpEndpoint>>,
     is_nonblocking: AtomicBool,
     ip_options: RwLock<IpOptionSet>,
+    error_queue: RwLock<VecDeque<RawSocketError>>,
     pollee: Pollee,
     pseudo_path: Path,
 }
 
 impl RawSocket {
     /// Creates an IPv4 raw socket after checking `CAP_NET_RAW`.
-    pub fn new(is_nonblocking: bool, protocol: Protocol) -> Result<Arc<Self>> {
+    pub fn new(is_nonblocking: bool, protocol: i32) -> Result<Arc<Self>> {
         // RAW_SOCKET_STAGE1: Keep the capability check at the creation boundary so no
         // unprivileged file descriptor can later gain raw packet access.
         check_raw_socket_privilege()?;
+
+        let protocol = raw_ip_protocol(protocol)?;
+        let registered_protocol = protocol.unwrap_or(IpProtocol::Unknown(255));
 
         let pollee = Pollee::new();
         let raw_sockets = iter_all_ifaces()
             .map(|iface| {
                 let observer: Arc<dyn SocketEventObserver> =
                     Arc::new(RawIpObserver::new(pollee.clone()));
-                BigtcpRawIpSocket::new(iface.clone(), IpProtocol::Icmp, observer)
+                BigtcpRawIpSocket::new(iface.clone(), registered_protocol, observer)
             })
             .collect();
 
@@ -74,12 +85,42 @@ impl RawSocket {
             remote_endpoint: RwLock::new(None),
             is_nonblocking: AtomicBool::new(is_nonblocking),
             ip_options: RwLock::new(IpOptionSet::new_raw()),
+            error_queue: RwLock::new(VecDeque::new()),
             pollee,
             pseudo_path: SockFs::new_path(),
         }))
     }
 
-    fn try_recv(&self, writer: &mut dyn MultiWrite) -> Result<(usize, SocketAddr)> {
+    fn try_recv(
+        &self,
+        writer: &mut dyn MultiWrite,
+        flags: SendRecvFlags,
+    ) -> Result<(usize, MessageHeader)> {
+        if flags.contains(SendRecvFlags::MSG_ERRQUEUE) {
+            let error = self
+                .error_queue
+                .write()
+                .pop_front()
+                .ok_or_else(|| Error::with_message(Errno::EAGAIN, "the error queue is empty"))?;
+            self.pollee.invalidate();
+            return Ok((
+                0,
+                MessageHeader::new(
+                    Some(SocketAddr::IPv4(error.destination, 0)),
+                    vec![ControlMessage::Ip(IpControlMessage::ExtendedError(
+                        error.extended,
+                    ))],
+                ),
+            ));
+        }
+
+        if self.protocol.is_none() {
+            return_errno_with_message!(
+                Errno::EOPNOTSUPP,
+                "IPPROTO_RAW sockets are send-only"
+            );
+        }
+
         let packet = self
             .raw_sockets
             .iter()
@@ -90,16 +131,22 @@ impl RawSocket {
         let received_bytes = writer.write(&mut VmReader::from(packet.bytes()))?;
         self.pollee.invalidate();
 
-        Ok((received_bytes, SocketAddr::IPv4(source, 0)))
+        Ok((
+            received_bytes,
+            MessageHeader::new(Some(SocketAddr::IPv4(source, 0)), Vec::new()),
+        ))
     }
 
     fn check_io_events(&self) -> IoEvents {
         let mut events = IoEvents::empty();
-        if self.raw_sockets.iter().any(BigtcpRawIpSocket::can_recv) {
+        if self.protocol.is_some() && self.raw_sockets.iter().any(BigtcpRawIpSocket::can_recv) {
             events |= IoEvents::IN;
         }
         if self.raw_sockets.iter().any(BigtcpRawIpSocket::can_send) {
             events |= IoEvents::OUT;
+        }
+        if !self.error_queue.read().is_empty() {
+            events |= IoEvents::ERR;
         }
         events
     }
@@ -119,10 +166,7 @@ impl RawSocket {
             control_messages,
         } = message_header;
 
-        if !control_messages.is_empty() {
-            // TODO: Support control messages such as IP_TTL/IP_TOS on raw sockets.
-            warn!("sending raw socket control message is not supported");
-        }
+        let (control_tos, control_ttl) = raw_control_options(&control_messages)?;
 
         let destination = match addr {
             Some(SocketAddr::IPv4(destination, _)) => destination,
@@ -139,42 +183,92 @@ impl RawSocket {
                         "raw IPv4 sockets require an IPv4 destination address",
                     )
                 })?;
-                let IpAddress::Ipv4(destination) = endpoint.addr;
+                let IpAddress::Ipv4(destination) = endpoint.addr else {
+                    return_errno_with_message!(
+                        Errno::EAFNOSUPPORT,
+                        "raw IPv4 sockets require an IPv4 destination address"
+                    );
+                };
                 destination
             }
         };
-
-        if !matches!(self.protocol, Protocol::IPPROTO_ICMP) {
-            return_errno_with_message!(
-                Errno::EOPNOTSUPP,
-                "only IPPROTO_ICMP raw transmission is currently supported"
-            );
-        }
 
         let mut payload = vec![0; reader.sum_lens()];
         let sent_bytes = reader.read(&mut VmWriter::from(payload.as_mut_slice()))?;
         payload.truncate(sent_bytes);
 
-        let destination = if self.ip_options.read().hdrincl() {
+        let options = *self.ip_options.read();
+        let parsed_header = if options.hdrincl() {
             // RAW_SOCKET_STAGE4: `IP_HDRINCL` users provide the IPv4 header.
-            // Stage 4 extracts the ICMP payload and route destination while the
-            // lower stack still owns final IPv4 header emission.
-            let parsed_packet = parse_hdrincl_icmp_packet(&payload)?;
+            let parsed_packet = parse_hdrincl_ipv4_packet(&payload)?;
+            if self.protocol.is_some_and(|protocol| protocol != parsed_packet.protocol) {
+                return_errno_with_message!(
+                    Errno::EINVAL,
+                    "IP_HDRINCL protocol does not match the raw socket"
+                );
+            }
             payload.truncate(parsed_packet.total_len);
             payload.drain(..parsed_packet.header_len);
-            parsed_packet.destination
+            Some(parsed_packet)
         } else {
-            destination
+            None
         };
+
+        let destination = parsed_header
+            .as_ref()
+            .map_or(destination, |packet| packet.destination);
+        let protocol = parsed_header.as_ref().map_or_else(
+            || {
+                self.protocol.ok_or_else(|| {
+                    Error::with_message(
+                        Errno::EINVAL,
+                        "IPPROTO_RAW requires IP_HDRINCL to select a protocol",
+                    )
+                })
+            },
+            |packet| Ok(packet.protocol),
+        )?;
+
+        if destination == Ipv4Address::UNSPECIFIED {
+            self.queue_local_error(destination, Errno::ENETUNREACH);
+            return_errno_with_message!(Errno::ENETUNREACH, "the IPv4 destination is unspecified");
+        }
+
+        if lookup_ipv4_iface(destination, None).is_none() {
+            self.queue_local_error(destination, Errno::ENETUNREACH);
+            return_errno_with_message!(Errno::ENETUNREACH, "no IPv4 route to destination");
+        }
 
         let remote_endpoint = IpEndpoint::new(IpAddress::Ipv4(destination), 0);
         let local_endpoint = self
             .local_endpoint
             .read()
             .unwrap_or_else(|| get_ephemeral_endpoint(&remote_endpoint));
-        let IpAddress::Ipv4(local_addr) = local_endpoint.addr;
+        let IpAddress::Ipv4(local_addr) = local_endpoint.addr else {
+            return_errno_with_message!(
+                Errno::EAFNOSUPPORT,
+                "raw IPv4 sockets require an IPv4 local address"
+            );
+        };
+        let source = parsed_header
+            .as_ref()
+            .map_or(local_addr, |packet| {
+                if packet.source == Ipv4Address::UNSPECIFIED {
+                    local_addr
+                } else {
+                    packet.source
+                }
+            });
+        let traffic_class = parsed_header.as_ref().map_or(
+            control_tos.unwrap_or(options.tos()),
+            |packet| packet.traffic_class,
+        );
+        let hop_limit = parsed_header.as_ref().map_or(
+            control_ttl.unwrap_or(options.ttl().get()),
+            |packet| packet.hop_limit,
+        );
 
-        let raw_socket = self
+        let Some(raw_socket) = self
             .raw_sockets
             .iter()
             .find(|socket| {
@@ -182,16 +276,54 @@ impl RawSocket {
                     .local_ipv4_addr()
                     .is_some_and(|addr| addr == local_addr)
             })
-            .ok_or_else(|| Error::with_message(Errno::ENETUNREACH, "no raw socket route"))?;
+        else {
+            self.queue_local_error(destination, Errno::ENETUNREACH);
+            return_errno_with_message!(Errno::ENETUNREACH, "no raw socket route");
+        };
 
-        // RAW_SOCKET_STAGE3: Userspace supplies the ICMP payload for
-        // `IPPROTO_ICMP`; the IPv4 header is still owned by the network stack.
-        if !raw_socket.send_ipv4(destination, payload) {
+        // Userspace supplies the protocol payload; the IPv4 header is still
+        // owned by the network stack unless IP_HDRINCL was requested.
+        if !raw_socket.send_ipv4(
+            destination,
+            source,
+            protocol,
+            traffic_class,
+            hop_limit,
+            payload,
+        ) {
+            self.queue_local_error(destination, Errno::ENOBUFS);
             return_errno_with_message!(Errno::ENOBUFS, "raw socket transmit queue is full");
         }
 
         self.pollee.invalidate();
         Ok(sent_bytes)
+    }
+
+    fn queue_local_error(&self, destination: Ipv4Address, errno: Errno) {
+        if !self.ip_options.read().recverr() {
+            return;
+        }
+
+        const SO_EE_ORIGIN_LOCAL: u8 = 1;
+        const MAX_ERROR_QUEUE: usize = 16;
+        let mut queue = self.error_queue.write();
+        if queue.len() >= MAX_ERROR_QUEUE {
+            queue.pop_front();
+        }
+        queue.push_back(RawSocketError {
+            destination,
+            extended: IpExtendedError {
+                errno: errno as u32,
+                origin: SO_EE_ORIGIN_LOCAL,
+                type_: 0,
+                code: 0,
+                pad: 0,
+                info: 0,
+                data: 0,
+            },
+        });
+        drop(queue);
+        self.pollee.notify(IoEvents::ERR);
     }
 }
 
@@ -269,12 +401,16 @@ impl Socket for RawSocket {
     fn recvmsg(
         &self,
         writer: &mut dyn MultiWrite,
-        _flags: SendRecvFlags,
+        flags: SendRecvFlags,
     ) -> Result<(usize, MessageHeader)> {
         // RAW_SOCKET_STAGE2: Blocking behavior is delegated to the common socket
         // wait path, while queue access itself remains a nonblocking operation.
-        let (received_bytes, source) = self.block_on(IoEvents::IN, || self.try_recv(writer))?;
-        Ok((received_bytes, MessageHeader::new(Some(source), Vec::new())))
+        let events = if flags.contains(SendRecvFlags::MSG_ERRQUEUE) {
+            IoEvents::ERR
+        } else {
+            IoEvents::IN
+        };
+        self.block_on(events, || self.try_recv(writer, flags))
     }
 
     fn get_option(&self, option: &mut dyn SocketOption) -> Result<()> {
@@ -308,16 +444,25 @@ impl fmt::Debug for RawSocket {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct RawSocketError {
+    destination: Ipv4Address,
+    extended: IpExtendedError,
+}
+
 struct HdrinclPacket {
     destination: Ipv4Address,
+    source: Ipv4Address,
+    protocol: IpProtocol,
+    traffic_class: u8,
+    hop_limit: u8,
     header_len: usize,
     total_len: usize,
 }
 
-fn parse_hdrincl_icmp_packet(packet: &[u8]) -> Result<HdrinclPacket> {
+fn parse_hdrincl_ipv4_packet(packet: &[u8]) -> Result<HdrinclPacket> {
     const IPV4_MIN_HEADER_LEN: usize = 20;
     const IPV4_VERSION: u8 = 4;
-    const ICMP_PROTOCOL: u8 = 1;
 
     if packet.len() < IPV4_MIN_HEADER_LEN {
         return_errno_with_message!(Errno::EINVAL, "IP_HDRINCL packet is too short");
@@ -328,27 +473,98 @@ fn parse_hdrincl_icmp_packet(packet: &[u8]) -> Result<HdrinclPacket> {
     if version != IPV4_VERSION || header_len < IPV4_MIN_HEADER_LEN || header_len > packet.len() {
         return_errno_with_message!(Errno::EINVAL, "IP_HDRINCL IPv4 header is invalid");
     }
+    if header_len != IPV4_MIN_HEADER_LEN {
+        return_errno_with_message!(
+            Errno::EOPNOTSUPP,
+            "IP_HDRINCL IPv4 options are not supported yet"
+        );
+    }
 
     let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
     if total_len < header_len || total_len > packet.len() {
         return_errno_with_message!(Errno::EINVAL, "IP_HDRINCL total length is invalid");
     }
 
-    if packet[9] != ICMP_PROTOCOL {
-        return_errno_with_message!(
-            Errno::EOPNOTSUPP,
-            "only IPPROTO_ICMP IP_HDRINCL packets are supported"
-        );
-    }
-
     Ok(HdrinclPacket {
         destination: Ipv4Address::new(packet[16], packet[17], packet[18], packet[19]),
+        source: Ipv4Address::new(packet[12], packet[13], packet[14], packet[15]),
+        protocol: ip_protocol_from_number(packet[9]),
+        traffic_class: packet[1],
+        hop_limit: packet[8],
         header_len,
         total_len,
     })
 }
 
-fn check_raw_socket_privilege() -> Result<()> {
+fn raw_ip_protocol(protocol: i32) -> Result<Option<IpProtocol>> {
+    let protocol = u8::try_from(protocol).map_err(|_| {
+        Error::with_message(
+            Errno::EPROTONOSUPPORT,
+            "raw IPv4 protocol must fit in an 8-bit IP protocol number",
+        )
+    })?;
+
+    if protocol == 0 {
+        return_errno_with_message!(
+            Errno::EPROTONOSUPPORT,
+            "IPPROTO_IP is not a valid fixed-protocol raw socket"
+        );
+    }
+
+    if protocol == 255 {
+        return Ok(None);
+    }
+
+    Ok(Some(ip_protocol_from_number(protocol)))
+}
+
+fn ip_protocol_from_number(protocol: u8) -> IpProtocol {
+    match protocol {
+        1 => IpProtocol::Icmp,
+        2 => IpProtocol::Igmp,
+        6 => IpProtocol::Tcp,
+        17 => IpProtocol::Udp,
+        value => IpProtocol::Unknown(value),
+    }
+}
+
+/// Resolves per-send IPv4 ancillary options. `IP_HDRINCL` remains
+/// authoritative when present, so these values are only consumed for the
+/// normal stack-generated IPv4 header path.
+fn raw_control_options(control_messages: &[ControlMessage]) -> Result<(Option<u8>, Option<u8>)> {
+    let mut tos = None;
+    let mut ttl = None;
+
+    for message in control_messages {
+        let ControlMessage::Ip(message) = message else {
+            continue;
+        };
+
+        match message {
+            IpControlMessage::Tos(value) => {
+                tos = Some(u8::try_from(*value).map_err(|_| {
+                    Error::with_message(Errno::EINVAL, "IP_TOS must fit in an unsigned byte")
+                })?);
+            }
+            IpControlMessage::Ttl(value) => {
+                let value = u8::try_from(*value).map_err(|_| {
+                    Error::with_message(Errno::EINVAL, "IP_TTL must fit in an unsigned byte")
+                })?;
+                if value == 0 {
+                    return_errno_with_message!(Errno::EINVAL, "IP_TTL must be non-zero");
+                }
+                ttl = Some(value);
+            }
+            IpControlMessage::ExtendedError(_) => {
+                warn!("ignoring receive-only IP_RECVERR control message on sendmsg");
+            }
+        }
+    }
+
+    Ok((tos, ttl))
+}
+
+pub(super) fn check_raw_socket_privilege() -> Result<()> {
     let credentials = {
         let thread = current_thread!();
         let posix_thread = thread.as_posix_thread().unwrap();

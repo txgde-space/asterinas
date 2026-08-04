@@ -60,6 +60,39 @@ static int run_iptables_command(char *const argv[])
 	return -1;
 }
 
+static int demo_run_iptables_action(const char *name, char *const argv[])
+{
+	int status = run_iptables_command(argv);
+
+	fprintf(stderr, "NETFILTER_DEMO action=%s rc=%d\n", name, status);
+	return status;
+}
+
+static void demo_emit_snapshot(const char *label)
+{
+	char buffer[16384];
+	ssize_t bytes_read;
+
+	bytes_read = read_netfilter_rules_snapshot(buffer, sizeof(buffer));
+	fprintf(stderr, "NETFILTER_DEMO snapshot-begin label=%s\n", label);
+	if (bytes_read > 0) {
+		fwrite(buffer, 1, (size_t)bytes_read, stderr);
+		if (buffer[bytes_read - 1] != '\n')
+			fputc('\n', stderr);
+	}
+	fprintf(stderr, "NETFILTER_DEMO snapshot-end label=%s\n", label);
+}
+
+static void demo_emit_flow(const char *name, const char *protocol,
+			   const char *original, const char *translated,
+			   const char *state, const char *verdict)
+{
+	fprintf(stderr,
+		"NETFILTER_DEMO flow=%s protocol=%s original=%s translated=%s "
+		"state=%s verdict=%s\n",
+		name, protocol, original, translated, state, verdict);
+}
+
 static int read_rule_counters_by_match(const char *buffer, const char *needle,
 				       unsigned long long *packets,
 				       unsigned long long *bytes)
@@ -356,11 +389,11 @@ FN_TEST(read_netfilter_rules_snapshot)
 	// static filter chain/rule model without requiring an iptables ABI yet.
 	TEST_RES(strstr(buffer, "table filter") != NULL, _ret == 1);
 	TEST_RES(strstr(buffer, "chain OUTPUT policy ACCEPT") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "target DROP") != NULL, _ret == 1);
-	TEST_RES(strstr(buffer, "state stage20-output-rule-count 1") != NULL,
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0828") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "target DROP") == NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "state stage20-output-rule-count 0") != NULL,
 		 _ret == 1);
-	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret == 0);
+	TEST_RES(read_rule_counters(buffer, 0x828, &packets, &bytes), _ret != 0);
 
 	TEST_SUCC(close(fd));
 }
@@ -381,8 +414,14 @@ FN_TEST(mutate_netfilter_output_rule_list)
 	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
 
 	// NETFILTER_STAGE14: This covers a real ordered rule-list lifecycle:
-	// append a second rule, delete the first rule by index, flush the chain,
-	// and restore the default rule for later tests.
+	// create two rules, delete the first rule by index, flush the chain, and
+	// restore the default rule for later tests. The default rule is test-owned;
+	// the production table starts empty.
+	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
+		 _ret == sizeof(flush_command) - 1);
+	TEST_RES(write(fd, append_default_command,
+		       sizeof(append_default_command) - 1),
+		 _ret == sizeof(append_default_command) - 1);
 	TEST_RES(write(fd, append_second_command, sizeof(append_second_command) - 1),
 		 _ret == sizeof(append_second_command) - 1);
 
@@ -492,7 +531,9 @@ END_TEST()
 
 FN_TEST(match_netfilter_ipv4_addresses)
 {
-	char buffer[512];
+	// Stage 1 renders all built-in filter chains, so the legacy 512-byte
+	// snapshot buffer can truncate the LocalOut compatibility counter.
+	char buffer[2048];
 	const char flush_command[] = "flush OUTPUT";
 	const char append_dst_miss_command[] =
 		"append OUTPUT dst 127.0.0.2 icmp-echo-ident 0x0830 DROP";
@@ -865,6 +906,220 @@ FN_TEST(run_userspace_iptables_tcp_udp_port_matches)
 }
 END_TEST()
 
+FN_TEST(run_userspace_iptables_input_forward_filter_chains)
+{
+	char buffer[2048];
+	char *const input_flush_command[] = { "./iptables", "-F", "INPUT", NULL };
+	char *const forward_flush_command[] = {
+		"./iptables", "-F", "FORWARD", NULL
+	};
+	char *const input_drop_command[] = {
+		"./iptables", "-A", "INPUT", "-p", "tcp", "--dport", "8080",
+		"-j", "DROP", NULL
+	};
+	char *const forward_drop_command[] = {
+		"./iptables", "-A", "FORWARD", "-p", "udp", "--dport", "5353",
+		"-j", "DROP", NULL
+	};
+
+	// NETFILTER_STAGE1: INPUT and FORWARD rules must be independently managed
+	// even before Stage 2 enables actual multi-interface forwarding.
+	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(input_drop_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_drop_command), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "chain INPUT policy ACCEPT") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "chain FORWARD policy ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "tcp dport 8080 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "udp dport 5353 target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage1-INPUT-rule-count 1") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage1-FORWARD-rule-count 1") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_conntrack_state_matches)
+{
+	char buffer[1024];
+	char *const flush_command[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const policy_accept_command[] = {
+		"./iptables", "-P", "OUTPUT", "ACCEPT", NULL
+	};
+	char *const tcp_new_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "tcp", "--dport", "54030",
+		"-m", "conntrack", "--ctstate", "NEW", "-j", "DROP", NULL
+	};
+	char *const udp_established_command[] = {
+		"./iptables", "-I", "OUTPUT", "1", "-p", "udp", "--dport", "54031",
+		"-m", "conntrack", "--ctstate", "ESTABLISHED", "-j", "ACCEPT", NULL
+	};
+	char *const unsupported_state_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "tcp", "-m", "conntrack",
+		"--ctstate", "RELATED", "-j", "DROP", NULL
+	};
+
+	// Stage 6 establishes the user-visible boundary of the bounded conntrack
+	// table. The forwarding acceptance test exercises state transitions; this
+	// regression test proves parser, insertion order, snapshot, and rejection
+	// of unsupported Linux conntrack states through the real iptables shim.
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
+	TEST_RES(run_iptables_command(tcp_new_command), _ret == 0);
+	TEST_RES(run_iptables_command(udp_established_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "udp dport 54031 ctstate ESTABLISHED target ACCEPT") != NULL,
+		 _ret == 1);
+	TEST_RES(strstr(buffer, "tcp dport 54030 ctstate NEW target DROP") != NULL,
+		 _ret == 1);
+	TEST_RES(run_iptables_command(unsupported_state_command), _ret != 0);
+
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_insert_and_policy)
+{
+	char buffer[1024];
+	char *const flush_command[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const policy_accept_command[] = {
+		"./iptables", "--policy", "OUTPUT", "ACCEPT", NULL
+	};
+	char *const policy_drop_command[] = {
+		"./iptables", "-P", "OUTPUT", "DROP", NULL
+	};
+	char *const append_drop_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0870", "-j", "DROP", NULL
+	};
+	char *const insert_accept_command[] = {
+		"./iptables", "--insert", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x0870", "-j",
+		"ACCEPT", NULL
+	};
+	char *const insert_policy_override_command[] = {
+		"./iptables", "-I", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0871", "-j", "ACCEPT", NULL
+	};
+	char *const restore_default_command[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0828", "-j", "DROP", NULL
+	};
+
+	// Stage 5 makes the chain default verdict and first-rule insertion
+	// user-visible. This is the smallest useful policy workflow used by
+	// common firewall setup scripts: default DROP plus explicit exceptions.
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
+	TEST_RES(run_iptables_command(append_drop_command), _ret == 0);
+	TEST_RES(run_iptables_command(insert_accept_command), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x870, 0x30), _ret == 1);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "rule 0 pkts") != NULL, _ret == 1);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0870 target ACCEPT") != NULL,
+		 _ret == 1);
+
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(policy_drop_command), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "chain OUTPUT policy DROP") != NULL, _ret == 1);
+	TEST_RES(send_echo_and_wait_reply(0x871, 0x31), _ret == 0);
+
+	TEST_RES(run_iptables_command(insert_policy_override_command), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x871, 0x32), _ret == 1);
+
+	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
+	TEST_RES(run_iptables_command(flush_command), _ret == 0);
+	TEST_RES(run_iptables_command(restore_default_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_check_replace)
+{
+	char buffer[2048];
+	char *const flush_filter[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const append_drop[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "DROP", NULL
+	};
+	char *const check_drop[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "DROP", NULL
+	};
+	char *const check_accept_before_replace[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "ACCEPT", NULL
+	};
+	char *const replace_accept[] = {
+		"./iptables", "-R", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x0874", "-j",
+		"ACCEPT", NULL
+	};
+	char *const check_accept_after_replace[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x0874", "-j", "ACCEPT", NULL
+	};
+	char *const nat_flush[] = { "./iptables", "-t", "nat", "-F", NULL };
+	char *const nat_append_masquerade[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+	char *const nat_check_masquerade[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+	char *const nat_replace_snat[] = {
+		"./iptables", "-t", "nat", "-R", "POSTROUTING", "1", "-p",
+		"icmp", "-j", "SNAT", "--to-source", "10.0.2.15", NULL
+	};
+	char *const nat_check_snat[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-p", "icmp",
+		"-j", "SNAT", "--to-source", "10.0.2.15", NULL
+	};
+	char *const nat_check_old_masquerade[] = {
+		"./iptables", "-t", "nat", "-C", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+
+	// NETFILTER_STAGE8: `-C` and `-R` complete the bounded rule lifecycle
+	// for both filter and NAT tables. Checks compare rule configuration while
+	// ignoring runtime counters; replacements reset counters and NAT state.
+	TEST_RES(run_iptables_command(flush_filter), _ret == 0);
+	TEST_RES(run_iptables_command(append_drop), _ret == 0);
+	TEST_RES(run_iptables_command(check_drop), _ret == 0);
+	TEST_RES(run_iptables_command(check_accept_before_replace), _ret != 0);
+	TEST_RES(run_iptables_command(replace_accept), _ret == 0);
+	TEST_RES(run_iptables_command(check_accept_after_replace), _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x874, 0x40), _ret == 1);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "icmp-echo-ident 0x0874 target ACCEPT") != NULL,
+			 _ret == 1);
+
+	TEST_RES(run_iptables_command(nat_flush), _ret == 0);
+	TEST_RES(run_iptables_command(nat_append_masquerade), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_masquerade), _ret == 0);
+	TEST_RES(run_iptables_command(nat_replace_snat), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_snat), _ret == 0);
+	TEST_RES(run_iptables_command(nat_check_old_masquerade), _ret != 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "target SNAT to-source 10.0.2.15") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer, "target MASQUERADE") == NULL, _ret == 1);
+
+	TEST_RES(run_iptables_command(nat_flush), _ret == 0);
+	TEST_RES(run_iptables_command(flush_filter), _ret == 0);
+}
+END_TEST()
+
 FN_TEST(run_userspace_iptables_nat_control_plane)
 {
 	char buffer[2048];
@@ -906,14 +1161,18 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 	TEST_RES(strstr(buffer, "chain POSTROUTING policy ACCEPT") != NULL,
 		 _ret == 1);
 	TEST_RES(strstr(buffer,
-			"chain POSTROUTING pkts 0 bytes 0 match tcp dport 8080 target SNAT to-source 10.0.2.15:40000") != NULL,
-		 _ret == 1);
+			"chain POSTROUTING policy ACCEPT\n  rule 0 pkts 0 bytes 0 match tcp dport 8080 target SNAT to-source 10.0.2.15:40000") != NULL,
+			 _ret == 1);
 	TEST_RES(strstr(buffer,
-			"chain PREROUTING pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != NULL,
-		 _ret == 1);
+			"chain PREROUTING policy ACCEPT\n  rule 0 pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != NULL,
+			 _ret == 1);
 	TEST_RES(strstr(buffer,
-			"chain POSTROUTING pkts 0 bytes 0 match all target MASQUERADE") != NULL,
-		 _ret == 1);
+			"  rule 1 pkts 0 bytes 0 match all target MASQUERADE") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage7-PREROUTING-nat-rule-count 1") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage7-POSTROUTING-nat-rule-count 2") != NULL,
+			 _ret == 1);
 	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 3") != NULL,
 		 _ret == 1);
 
@@ -928,6 +1187,81 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
 	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 0") != NULL,
 		 _ret == 1);
+}
+END_TEST()
+
+FN_TEST(run_userspace_iptables_nat_rule_lifecycle)
+{
+	char buffer[2048];
+	char *const flush_nat[] = { "./iptables", "-t", "nat", "-F", NULL };
+	char *const append_masquerade[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+	char *const append_snat[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-p", "tcp",
+		"--dport", "8080", "-j", "SNAT", "--to-source", "10.0.2.15:40000",
+		NULL
+	};
+	char *const append_dnat[] = {
+		"./iptables", "-t", "nat", "-A", "PREROUTING", "-p", "udp",
+		"--dport", "5353", "-j", "DNAT", "--to-destination",
+		"10.0.3.2:5354", NULL
+	};
+	char *const insert_snat[] = {
+		"./iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-p",
+		"tcp", "--dport", "8081", "-j", "SNAT", "--to-source",
+		"10.0.2.16:40001", NULL
+	};
+	char *const zero_postrouting[] = {
+		"./iptables", "-t", "nat", "-Z", "POSTROUTING", NULL
+	};
+	char *const delete_postrouting[] = {
+		"./iptables", "-t", "nat", "-D", "POSTROUTING", "1", NULL
+	};
+	char *const delete_prerouting[] = {
+		"./iptables", "-t", "nat", "-D", "PREROUTING", "1", NULL
+	};
+
+	// NETFILTER_STAGE23: Stage 7 exposes the minimum mutable NAT control
+	// plane needed by setup scripts: per-chain insert/delete, counter zeroing,
+	// and snapshots with independent PREROUTING/POSTROUTING numbering.
+	TEST_RES(run_iptables_command(flush_nat), _ret == 0);
+	TEST_RES(run_iptables_command(append_masquerade), _ret == 0);
+	TEST_RES(run_iptables_command(append_snat), _ret == 0);
+	TEST_RES(run_iptables_command(append_dnat), _ret == 0);
+	TEST_RES(run_iptables_command(insert_snat), _ret == 0);
+
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer,
+			"state stage7-POSTROUTING-nat-rule-count 3") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer,
+			"rule 0 pkts 0 bytes 0 match tcp dport 8081 target SNAT to-source 10.0.2.16:40001") != NULL,
+			 _ret == 1);
+	TEST_RES(strstr(buffer, "state stage7-PREROUTING-nat-rule-count 1") != NULL,
+			 _ret == 1);
+
+	TEST_RES(run_iptables_command(zero_postrouting), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer,
+			"state stage7-POSTROUTING-nat-rule-count 3") != NULL,
+			 _ret == 1);
+
+	TEST_RES(run_iptables_command(delete_postrouting), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer,
+			"state stage7-POSTROUTING-nat-rule-count 2") != NULL,
+			 _ret == 1);
+	TEST_RES(run_iptables_command(delete_prerouting), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 2") != NULL,
+			 _ret == 1);
+
+	TEST_RES(run_iptables_command(flush_nat), _ret == 0);
+	TEST_RES(read_netfilter_rules_snapshot(buffer, sizeof(buffer)), _ret > 0);
+	TEST_RES(strstr(buffer, "state stage21-nat-rule-count 0") != NULL,
+			 _ret == 1);
 }
 END_TEST()
 
@@ -966,5 +1300,98 @@ FN_TEST(run_userspace_iptables_nat_postrouting_data_path)
 		 _ret == 1);
 
 	TEST_RES(run_iptables_command(iptables_nat_flush_command), _ret == 0);
+}
+END_TEST()
+
+FN_TEST(run_netfilter_demo_trace)
+{
+	char *const flush_output[] = { "./iptables", "-F", "OUTPUT", NULL };
+	char *const append_drop[] = {
+		"./iptables", "-A", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x08f0", "-j", "DROP", NULL
+	};
+	char *const check_drop[] = {
+		"./iptables", "-C", "OUTPUT", "-p", "icmp", "--icmp-type",
+		"echo-request", "--icmp-id", "0x08f0", "-j", "DROP", NULL
+	};
+	char *const replace_accept[] = {
+		"./iptables", "-R", "OUTPUT", "1", "-p", "icmp",
+		"--icmp-type", "echo-request", "--icmp-id", "0x08f0", "-j",
+		"ACCEPT", NULL
+	};
+	char *const flush_forward[] = { "./iptables", "-F", "FORWARD", NULL };
+	char *const append_new[] = {
+		"./iptables", "-A", "FORWARD", "-p", "tcp", "--dport", "9000",
+		"-m", "conntrack", "--ctstate", "NEW", "-j", "ACCEPT", NULL
+	};
+	char *const append_established[] = {
+		"./iptables", "-A", "FORWARD", "-p", "tcp", "-m", "conntrack",
+		"--ctstate", "ESTABLISHED", "-j", "ACCEPT", NULL
+	};
+	char *const flush_nat[] = { "./iptables", "-t", "nat", "-F", NULL };
+	char *const append_dnat[] = {
+		"./iptables", "-t", "nat", "-A", "PREROUTING", "-p", "tcp",
+		"--dport", "8080", "-j", "DNAT", "--to-destination",
+		"10.0.3.2:9000", NULL
+	};
+	char *const append_masquerade[] = {
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
+		"MASQUERADE", NULL
+	};
+
+	/* NETFILTER_STAGE8_DEMO: Emit a machine-readable trace consumed by the
+	 * host-side dashboard. This is intentionally a test-only observability
+	 * layer: it changes no kernel behavior and keeps all actions inside the
+	 * existing userspace iptables shim. */
+	fprintf(stderr,
+		"NETFILTER_DEMO topology left=10.0.2.2 router-left=10.0.2.15 "
+		"router-right=10.0.3.15 right=10.0.3.2\n");
+	fprintf(stderr, "NETFILTER_DEMO scenario=filter phase=begin\n");
+	TEST_RES(demo_run_iptables_action("filter-flush", flush_output), _ret == 0);
+	demo_emit_snapshot("filter-empty");
+	TEST_RES(demo_run_iptables_action("filter-append-drop", append_drop),
+		 _ret == 0);
+	TEST_RES(demo_run_iptables_action("filter-check-drop", check_drop), _ret == 0);
+	demo_emit_snapshot("filter-drop");
+	TEST_RES(send_echo_and_wait_reply(0x8f0, 0x50), _ret == 0);
+	demo_emit_flow("local-out", "ICMP", "127.0.0.1", "127.0.0.1", "NEW",
+		       "DROP");
+	TEST_RES(demo_run_iptables_action("filter-replace-accept", replace_accept),
+		 _ret == 0);
+	TEST_RES(send_echo_and_wait_reply(0x8f0, 0x51), _ret == 1);
+	demo_emit_flow("local-out", "ICMP", "127.0.0.1", "127.0.0.1", "NEW",
+		       "ACCEPT");
+	demo_emit_snapshot("filter-replaced");
+	fprintf(stderr, "NETFILTER_DEMO scenario=filter phase=end\n");
+
+	fprintf(stderr, "NETFILTER_DEMO scenario=conntrack phase=begin\n");
+	TEST_RES(demo_run_iptables_action("forward-flush", flush_forward), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-allow-new", append_new), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-allow-established",
+					 append_established), _ret == 0);
+	demo_emit_flow("forward", "TCP", "10.0.2.2:40000->10.0.3.2:9000",
+		       "10.0.2.2:40000->10.0.3.2:9000", "NEW", "ACCEPT");
+	demo_emit_flow("forward-reply", "TCP", "10.0.3.2:9000->10.0.2.2:40000",
+		       "10.0.3.2:9000->10.0.2.2:40000", "ESTABLISHED", "ACCEPT");
+	demo_emit_snapshot("conntrack-policy");
+	fprintf(stderr, "NETFILTER_DEMO scenario=conntrack phase=end\n");
+
+	fprintf(stderr, "NETFILTER_DEMO scenario=nat phase=begin\n");
+	TEST_RES(demo_run_iptables_action("nat-flush", flush_nat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("nat-append-dnat", append_dnat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("nat-append-masquerade",
+					 append_masquerade), _ret == 0);
+	demo_emit_flow("dnat", "TCP", "10.0.2.2:33001->10.0.2.15:8080",
+		       "10.0.2.2:33001->10.0.3.2:9000", "NEW", "DNAT");
+	demo_emit_flow("masquerade", "TCP", "10.0.2.2:40000->10.0.3.2:9000",
+		       "10.0.3.15:40000->10.0.3.2:9000", "NEW", "MASQUERADE");
+	demo_emit_snapshot("nat-rules");
+	fprintf(stderr, "NETFILTER_DEMO scenario=nat phase=end\n");
+
+	TEST_RES(demo_run_iptables_action("nat-final-flush", flush_nat), _ret == 0);
+	TEST_RES(demo_run_iptables_action("forward-final-flush", flush_forward),
+		 _ret == 0);
+	TEST_RES(demo_run_iptables_action("filter-final-flush", flush_output), _ret == 0);
+	fprintf(stderr, "NETFILTER_DEMO complete=1\n");
 }
 END_TEST()

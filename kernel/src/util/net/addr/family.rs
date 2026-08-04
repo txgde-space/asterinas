@@ -4,8 +4,17 @@ use core::cmp::min;
 
 use ostd::{mm::VmIo, task::Task};
 
-use super::{ip::CSocketAddrInet, netlink::CSocketAddrNetlink, unix, vsock::CSocketAddrVm};
-use crate::{context::current_userspace, net::socket::util::SocketAddr, prelude::*};
+use super::{
+    ip::{CSocketAddrInet, CSocketAddrInet6},
+    netlink::CSocketAddrNetlink,
+    unix,
+    vsock::CSocketAddrVm,
+};
+use crate::{
+    context::current_userspace,
+    net::socket::util::SocketAddr,
+    prelude::*,
+};
 
 /// Address family.
 ///
@@ -155,6 +164,14 @@ pub fn read_socket_addr_from_user(addr: Vaddr, addr_len: usize) -> Result<Socket
             let (addr, port) = CSocketAddrInet::from_first_bytes(storage.as_bytes()).into();
             SocketAddr::IPv4(addr, port)
         }
+        Ok(CSocketAddrFamily::AF_INET6) => {
+            if addr_len < size_of::<CSocketAddrInet6>() {
+                return_errno_with_message!(Errno::EINVAL, "the IPv6 socket address is too small");
+            }
+            let (addr, port, flowinfo, scope_id) =
+                CSocketAddrInet6::from_first_bytes(storage.as_bytes()).into();
+            SocketAddr::IPv6(addr, port, flowinfo, scope_id)
+        }
         Ok(CSocketAddrFamily::AF_UNIX) => {
             let addr = unix::from_c_bytes(&storage.as_bytes()[..addr_len])?;
             SocketAddr::Unix(addr)
@@ -248,6 +265,13 @@ pub fn write_socket_addr_with_max_len(
             dest,
             max_len as usize,
         )?,
+        SocketAddr::IPv6(addr, port, flowinfo, scope_id) => {
+            write_c_socket_address_util::<CSocketAddrInet6, _>(
+                (*addr, *port, *flowinfo, *scope_id),
+                dest,
+                max_len as usize,
+            )?
+        }
         SocketAddr::Unix(addr) => unix::into_c_bytes_and(addr, |bytes| {
             let written_len = min(bytes.len(), max_len as _);
             current_userspace!().write_bytes(dest, &bytes[..written_len])?;
