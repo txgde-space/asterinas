@@ -105,7 +105,9 @@ pub fn init() {
             aster_bigtcp::netfilter::Ipv6NatRuleChain::PreRouting,
             aster_bigtcp::netfilter::Ipv6RuleProtocol::Any,
             Some(Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2)),
-            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 15)),
+            // IPv6 text is hexadecimal: the virtual service `::15` ends in
+            // 0x15, not decimal 15 (`::f`).
+            Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 0x15)),
             None,
             None,
             aster_bigtcp::netfilter::Ipv6NatRuleTarget::Dnat,
