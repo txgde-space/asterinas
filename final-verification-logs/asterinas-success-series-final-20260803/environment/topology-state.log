@@ -1,0 +1,34 @@
+as2br0           UP             aa:48:ba:4c:57:1b <BROADCAST,MULTICAST,UP,LOWER_UP> 
+as2br1           UP             7e:bf:6a:6b:9a:b7 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+as2tap0          DOWN           56:3e:dc:c5:32:73 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+as2tap1          DOWN           be:d8:e8:56:83:00 <NO-CARRIER,BROADCAST,MULTICAST,UP> 
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+eth0@if109       UP             10.0.2.2/24 fd00:0:0:2::2/64 fe80::48ab:62ff:fef3:b701/64 
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+eth0@if111       UP             10.0.3.2/24 fd00:0:0:3::2/64 fe80::8805:d5ff:fe7a:5569/64 
+default via 10.0.2.15 dev eth0 
+10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.2 
+default via 10.0.3.15 dev eth0 
+10.0.3.0/24 dev eth0 proto kernel scope link src 10.0.3.2 
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 state UNKNOWN qlen 1000
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+108: eth0@if109: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP qlen 1000
+    inet6 fd00:0:0:2::2/64 scope global tentative 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::48ab:62ff:fef3:b701/64 scope link tentative proto kernel_ll 
+       valid_lft forever preferred_lft forever
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 state UNKNOWN qlen 1000
+    inet6 ::1/128 scope host proto kernel_lo 
+       valid_lft forever preferred_lft forever
+110: eth0@if111: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 state UP qlen 1000
+    inet6 fd00:0:0:3::2/64 scope global tentative 
+       valid_lft forever preferred_lft forever
+    inet6 fe80::8805:d5ff:fe7a:5569/64 scope link tentative proto kernel_ll 
+       valid_lft forever preferred_lft forever
+fd00:0:0:2::/64 dev eth0 proto kernel metric 256 pref medium
+fe80::/64 dev eth0 proto kernel metric 256 pref medium
+default via fd00:0:0:2::15 dev eth0 metric 1024 pref medium
+fd00:0:0:3::/64 dev eth0 proto kernel metric 256 pref medium
+fe80::/64 dev eth0 proto kernel metric 256 pref medium
+default via fd00:0:0:3::15 dev eth0 metric 1024 pref medium

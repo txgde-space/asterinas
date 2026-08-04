@@ -1,0 +1,3 @@
+IPv6 host default route or NAT table is unavailable; IPv6 remains outside the external probe scope.
+Asterinas external IPv4 uplink ready via ens33.
+Guest path: 10.0.2.15/fd00:0:0:2::15 -> as2left -> ens33

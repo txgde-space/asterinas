@@ -1,0 +1,5 @@
+netfilter-stage2c: isolated TAP topology ready
+left endpoint:  as2left (10.0.2.2 via 10.0.2.15)
+right endpoint: as2right (10.0.3.2 via 10.0.3.15)
+IPv6 peers:     fd00:0:0:2::2 / fd00:0:0:3::2 (same-link guest addresses fd00:0:0:2::15 / fd00:0:0:3::15)
+QEMU TAPs: as2tap0, as2tap1

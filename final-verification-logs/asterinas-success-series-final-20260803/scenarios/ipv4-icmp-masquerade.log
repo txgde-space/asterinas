@@ -1,0 +1,18 @@
+===== icmp-masquerade / test-nat =====
+Testing left-to-right MASQUERADE ICMP through Asterinas...
+PING 10.0.3.2 (10.0.3.2) 56(84) bytes of data.
+64 bytes from 10.0.3.2: icmp_seq=1 ttl=63 time=0.860 ms
+64 bytes from 10.0.3.2: icmp_seq=2 ttl=63 time=0.304 ms
+64 bytes from 10.0.3.2: icmp_seq=3 ttl=63 time=0.400 ms
+64 bytes from 10.0.3.2: icmp_seq=4 ttl=63 time=0.308 ms
+
+--- 10.0.3.2 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3086ms
+rtt min/avg/max/mdev = 0.304/0.468/0.860/0.229 ms
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on as2br1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+22:07:16.458641 IP 10.0.3.15 > 10.0.3.2: ICMP echo request, id 30104, seq 1, length 64
+1 packet captured
+1 packet received by filter
+0 packets dropped by kernel
+netfilter-stage3: stateful ICMP MASQUERADE passed

@@ -84,19 +84,19 @@ connect() {
 }
 
 setup_uplink() {
-    exec sudo "$UPLINK_SCRIPT" setup
+    exec sudo bash "$UPLINK_SCRIPT" setup
 }
 
 uplink_status() {
-    exec sudo "$UPLINK_SCRIPT" status
+    exec sudo bash "$UPLINK_SCRIPT" status
 }
 
 uplink_test() {
-    exec sudo "$UPLINK_SCRIPT" test
+    exec sudo bash "$UPLINK_SCRIPT" test
 }
 
 teardown_uplink() {
-    exec sudo "$UPLINK_SCRIPT" teardown
+    exec sudo bash "$UPLINK_SCRIPT" teardown
 }
 
 case "${1:-help}" in
