@@ -17,9 +17,11 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import os
 import re
 import shlex
 import socket
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -42,10 +44,12 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9_./:+,@%!=\-\[\]]+$")
 OPERATIONS = {
     "-A", "--append", "-I", "--insert", "-D", "--delete", "-F", "--flush",
     "-P", "--policy", "-Z", "--zero", "-L", "--list",
+    "-C", "--check", "-R", "--replace",
 }
 OPERATION_ALIASES = {
     "--append": "-A", "--insert": "-I", "--delete": "-D", "--flush": "-F",
     "--policy": "-P", "--zero": "-Z", "--list": "-L",
+    "--check": "-C", "--replace": "-R",
 }
 
 # Targets on the isolated Stage 2 topology are deterministic and do not
@@ -65,6 +69,119 @@ PROBE_SUITES = {
 }
 HOSTNAME_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
+# These are the fixed endpoint namespaces created by
+# tools/net/stage2-router-topology.sh.  Keeping the endpoint and namespace
+# names in a small allow-list means the dashboard can run real directional
+# probes without becoming a general-purpose shell endpoint.
+DIRECTION_TARGETS = {
+    "left-to-right": {
+        "label": "Left -> right",
+        "namespace": "as2left",
+        "source": "10.0.2.2",
+        "target": "10.0.3.2",
+    },
+    "right-to-left": {
+        "label": "Right -> left",
+        "namespace": "as2right",
+        "source": "10.0.3.2",
+        "target": "10.0.2.2",
+    },
+}
+EXPECTATION_PROFILES = {
+    "observe": None,
+    "both": {"left-to-right": True, "right-to-left": True},
+    "left-only": {"left-to-right": True, "right-to-left": False},
+    "right-only": {"left-to-right": False, "right-to-left": True},
+    "deny-both": {"left-to-right": False, "right-to-left": False},
+}
+
+# Recipes intentionally use only the rule subset already accepted by the
+# Guest procfs parser.  A recipe is still sent through the same validated
+# rule channel as a manually typed command, so the UI demonstrates the real
+# iptables lifecycle rather than maintaining a second fake model.
+LAB_PROFILES = {
+    "allow-both": {
+        "label": "允许双向转发",
+        "probe": "icmp",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-P FORWARD ACCEPT"),
+        ],
+        "expected": {"left-to-right": True, "right-to-left": True},
+    },
+    "allow-left": {
+        "label": "仅允许左 → 右（NEW + ESTABLISHED）",
+        "probe": "icmp",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-P FORWARD DROP"),
+            ("iptables", "-A FORWARD -s 10.0.2.2 -d 10.0.3.2 -p icmp -m conntrack --ctstate NEW -j ACCEPT"),
+            ("iptables", "-A FORWARD -p icmp -m conntrack --ctstate ESTABLISHED -j ACCEPT"),
+        ],
+        "expected": {"left-to-right": True, "right-to-left": False},
+    },
+    "allow-right": {
+        "label": "仅允许右 → 左（NEW + ESTABLISHED）",
+        "probe": "icmp",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-P FORWARD DROP"),
+            ("iptables", "-A FORWARD -s 10.0.3.2 -d 10.0.2.2 -p icmp -m conntrack --ctstate NEW -j ACCEPT"),
+            ("iptables", "-A FORWARD -p icmp -m conntrack --ctstate ESTABLISHED -j ACCEPT"),
+        ],
+        "expected": {"left-to-right": False, "right-to-left": True},
+    },
+    "deny-both": {
+        "label": "丢弃双向转发",
+        "probe": "icmp",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-P FORWARD DROP"),
+        ],
+        "expected": {"left-to-right": False, "right-to-left": False},
+    },
+    "conntrack": {
+        "label": "TCP NEW/ESTABLISHED + 端口 9000",
+        "probe": "rule-only",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-P FORWARD DROP"),
+            ("iptables", "-A FORWARD -p tcp --dport 9000 -m conntrack --ctstate NEW -j ACCEPT"),
+            ("iptables", "-A FORWARD -p tcp -m conntrack --ctstate ESTABLISHED -j ACCEPT"),
+        ],
+        "expected": {},
+    },
+    "masquerade": {
+        "label": "POSTROUTING MASQUERADE",
+        "probe": "rule-only",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-t nat -A POSTROUTING -j MASQUERADE"),
+        ],
+        "expected": {},
+    },
+    "dnat": {
+        "label": "PREROUTING DNAT 8080 → 10.0.3.2:9000",
+        "probe": "rule-only",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-t nat -A PREROUTING -p tcp --dport 8080 -j DNAT --to-destination 10.0.3.2:9000"),
+        ],
+        "expected": {},
+    },
+    "check-replace": {
+        "label": "-C 检查后使用 -R 替换",
+        "probe": "rule-only",
+        "actions": [
+            ("reset", ""),
+            ("iptables", "-A OUTPUT -p icmp --icmp-type echo-request -j DROP"),
+            ("iptables", "-C OUTPUT -p icmp --icmp-type echo-request -j DROP"),
+            ("iptables", "-R OUTPUT 1 -p icmp --icmp-type echo-request -j ACCEPT"),
+        ],
+        "expected": {},
+    },
+}
+
 
 def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
     """Resolve a numeric IPv4 address or hostname on the Ubuntu host.
@@ -74,10 +191,10 @@ def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
     IPv6 ping remains deliberately outside the Stage14 demo.
     """
     if not isinstance(target, str):
-        return False, "target must be an IPv4 address or hostname", ""
+        return False, "目标必须是 IPv4 地址或主机名", ""
     value = target.strip()
     if not value or len(value) > 253:
-        return False, "target must be an IPv4 address or hostname", ""
+        return False, "目标必须是 IPv4 地址或主机名", ""
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
@@ -85,17 +202,17 @@ def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
         try:
             ascii_name = hostname.encode("idna").decode("ascii")
         except UnicodeError:
-            return False, "hostname cannot be IDNA encoded", ""
+            return False, "主机名无法进行 IDNA 编码", ""
         if (not ascii_name or len(ascii_name) > 253 or
                 any(not HOSTNAME_LABEL_RE.fullmatch(label)
                     for label in ascii_name.split("."))):
-            return False, "target must be a valid hostname or IPv4 address", ""
+            return False, "目标必须是有效的主机名或 IPv4 地址", ""
         try:
             answers = socket.getaddrinfo(
                 ascii_name, None, socket.AF_INET, socket.SOCK_DGRAM
             )
         except socket.gaierror as exc:
-            return False, f"IPv4 DNS lookup failed for {value!r}: {exc}", ""
+            return False, f"IPv4 DNS 解析失败（{value!r}）：{exc}", ""
         addresses: List[str] = []
         for answer in answers:
             sockaddr = answer[4]
@@ -110,10 +227,10 @@ def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
             if rendered not in addresses:
                 addresses.append(rendered)
         if not addresses:
-            return False, f"hostname {value!r} has no IPv4 A record", ""
+            return False, f"主机名 {value!r} 没有 IPv4 A 记录", ""
         return True, "", addresses[0]
     if address.version != 4:
-        return False, "only IPv4 ping probes are exposed", ""
+        return False, "当前仪表盘仅开放 IPv4 Ping 探测", ""
     return True, "", str(address)
 
 
@@ -122,10 +239,10 @@ def classify_probe(target: str, rc: int) -> Tuple[str, str]:
     if rc == 0:
         return "PASS", "可达"
     if target in LOCAL_PROBE_TARGETS:
-        return "FAIL", "本地拓扑不可达：检查 setup、QEMU 网卡和 OUTPUT/FORWARD 规则；可先用 Reset rules + ping"
+        return "FAIL", "本地拓扑不可达：请检查 setup、QEMU 网卡以及 OUTPUT/FORWARD 规则；可先使用“重置规则并 Ping”"
     if rc == 1:
         return "FAIL", "无响应：外网目标需要 guest 默认路由、上行网卡和 NAT"
-    return "FAIL", f"guest ping 失败（rc={rc}）"
+    return "FAIL", f"Guest Ping 失败（返回码 rc={rc}）"
 
 
 def parse_pairs(text: str) -> Dict[str, str]:
@@ -227,16 +344,23 @@ def empty_state(log_path: Path) -> dict:
             "router_right": "10.0.3.15 / fd00:0:0:3::15",
             "right": "10.0.3.2 / fd00:0:0:3::2",
         },
-        "step": {"id": "", "scenario": "", "title": "Waiting for demo-step", "status": "idle"},
+        "step": {"id": "", "scenario": "", "title": "等待 demo-step", "status": "idle"},
         "scenarios": {name: {"name": name, "status": "PENDING"}
                       for name in ("filter", "conntrack", "nat")},
         "actions": [], "flows": [], "controls": [], "probes": [],
         "probe_presets": PROBE_PRESETS,
         "probe_suites": PROBE_SUITES,
         "probe_summary": {"passed": 0, "failed": 0, "last": None},
+        "directions": DIRECTION_TARGETS,
+        "lab_profiles": {
+            name: {"label": profile["label"], "probe": profile.get("probe", "rule-only")}
+            for name, profile in LAB_PROFILES.items()
+        },
+        "experiments": [],
+        "experiment_summary": {"passed": 0, "failed": 0, "last": None},
         "resolutions": [],
         "rules": [], "chains": {}, "snapshots": {}, "snapshot": "waiting",
-        "message": "Start demo-step in QEMU, then keep this page open.",
+        "message": "请先在 QEMU 中启动 demo-step，并保持本页面打开。",
     }
 
 
@@ -249,12 +373,12 @@ def read_state(log_path: Path, connected: bool) -> dict:
     state = empty_state(log_path)
     state["connected"] = connected
     if not log_path.exists():
-        state["message"] = "Serial log does not exist yet. Start the demo-step guest."
+        state["message"] = "串行日志尚不存在，请先启动 demo-step Guest。"
         return state
     try:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
-        state["message"] = f"Cannot read serial log: {exc}"
+        state["message"] = f"无法读取串行日志：{exc}"
         return state
 
     snapshot_lines: Optional[List[str]] = None
@@ -332,11 +456,11 @@ def read_state(log_path: Path, connected: bool) -> dict:
                 scenario["status"] = "PASS"
     state["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     if not connected:
-        state["message"] = "QEMU socket is not connected; start demo-step and wait for its socket."
+        state["message"] = "QEMU 控制 socket 未连接；请启动 demo-step 并等待 socket 就绪。"
     elif state["complete"]:
-        state["message"] = "Demo complete. You can reset it or issue a manual rule/ping probe."
+        state["message"] = "演示已完成。你可以重置演示，或手动执行规则/Ping 探测。"
     else:
-        state["message"] = "Live guest state. Manual commands create a new snapshot and timeline event."
+        state["message"] = "Guest 实时状态。手动命令会生成新的规则快照和时间线事件。"
     return state
 
 
@@ -395,7 +519,7 @@ class ControlChannel:
                 except OSError:
                     if conn is not None:
                         conn.close()
-                    return False, "QEMU serial socket is not connected"
+                return False, "QEMU 串行 socket 未连接"
             try:
                 self.connection.sendall((command.rstrip("\n") + "\n").encode())
                 return True, command
@@ -410,54 +534,155 @@ class ControlChannel:
 
 def validate_rule(family: str, args: object) -> Tuple[bool, str, str]:
     if family not in ("iptables", "ip6tables"):
-        return False, "family must be iptables or ip6tables", ""
+        return False, "协议族必须是 iptables 或 ip6tables", ""
     if isinstance(args, str):
         try:
             tokens = shlex.split(args)
         except ValueError as exc:
-            return False, f"cannot parse arguments: {exc}", ""
+            return False, f"无法解析参数：{exc}", ""
     elif isinstance(args, list) and all(isinstance(item, str) for item in args):
         tokens = args
     else:
-        return False, "args must be a shell-like string or string array", ""
+        return False, "args 必须是类似 Shell 的字符串或字符串数组", ""
     if not tokens or len(tokens) > 32:
-        return False, "provide 1..32 arguments", ""
+        return False, "请提供 1～32 个参数", ""
     for token in tokens:
         if len(token) > 96 or not TOKEN_RE.fullmatch(token):
-            return False, f"unsafe or oversized token: {token!r}", ""
+            return False, f"参数不安全或长度过大：{token!r}", ""
     operation = next((token for token in tokens if token in OPERATIONS), None)
     if operation is None:
-        return False, "supported operations: -A -I -D -F -P -Z -L", ""
+        return False, "支持的操作：-A -I -D -F -P -Z -L", ""
     tokens = [OPERATION_ALIASES.get(token, token) for token in tokens]
     table = "filter"
     for index, token in enumerate(tokens[:-1]):
         if token in ("-t", "--table"):
             table = tokens[index + 1]
     if table not in ("filter", "nat"):
-        return False, "only filter and nat tables are exposed in this demo", ""
+        return False, "本演示仅开放 filter 和 nat 表", ""
     command = family + " " + " ".join(tokens)
     return True, "", command
 
 
 def validate_ping(family: object, target: object, count: object, timeout: object) -> Tuple[bool, str, str]:
     if family not in (4, "4"):
-        return False, "only IPv4 ping probes are exposed", ""
+        return False, "当前仪表盘仅开放 IPv4 Ping 探测", ""
     ok, error, resolved_target = resolve_ipv4_target(target)
     if not ok:
         return False, error, ""
     try:
         count_i, timeout_i = int(count), int(timeout)
     except (TypeError, ValueError):
-        return False, "count and timeout must be integers", ""
+        return False, "次数和超时必须是整数", ""
     if not (1 <= count_i <= 5 and 1 <= timeout_i <= 5):
-        return False, "count and timeout are limited to 1..5 seconds/packets", ""
+        return False, "次数和超时范围为 1～5（数据包/秒）", ""
     return True, "", f"ping4 {resolved_target} {count_i} {timeout_i}"
 
 
 def validate_probe_suite(suite: object) -> Tuple[bool, str, str]:
     if suite not in PROBE_SUITES:
-        return False, "suite must be local or external", ""
+        return False, "探测套件必须是 local 或 external", ""
     return True, "", f"probe-suite {suite}"
+
+
+def validate_direction(direction: object) -> Tuple[bool, str, List[str]]:
+    if direction == "both":
+        return True, "", list(DIRECTION_TARGETS)
+    if direction not in DIRECTION_TARGETS:
+        return False, "方向必须是 left-to-right、right-to-left 或 both", []
+    return True, "", [str(direction)]
+
+
+def validate_lab_profile(profile: object) -> Tuple[bool, str, dict]:
+    if profile not in LAB_PROFILES:
+        return False, "未知的实验配置", {}
+    return True, "", LAB_PROFILES[str(profile)]
+
+
+def validate_expectation(value: object) -> Tuple[bool, str, Optional[Dict[str, bool]]]:
+    if value not in EXPECTATION_PROFILES:
+        return False, "预期结果必须是 observe、both、left-only、right-only 或 deny-both", None
+    return True, "", EXPECTATION_PROFILES[str(value)]
+
+
+def validate_probe_numbers(count: object, timeout: object) -> Tuple[bool, str, int, int]:
+    try:
+        count_i, timeout_i = int(count), int(timeout)
+    except (TypeError, ValueError):
+        return False, "次数和超时必须是整数", 0, 0
+    if not (1 <= count_i <= 4 and 1 <= timeout_i <= 5):
+        return False, "方向探测的次数必须为 1～4，超时必须为 1～5", 0, 0
+    return True, "", count_i, timeout_i
+
+
+def run_namespace_ping(direction: str, count: int, timeout: int) -> dict:
+    """Run a fixed endpoint-to-endpoint probe from the Ubuntu host.
+
+    The dashboard is local-only, but it must not turn the HTTP API into a
+    shell.  Every namespace, address and argument is selected from the
+    allow-list above; only the sudo prefix is conditional on the dashboard's
+    effective uid.
+    """
+    target = DIRECTION_TARGETS[direction]
+    prefix = [] if hasattr(os, "geteuid") and os.geteuid() == 0 else ["sudo", "-n"]
+    argv = prefix + [
+        "ip", "netns", "exec", target["namespace"], "ping", "-4", "-n",
+        "-c", str(count), "-W", str(timeout), target["target"],
+    ]
+    try:
+        completed = subprocess.run(
+            argv, capture_output=True, text=True,
+            timeout=max(8, count * timeout + 4), check=False,
+        )
+        output = (completed.stdout + completed.stderr).strip()
+        rc = int(completed.returncode)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        output = (stdout + stderr).strip()
+        rc = 124
+    except OSError as exc:
+        output = str(exc)
+        rc = 127
+    return {
+        "direction": direction,
+        "label": target["label"],
+        "namespace": target["namespace"],
+        "source": target["source"],
+        "target": target["target"],
+        "count": count,
+        "timeout": timeout,
+        "rc": rc,
+        "status": "PASS" if rc == 0 else "FAIL",
+        "output": output[-2400:],
+    }
+
+
+def counter_deltas(before: Iterable[dict], after: Iterable[dict]) -> List[dict]:
+    """Join two snapshots and expose packet/byte changes per rule."""
+    def key(rule: dict) -> Tuple[object, ...]:
+        return (
+            rule.get("family"), rule.get("table"), rule.get("chain"),
+            rule.get("number"), rule.get("match"), rule.get("target"),
+        )
+
+    previous = {key(rule): rule for rule in before}
+    changes: List[dict] = []
+    for rule in after:
+        old = previous.get(key(rule), {})
+        packet_delta = int(rule.get("packets", 0)) - int(old.get("packets", 0))
+        byte_delta = int(rule.get("bytes", 0)) - int(old.get("bytes", 0))
+        if packet_delta or byte_delta:
+            changes.append({
+                "family": rule.get("family"), "table": rule.get("table"),
+                "chain": rule.get("chain"), "number": rule.get("number"),
+                "match": rule.get("match"), "target": rule.get("target"),
+                "packets": packet_delta, "bytes": byte_delta,
+            })
+    return changes
 
 
 HTML = r'''<!doctype html>
@@ -470,9 +695,10 @@ HTML = r'''<!doctype html>
 <main><div class="grid">
 <section class="card wide"><h2>Topology <span id="conn" class="badge">socket unknown</span></h2><div class="topo"><div class="node"><strong>Left host</strong><span id="left"></span></div><span class="arrow">→</span><div class="node"><strong>Asterinas router</strong><span id="router"></span></div><span class="arrow">→</span><div class="node"><strong>Right host</strong><span id="right"></span></div></div><div id="message" class="message"></div></section>
 <section class="card wide"><h2>Interactive walkthrough</h2><div class="controls"><span id="current" class="current"></span><button data-command="next">Next step</button><button data-command="reset">Reset</button><select id="scenario"><option value="filter">Filter scenario</option><option value="conntrack">Conntrack scenario</option><option value="nat">NAT scenario</option><option value="all">Run all</option></select><button id="runScenario">Run scenario</button><button data-command="snapshot">Refresh snapshot</button></div></section>
-<section class="card half"><h2>Manual iptables / ip6tables</h2><div class="form"><select id="ruleFamily"><option value="iptables">iptables (IPv4)</option><option value="ip6tables">ip6tables (IPv6)</option></select><input id="ruleArgs" class="mono" style="flex:1;min-width:300px" placeholder="-A OUTPUT -p icmp --icmp-type echo-request -j DROP"><button id="applyRule">Apply</button></div><div class="form"><button data-rule="-L">Refresh all tables</button><button data-rule="-F OUTPUT">Flush OUTPUT</button><button data-rule="-F FORWARD">Flush FORWARD</button><button data-rule="-Z">Zero counters</button></div><div class="form"><button data-preset="v4drop">IPv4 DROP echo</button><button data-preset="v4accept">IPv4 ACCEPT echo</button><button data-preset="v4nat">IPv4 MASQUERADE</button><button data-preset="v6drop">IPv6 FORWARD DROP</button></div><div class="hint">Supported subset is intentionally explicit: filter/nat, append/insert/delete/flush/policy/zero/list, and the matches implemented by the guest parser. This is not a shell.</div><div id="ruleError" class="error"></div></section>
+<section class="card half"><h2>Manual iptables / ip6tables</h2><div class="form"><select id="ruleFamily"><option value="iptables">iptables (IPv4)</option><option value="ip6tables">ip6tables (IPv6)</option></select><input id="ruleArgs" class="mono" style="flex:1;min-width:300px" placeholder="-A OUTPUT -p icmp --icmp-type echo-request -j DROP"><button id="applyRule">Apply</button></div><div class="form"><button data-rule="-L">Refresh all tables</button><button data-rule="-F OUTPUT">Flush OUTPUT</button><button data-rule="-F FORWARD">Flush FORWARD</button><button data-rule="-Z">Zero counters</button></div><div class="form"><button data-preset="v4drop">IPv4 DROP echo</button><button data-preset="v4accept">IPv4 ACCEPT echo</button><button data-preset="v4nat">IPv4 MASQUERADE</button><button data-preset="v6drop">IPv6 FORWARD DROP</button></div><div class="form"><select id="linkedDirection"><option value="left-to-right">Probe left -> right</option><option value="right-to-left">Probe right -> left</option><option value="both">Probe both directions</option></select><select id="linkedExpectation"><option value="observe">Observe actual result</option><option value="both">Expect both pass</option><option value="left-only">Expect left -> right only</option><option value="right-only">Expect right -> left only</option><option value="deny-both">Expect both blocked</option></select><button id="applyAndProbe">Apply rule + probe</button><button id="probeCurrent">Probe current rules</button></div><div class="hint">Apply a real rule, then run endpoint pings through the same Guest. The expectation selector distinguishes a deliberate one-way DROP from an infrastructure failure; the experiment records both directions and counter deltas.</div><div class="hint">Supported subset is explicit: filter/nat, append/insert/delete/flush/policy/zero/list, check (-C), replace (-R), and the matches implemented by the guest parser. This is not a shell.</div><div id="ruleError" class="error"></div></section>
 <section class="card half"><h2>IPv4 raw-socket ping probe</h2><div class="form"><select id="pingFamily"><option value="4">IPv4</option></select><input id="pingTarget" class="mono" value="1.1.1.1" placeholder="IPv4 address or hostname (e.g. baidu.com)"><label>count <input id="pingCount" type="number" min="1" max="5" value="2" style="width:65px"></label><label>timeout <input id="pingTimeout" type="number" min="1" max="5" value="2" style="width:65px"></label><button id="ping">Ping in guest</button></div><div class="form"><button id="pingLocalSuite">Run local IPv4</button><button id="pingExternalSuite">Run external IPv4</button></div><div class="hint">The dashboard resolves a hostname's IPv4 A record on Ubuntu, then sends only the numeric address to the guest's <span class="mono">/bin/ping -4</span>. Local smoke uses the isolated right endpoint; external smoke requires the reversible Ubuntu uplink helper (<span class="mono">sudo tools/net/netfilter-demo.sh setup-uplink</span>).</div><div id="pingError" class="error"></div><div class="scroll"><table><thead><tr><th>Family</th><th>Target</th><th>Packets</th><th>Timeout</th><th>Result</th></tr></thead><tbody id="probes"></tbody></table></div></section>
 <section class="card wide"><h2>Live rule snapshot <select id="familyFilter"><option value="all">All families</option><option value="ipv4">IPv4</option><option value="ipv6">IPv6</option></select> <select id="snapshotSelect"></select></h2><div class="scroll"><table><thead><tr><th>Family</th><th>Table</th><th>Chain</th><th>#</th><th>pkts</th><th>bytes</th><th>match</th><th>target</th></tr></thead><tbody id="rules"></tbody></table></div></section>
+<section class="card wide"><h2>Linked rule → traffic experiments</h2><div class="form"><select id="labProfile"></select><select id="labDirection"><option value="both">Probe both directions</option><option value="left-to-right">Probe left -> right</option><option value="right-to-left">Probe right -> left</option></select><label>count <input id="labCount" type="number" min="1" max="4" value="2" style="width:65px"></label><label>timeout <input id="labTimeout" type="number" min="1" max="5" value="2" style="width:65px"></label><button id="applyProfile">Apply profile</button><button id="runProfile">Apply + probe</button><button id="clearExperiments">Clear experiments</button></div><div id="labHint" class="hint">Recipes are sent through the same procfs command path as manual input. ICMP forwarding profiles run real as2left/as2right probes; TCP/NAT profiles apply rules and capture the resulting rule snapshot without pretending that an ICMP ping tests TCP translation.</div><div id="experimentError" class="error"></div><div class="scroll"><table><thead><tr><th>Profile</th><th>Direction / probe</th><th>Rules / packet flow</th><th>Counter delta</th></tr></thead><tbody id="experiments"></tbody></table></div></section>
 <section class="card third"><h2>Chain policies</h2><div id="chains" class="scroll"></div></section><section class="card third"><h2>Packet flows</h2><div id="flows" class="scroll"></div></section><section class="card third"><h2>Control / action timeline</h2><div id="timeline" class="scroll"></div></section>
 </div></main>
 <script>
@@ -488,12 +714,76 @@ let events=[...s.actions.map(x=>({...x,type:'action'})),...s.controls.map(x=>({.
 $('probes').innerHTML=s.probes.slice().reverse().map(p=>`<tr><td>${esc(p.family)}</td><td class="mono">${esc(p.target)}</td><td>${p.count}</td><td>${p.timeout}s</td><td>${badge(p.status)} <span class="small">rc=${p.rc}</span></td></tr>`).join('')||'<tr><td colspan="5" class="empty">No probes yet.</td></tr>';
 }
 async function refresh(){try{let r=await fetch('/api/state');render(await r.json());}catch(e){$('message').textContent='Dashboard request failed: '+e;}}
-async function control(payload){document.querySelectorAll('button').forEach(b=>b.disabled=true);$('ruleError').textContent='';$('pingError').textContent='';try{let r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'control failed');await refresh();if(d.resolved_target&&d.requested_target!==d.resolved_target)$('message').textContent=`Resolved ${d.requested_target} -> ${d.resolved_target}; guest IPv4 ping sent.`;}catch(e){$('message').textContent=String(e);$('ruleError').textContent=String(e);}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
+async function control(payload){document.querySelectorAll('button').forEach(b=>b.disabled=true);$('ruleError').textContent='';$('pingError').textContent='';$('experimentError').textContent='';try{let r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let d=await r.json();if(!r.ok||!d.ok)throw new Error(d.error||'control failed');await refresh();if(d.resolved_target&&d.requested_target!==d.resolved_target)$('message').textContent=`Resolved ${d.requested_target} -> ${d.resolved_target}; guest IPv4 ping sent.`;}catch(e){$('message').textContent=String(e);const box=['directional-probe','rule-and-probe','lab-profile','lab','clear-experiments'].includes(payload.command)?$('experimentError'):$('ruleError');if(box)box.textContent=String(e);}finally{document.querySelectorAll('button').forEach(b=>b.disabled=false);}}
 document.querySelectorAll('[data-command]').forEach(b=>b.onclick=()=>control({command:b.dataset.command}));$('runScenario').onclick=()=>control({command:'scenario',scenario:$('scenario').value});$('familyFilter').onchange=refresh;
 $('snapshotSelect').onchange=()=>{let x=$('snapshotSelect').value;if(x&&state.snapshots[x]){state.rules=state.snapshots[x].rules;state.chains=state.snapshots[x].chains;render(state);}};
 document.querySelectorAll('[data-rule]').forEach(b=>b.onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:b.dataset.rule}));document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{let p={v4drop:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j DROP'],v4accept:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT'],v4nat:['iptables','-t nat -A POSTROUTING -j MASQUERADE'],v6drop:['ip6tables','-A FORWARD -p ipv6-icmp --icmpv6-type echo-request -j DROP']}[b.dataset.preset];$('ruleFamily').value=p[0];$('ruleArgs').value=p[1];control({command:'rule',family:p[0],args:p[1]});});$('applyRule').onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:$('ruleArgs').value});$('ping').onclick=()=>control({command:'ping',family:'4',target:$('pingTarget').value,count:$('pingCount').value,timeout:$('pingTimeout').value});$('pingLocalSuite').onclick=()=>control({command:'probe-suite',suite:'local'});$('pingExternalSuite').onclick=()=>control({command:'probe-suite',suite:'external'});refresh();setInterval(refresh,700);
 </script>
 <script>
+/* Keep protocol and command names in their conventional form, while making
+ * the explanatory dashboard copy readable for a Chinese-language demo.  The
+ * page contains several render paths (snapshot, probe, and linked labs), so
+ * translating text nodes after each render also covers dynamic rows. */
+document.documentElement.lang='zh-CN';
+const DASHBOARD_ZH=Object.freeze({
+  'Asterinas Netfilter Control Lab':'Asterinas Netfilter 控制实验室',
+  'Live IPv4/IPv6 rules, counters, packet-flow events, manual rule control, and IPv4 raw-socket ping probes.':'实时查看 IPv4/IPv6 规则、计数器、数据包流事件，手动控制规则，并执行 IPv4 Raw Socket Ping 探测。',
+  'Topology':'网络拓扑','socket unknown':'socket 未知','Left host':'左端主机','Asterinas router':'Asterinas 路由器','Right host':'右端主机',
+  'Interactive walkthrough':'交互式演示','Next step':'下一步','Reset':'重置','Filter scenario':'过滤场景','Conntrack scenario':'连接跟踪场景','NAT scenario':'NAT 场景','Run all':'运行全部','Run scenario':'运行场景','Refresh snapshot':'刷新快照',
+  'Manual iptables / ip6tables':'手动 iptables / ip6tables','Apply':'应用','Refresh all tables':'刷新所有表','Flush OUTPUT':'清空 OUTPUT','Flush FORWARD':'清空 FORWARD','Zero counters':'计数器归零','Zero filter counters':'过滤表计数器归零',
+  'IPv4 DROP echo':'IPv4 DROP 回显','IPv4 ACCEPT echo':'IPv4 ACCEPT 回显','IPv4 MASQUERADE':'IPv4 MASQUERADE','IPv6 FORWARD DROP':'IPv6 FORWARD DROP',
+  'Probe left -> right':'探测左 → 右','Probe right -> left':'探测右 → 左','Probe both directions':'探测双向','Observe actual result':'观察实际结果','Expect both pass':'预期双向通过','Expect left -> right only':'预期仅左 → 右通过','Expect right -> left only':'预期仅右 → 左通过','Expect both blocked':'预期双向阻断','Apply rule + probe':'应用规则并探测','Probe current rules':'探测当前规则',
+  'IPv4 raw-socket ping probe':'IPv4 Raw Socket Ping 探测','count':'次数','timeout':'超时','Ping in guest':'在 Guest 中 Ping','Run local IPv4':'运行本地 IPv4','Run external IPv4':'运行外网 IPv4',
+  'Live rule snapshot':'实时规则快照','All families':'全部协议族','Family':'协议族','Table':'表','Chain':'链','pkts':'包数','bytes':'字节','match':'匹配','target':'目标动作',
+  'Linked rule → traffic experiments':'规则联动 → 流量实验','Linked rule Ўъ traffic experiments':'规则联动 → 流量实验','Direction / probe':'方向 / 探测','Rules / packet flow':'规则 / 数据包流','Counter delta':'计数器变化','Apply profile':'应用配置','Apply + probe':'应用并探测','Clear experiments':'清空实验','Profile':'配置','left-to-right':'左 → 右','right-to-left':'右 → 左','both':'双向',
+  'Apply a real rule, then run endpoint pings through the same Guest. The expectation selector distinguishes a deliberate one-way DROP from an infrastructure failure; the experiment records both directions and counter deltas.':'应用真实规则后，通过同一个 Guest 执行端点 Ping。预期结果选择器可以区分有意设置的单向 DROP 与基础设施故障；实验会记录两个方向以及计数器变化。',
+  'Supported subset is explicit: filter/nat, append/insert/delete/flush/policy/zero/list, check (-C), replace (-R), and the matches implemented by the guest parser. This is not a shell.':'支持的子集是明确限定的：filter/nat、append/insert/delete/flush/policy/zero/list、check（-C）、replace（-R），以及 Guest 解析器已经实现的匹配条件。这不是 Shell。',
+  'The dashboard resolves a hostname\'s IPv4 A record on Ubuntu, then sends only the numeric address to the guest\'s':'仪表盘会在 Ubuntu 上解析主机名的 IPv4 A 记录，然后只把数值地址发送给 Guest 的',
+  '. Local smoke uses the isolated right endpoint; external smoke requires the reversible Ubuntu uplink helper (':'。本地连通性测试使用隔离拓扑右端点；外网测试需要可逆的 Ubuntu 上联网关工具（',
+  'Recipes are sent through the same procfs command path as manual input. ICMP forwarding profiles run real as2left/as2right probes; TCP/NAT profiles apply rules and capture the resulting rule snapshot without pretending that an ICMP ping tests TCP translation.':'实验方案通过与手动输入相同的 procfs 命令路径发送。ICMP 转发配置会对 as2left/as2right 执行真实探测；TCP/NAT 配置只应用规则并采集规则快照，不会把 ICMP Ping 冒充成 TCP 转换测试。',
+  'This profile writes real FORWARD policy/rules, probes both isolated namespaces, then joins /proc/netfilter_rules counters and packet-flow events.':'此配置会写入真实的 FORWARD 策略/规则，探测两个隔离命名空间，然后汇总 /proc/netfilter_rules 计数器和数据包流事件。',
+  'This profile writes real filter/NAT rules and records the resulting snapshot. TCP port/conntrack, MASQUERADE, DNAT, and -C/-R are shown as rule-only until their matching TCP/NAT traffic harness is selected.':'此配置会写入真实的 filter/NAT 规则并记录结果快照。在选择对应的 TCP/NAT 流量测试工具前，TCP 端口/连接跟踪、MASQUERADE、DNAT 以及 -C/-R 仅展示规则本身。',
+  'Chain policies':'链策略','Packet flows':'数据包流','Control / action timeline':'控制 / 操作时间线','policy':'策略','manual rule':'手动规则',
+  'No chain snapshot.':'暂无链快照。','No control events.':'暂无控制事件。','Waiting for packet-flow events.':'等待数据包流事件。','No probes yet.':'暂无探测记录。','No completed /proc/netfilter_rules snapshot yet.':'尚未生成完整的 /proc/netfilter_rules 快照。','No linked experiments yet. Apply a rule or choose a recipe.':'暂无规则联动实验。请应用规则或选择实验方案。',
+  'rule-only':'仅规则','no matched packets':'没有匹配到数据包','PASS':'通过','FAIL':'失败','OBSERVE':'观察','PENDING':'待处理','RUNNING':'运行中','idle':'空闲',
+  'Stop guest':'停止 Guest','Clear':'清空','Restore':'恢复','Clear ping history':'清空 Ping 历史','Restore ping history':'恢复 Ping 历史','Reset rules + ping':'重置规则并 Ping',
+  'Use a deterministic local target or an external target':'使用固定的本地目标或外网目标','Local IPv4 target: requires stage2-router-topology setup and a live demo-step guest.':'本地 IPv4 目标：需要先完成拓扑 setup，并启动可用的 demo-step Guest。','External IPv4 target: requires setup-uplink and the guest default route.':'外网 IPv4 目标：需要先执行 setup-uplink，并确保 Guest 存在默认路由。',
+  'Clear this panel without changing guest rules or logs':'清空此面板，但不修改 Guest 规则或日志','Hide this panel without changing guest rules or logs':'隐藏此面板，但不修改 Guest 规则或日志','Hide ping rows without changing the guest trace':'隐藏 Ping 行，但不修改 Guest 追踪记录','Click Restore to show it again.':'点击“恢复”重新显示。',
+  'Send quit to the interactive guest after complete=1 is visible':'当 complete=1 出现后，向交互式 Guest 发送退出命令','Stop the interactive guest? Use this after the demo is complete.':'确定停止交互式 Guest？请在演示完成后使用。',
+  'IPv4 counter reset uses iptables; select iptables (IPv4) first.':'IPv4 计数器归零使用 iptables；请先选择 iptables（IPv4）。',
+  'No probes yet. Choose a local-topology preset first.':'暂无探测记录，请先选择本地拓扑预设。',
+  'Local IPv4 presets exercise the isolated topology; the external preset requires the guest default route and IPv4 NAT.':'本地 IPv4 预设用于隔离拓扑；外网预设需要 Guest 默认路由和 IPv4 NAT。',
+  'control failed':'控制操作失败','not found':'未找到','Unsupported control command':'不支持的控制命令'
+});
+const DASHBOARD_PREFIXES=[
+  [/^Current:\s*/, '当前步骤：'],
+  [/^current:\s*/, '当前：'],
+  [/^Dashboard request failed:\s*/, '仪表盘请求失败：'],
+  [/^Last DNS:\s*/, '最近一次 DNS 解析：'],
+  [/^Last probe passed:\s*/, '最近一次探测成功：'],
+  [/^Last probe did not receive a reply:\s*/, '最近一次探测未收到回复：'],
+  [/^Resolved (.+) -> (.+); guest IPv4 ping sent\.$/, '已解析 $1 → $2；已向 Guest 发送 IPv4 Ping。'],
+];
+function translateDashboard(){
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  let node;
+  while(node=walker.nextNode()){
+    if(node.parentElement && node.parentElement.closest('script,style')) continue;
+    const value=node.nodeValue||''; const leading=value.match(/^\s*/)[0]; const trailing=value.match(/\s*$/)[0]; const trimmed=value.trim();
+    if(!trimmed) continue;
+    let translated=DASHBOARD_ZH[trimmed];
+    if(!translated){
+      for(const [pattern,replacement] of DASHBOARD_PREFIXES){ if(pattern.test(trimmed)){ translated=trimmed.replace(pattern,replacement); break; } }
+    }
+    if(translated && translated!==trimmed) node.nodeValue=leading+translated+trailing;
+  }
+  document.querySelectorAll('[placeholder],[title]').forEach(element=>{
+    for(const attribute of ['placeholder','title']){
+      const value=element.getAttribute(attribute); if(!value) continue;
+      if(DASHBOARD_ZH[value]) element.setAttribute(attribute,DASHBOARD_ZH[value]);
+    }
+  });
+}
 /* Stage13E: keep the guest trace immutable while making the live view usable
  * during a long manual session.  The three clear buttons only hide browser
  * panels; they never flush a guest chain or delete evidence from the log. */
@@ -595,8 +885,51 @@ function addPingPresets(){
   select.value='v4-right'; sync(select.value);
 }
 const renderBase=render;
-render=function(s){renderBase(s);addPanelTools();addStopButton();addManualIsolationTools();addPingPresets();renderProbeDiagnostics(s);applyPanelClear();};
-addPanelTools();addStopButton();addManualIsolationTools();addPingPresets();
+render=function(s){renderBase(s);addPanelTools();addStopButton();addManualIsolationTools();addPingPresets();renderProbeDiagnostics(s);applyPanelClear();translateDashboard();};
+addPanelTools();addStopButton();addManualIsolationTools();addPingPresets();translateDashboard();
+</script>
+<script>
+/* Linked experiments intentionally stay on top of the existing ABI.  Rules
+ * are still written with command=rule; the extra endpoints only sequence
+ * those writes, run fixed host namespace probes, and render the resulting
+ * counter delta. */
+let linkedLabWired=false;
+function renderLinkedLab(s){
+  const profile=$('labProfile');
+  if(profile){
+    const old=profile.value;
+    profile.innerHTML=Object.entries(s.lab_profiles||{}).map(([id,p])=>`<option value="${esc(id)}" data-probe="${esc(p.probe||'rule-only')}">${esc(p.label)}</option>`).join('');
+    if(old && [...profile.options].some(option=>option.value===old)) profile.value=old;
+    const selected=profile.options[profile.selectedIndex];
+    const isIcmp=selected && selected.dataset.probe==='icmp';
+    $('labDirection').disabled=!isIcmp;
+    $('labCount').disabled=!isIcmp;
+    $('labTimeout').disabled=!isIcmp;
+    $('runProfile').textContent=isIcmp?'Apply + directional ping':'Apply + snapshot';
+    $('labHint').textContent=isIcmp?
+      'This profile writes real FORWARD policy/rules, probes both isolated namespaces, then joins /proc/netfilter_rules counters and packet-flow events.':
+      'This profile writes real filter/NAT rules and records the resulting snapshot. TCP port/conntrack, MASQUERADE, DNAT, and -C/-R are shown as rule-only until their matching TCP/NAT traffic harness is selected.';
+  }
+  const rows=(s.experiments||[]).slice().reverse();
+  const table=$('experiments');
+  if(table) table.innerHTML=rows.length?rows.map(e=>{
+    const probes=(e.probes||[]).map(p=>`${esc(p.direction)} ${badge(p.status)} rc=${esc(p.rc)}`).join('<br>')||'rule-only';
+    const flows=(e.flows||[]).slice(-6).map(f=>`${esc(f.flow||'')} ${badge(f.verdict||'')}`).join('<br>');
+    const deltas=(e.counter_deltas||[]).map(d=>`${esc(d.chain||'')}#${esc(d.number)} +${esc(d.packets)} pkts/+${esc(d.bytes)} bytes`).join('<br>')||'no matched packets';
+    return `<tr><td><b>${esc(e.profile_label||e.profile||'manual')}</b><br>${badge(e.status||'')}</td><td>${probes}</td><td class="mono">${esc(e.rule_summary||'')}${flows?`<hr><span class="small">${flows}</span>`:''}</td><td>${deltas}</td></tr>`;
+  }).join(''):'<tr><td colspan="4" class="empty">No linked experiments yet. Apply a rule or choose a recipe.</td></tr>';
+  if(linkedLabWired) return;
+  linkedLabWired=true;
+  const send=payload=>control(payload);
+  $('applyAndProbe').onclick=()=>send({command:'rule-and-probe',family:$('ruleFamily').value,args:$('ruleArgs').value,direction:$('linkedDirection').value,expectation:$('linkedExpectation').value,count:$('labCount').value,timeout:$('labTimeout').value});
+  $('probeCurrent').onclick=()=>send({command:'directional-probe',direction:$('linkedDirection').value,expectation:$('linkedExpectation').value,count:$('labCount').value,timeout:$('labTimeout').value});
+  $('applyProfile').onclick=()=>send({command:'lab-profile',profile:$('labProfile').value});
+  $('runProfile').onclick=()=>send({command:'lab',profile:$('labProfile').value,direction:$('labDirection').value,count:$('labCount').value,timeout:$('labTimeout').value});
+  $('labProfile').onchange=()=>renderLinkedLab(s);
+  $('clearExperiments').onclick=()=>send({command:'clear-experiments'});
+}
+const renderLinkedBase=render;
+render=function(s){renderLinkedBase(s);renderLinkedLab(s);translateDashboard();};
 </script></body></html>'''
 
 
@@ -620,8 +953,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # keep the dashboard alive on a partial serial line
                 state = empty_state(self.server.log_path)
                 state["connected"] = self.server.control.is_connected()
-                state["message"] = f"State reader error: {type(exc).__name__}: {exc}"
+                state["message"] = f"状态读取器错误：{type(exc).__name__}：{exc}"
             state["resolutions"] = self.server.resolution_snapshot()
+            state["experiments"] = self.server.experiment_snapshot()
+            state["experiment_summary"] = {
+                "passed": sum(1 for item in state["experiments"] if item.get("status") == "PASS"),
+                "failed": sum(1 for item in state["experiments"] if item.get("status") == "FAIL"),
+                "last": state["experiments"][-1] if state["experiments"] else None,
+            }
             self._json(state)
             return
         if path in ("/", "/index.html"):
@@ -632,20 +971,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
-        self._json({"ok": False, "error": "not found"}, 404)
+        self._json({"ok": False, "error": "未找到请求的资源"}, 404)
 
     def do_POST(self) -> None:
         if url_path(self.path) != "/api/control":
-            self._json({"ok": False, "error": "not found"}, 404)
+            self._json({"ok": False, "error": "未找到请求的资源"}, 404)
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             data = json.loads(self.rfile.read(length))
         except (ValueError, json.JSONDecodeError) as exc:
-            self._json({"ok": False, "error": f"invalid JSON: {exc}"}, 400)
+            self._json({"ok": False, "error": f"JSON 无效：{exc}"}, 400)
             return
         if not isinstance(data, dict):
-            self._json({"ok": False, "error": "JSON body must be an object"}, 400)
+            self._json({"ok": False, "error": "JSON 请求体必须是对象"}, 400)
             return
         command = data.get("command")
         wire = ""
@@ -654,7 +993,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         elif command == "scenario":
             scenario = data.get("scenario")
             if scenario not in ("filter", "conntrack", "nat", "all"):
-                self._json({"ok": False, "error": "unknown scenario"}, 400)
+                self._json({"ok": False, "error": "未知的场景"}, 400)
                 return
             wire = f"scenario {scenario}"
         elif command == "rule":
@@ -681,8 +1020,86 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if not ok:
                 self._json({"ok": False, "error": error}, 400)
                 return
+        elif command == "clear-experiments":
+            self.server.clear_experiments()
+            self._json({"ok": True, "command": command})
+            return
+        elif command in ("directional-probe", "rule-and-probe", "lab-profile", "lab"):
+            # These are orchestration commands, not shell passthrough.  The
+            # actual rule writes continue through the same validated Guest
+            # command path and the endpoint probes use the fixed namespace
+            # allow-list above.
+            if command in ("directional-probe", "rule-and-probe", "lab"):
+                valid, error, directions = validate_direction(data.get("direction", "both"))
+                if not valid:
+                    self._json({"ok": False, "error": error}, 400)
+                    return
+                valid, error, count_i, timeout_i = validate_probe_numbers(
+                    data.get("count", 2), data.get("timeout", 2)
+                )
+                if not valid:
+                    self._json({"ok": False, "error": error}, 400)
+                    return
+            expected = None
+            if command in ("directional-probe", "rule-and-probe"):
+                valid, error, expected = validate_expectation(data.get("expectation", "observe"))
+                if not valid:
+                    self._json({"ok": False, "error": error}, 400)
+                    return
+            if command == "directional-probe":
+                success, experiment = self.server.run_directional_experiment(
+                    directions, count_i, timeout_i, expected=expected
+                )
+                self._json({"ok": success, "experiment": experiment,
+                            "error": "一个或多个方向探测失败" if not success else ""},
+                           200 if success else 424)
+                return
+            if command == "rule-and-probe":
+                if data.get("family") != "iptables":
+                    self._json({
+                        "ok": False,
+                        "error": "方向性 IPv4 探测需要使用 iptables（IPv4）；ip6tables 请单独应用，并查看 IPv6 快照",
+                    }, 400)
+                    return
+                valid, error, wire = validate_rule(data.get("family"), data.get("args"))
+                if not valid:
+                    self._json({"ok": False, "error": error}, 400)
+                    return
+                ok, result = self.server._send_guest(wire)
+                if not ok:
+                    self._json({"ok": False, "error": result}, 409)
+                    return
+                success, experiment = self.server.run_directional_experiment(
+                    directions, count_i, timeout_i,
+                    profile="manual-rule", profile_label=f"Manual: {wire}", rules=[wire],
+                    expected=expected,
+                )
+                self._json({"ok": success, "command": wire, "experiment": experiment,
+                            "error": "一个或多个方向探测失败" if not success else ""},
+                           200 if success else 424)
+                return
+            valid, error, definition = validate_lab_profile(data.get("profile"))
+            if not valid:
+                self._json({"ok": False, "error": error}, 400)
+                return
+            profile = str(data["profile"])
+            if command == "lab-profile":
+                success, error, experiment = self.server.run_profile(
+                    profile, [], 1, 1, probe=False
+                )
+            else:
+                success, error, experiment = self.server.run_profile(
+                    profile, directions, count_i, timeout_i, probe=True
+                )
+            response = {"ok": success, "experiment": experiment}
+            if error:
+                response["error"] = error
+            elif not success:
+                response["error"] = "未满足实验配置的预期结果"
+            self._json(response, 200 if success else 424)
+            return
         else:
-            self._json({"ok": False, "error": "unsupported control command"}, 400)
+            self._json({"ok": False, "error": "不支持的控制命令"}, 400)
             return
         ok, result = self.server.control.send(wire)
         if not ok:
@@ -715,6 +1132,10 @@ class DashboardServer(ThreadingHTTPServer):
         self.resolution_lock = threading.Lock()
         self.resolutions: List[dict] = []
         self.resolution_log_path = log_path.with_name("netfilter-dashboard-resolution.log")
+        self.experiment_lock = threading.RLock()
+        self.experiments: List[dict] = []
+        self.experiment_sequence = 0
+        self.experiment_log_path = log_path.with_name("netfilter-dashboard-experiments.log")
         super().__init__(address, DashboardHandler)
 
     def record_resolution(self, requested: str, resolved: str) -> None:
@@ -737,6 +1158,154 @@ class DashboardServer(ThreadingHTTPServer):
         with self.resolution_lock:
             return list(self.resolutions)
 
+    def experiment_snapshot(self) -> List[dict]:
+        with self.experiment_lock:
+            return list(self.experiments)
+
+    def clear_experiments(self) -> None:
+        """Clear only the dashboard's bounded experiment view.
+
+        Guest rules, counters, serial evidence, and the JSONL audit file are
+        intentionally preserved.  This is the same non-destructive behavior
+        as the existing panel Clear buttons.
+        """
+        with self.experiment_lock:
+            self.experiments.clear()
+
+    def _record_experiment(self, event: dict) -> dict:
+        with self.experiment_lock:
+            self.experiment_sequence += 1
+            event = dict(event)
+            event.setdefault("id", self.experiment_sequence)
+            event.setdefault("time", time.strftime("%Y-%m-%d %H:%M:%S"))
+            self.experiments.append(event)
+            del self.experiments[:-40]
+            try:
+                self.experiment_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.experiment_log_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(event, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
+            return event
+
+    def _send_guest(self, command: str) -> Tuple[bool, str]:
+        ok, result = self.control.send(command)
+        if ok:
+            # The guest command ABI is deliberately fire-and-forget.  A short
+            # gap prevents a burst of recipe commands from racing fgets().
+            time.sleep(0.12)
+        return ok, result
+
+    def _snapshot_rules(self) -> dict:
+        return read_state(self.log_path, self.control.is_connected())
+
+    def _apply_actions(self, actions: Iterable[Tuple[str, str]]) -> Tuple[bool, str, List[str]]:
+        rendered: List[str] = []
+        for family, args in actions:
+            command = family if family == "reset" else f"{family} {args}"
+            ok, result = self._send_guest(command)
+            rendered.append(command)
+            if not ok:
+                return False, result, rendered
+        # Ask the guest for an explicit post-configuration snapshot.  This is
+        # separate from the per-rule snapshots and makes the experiment table
+        # unambiguous after a multi-command recipe.
+        ok, result = self._send_guest("snapshot")
+        if not ok:
+            return False, result, rendered
+        return True, "", rendered
+
+    def _run_directional(self, directions: Iterable[str], count: int, timeout: int) -> List[dict]:
+        return [run_namespace_ping(direction, count, timeout) for direction in directions]
+
+    def _record_experiment_result(
+        self, profile: str, label: str, rules: List[str], probes: List[dict],
+        before: dict, after: dict, expected: Optional[Dict[str, bool]] = None,
+    ) -> dict:
+        if expected is None:
+            # Manual "observe" mode reports the real result without claiming
+            # that a blocked direction is an infrastructure failure.
+            for probe in probes:
+                probe["expectation"] = "observe"
+                probe["expectation_met"] = None
+            status = "OBSERVE" if probes else "PASS"
+        else:
+            for probe in probes:
+                if probe["direction"] in expected:
+                    probe["expected"] = "PASS" if expected[probe["direction"]] else "BLOCK"
+                    probe["expectation_met"] = (
+                        (probe["rc"] == 0) == expected[probe["direction"]]
+                    )
+                else:
+                    probe["expectation_met"] = probe["rc"] == 0
+            passed = bool(probes) and all(probe["expectation_met"] for probe in probes)
+            if not probes:
+                passed = True
+            status = "PASS" if passed else "FAIL"
+        event = self._record_experiment({
+            "profile": profile,
+            "profile_label": label,
+            "status": status,
+            "rule_summary": " ; ".join(rules),
+            "flows": after.get("flows", [])[-8:],
+            "probes": probes,
+            "counter_deltas": counter_deltas(before.get("rules", []), after.get("rules", [])),
+        })
+        return event
+
+    def run_directional_experiment(
+        self, directions: List[str], count: int, timeout: int,
+        profile: str = "manual", profile_label: str = "Manual rules",
+        rules: Optional[List[str]] = None,
+        expected: Optional[Dict[str, bool]] = None,
+    ) -> Tuple[bool, dict]:
+        with self.experiment_lock:
+            before = self._snapshot_rules()
+            probes = self._run_directional(directions, count, timeout)
+            self._send_guest("snapshot")
+            time.sleep(0.2)
+            after = self._snapshot_rules()
+            event = self._record_experiment_result(
+                profile, profile_label, rules or [], probes, before, after, expected
+            )
+            return event["status"] != "FAIL", event
+
+    def apply_profile(self, profile: str) -> Tuple[bool, str, List[str], dict]:
+        definition = LAB_PROFILES[profile]
+        before = self._snapshot_rules()
+        ok, error, rendered = self._apply_actions(definition["actions"])
+        if not ok:
+            return False, error, rendered, before
+        time.sleep(0.2)
+        return True, "", rendered, before
+
+    def run_profile(
+        self, profile: str, directions: List[str], count: int, timeout: int,
+        probe: bool,
+    ) -> Tuple[bool, str, dict]:
+        definition = LAB_PROFILES[profile]
+        with self.experiment_lock:
+            before = self._snapshot_rules()
+            ok, error, rendered = self._apply_actions(definition["actions"])
+            if not ok:
+                return False, error, {}
+            # Directional ICMP is a valid traffic check only for the
+            # forwarding-policy recipes.  TCP port/conntrack and NAT recipes
+            # still get a complete rule snapshot, but must not be reported as
+            # failed merely because an unrelated ICMP probe was attempted.
+            probes = (
+                self._run_directional(directions, count, timeout)
+                if probe and definition.get("probe") == "icmp" else []
+            )
+            self._send_guest("snapshot")
+            time.sleep(0.2)
+            after = self._snapshot_rules()
+            event = self._record_experiment_result(
+                profile, definition["label"], rendered, probes,
+                before, after, definition.get("expected"),
+            )
+            return event["status"] == "PASS", "", event
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -745,9 +1314,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
-    print(f"Asterinas Netfilter Control Lab: http://{args.host}:{args.port}/", flush=True)
-    print(f"Following log: {args.log}", flush=True)
-    print(f"Controlling QEMU socket: {args.control_socket}", flush=True)
+    print(f"Asterinas Netfilter 控制实验室：http://{args.host}:{args.port}/", flush=True)
+    print(f"跟踪日志：{args.log}", flush=True)
+    print(f"控制 QEMU socket：{args.control_socket}", flush=True)
     DashboardServer((args.host, args.port), args.log, args.control_socket).serve_forever()
 
 
