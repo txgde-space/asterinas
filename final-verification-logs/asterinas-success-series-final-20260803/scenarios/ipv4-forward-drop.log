@@ -1,0 +1,11 @@
+===== forward-drop / test-forward-drop =====
+Testing FORWARD-chain ICMP DROP through Asterinas...
+===== forward-drop / test-forward-drop =====
+Testing FORWARD-chain ICMP DROP through Asterinas...
+===== forward-drop / test-forward-drop =====
+Testing FORWARD-chain ICMP DROP through Asterinas...
+PING 10.0.3.2 (10.0.3.2) 56(84) bytes of data.
+
+--- 10.0.3.2 ping statistics ---
+4 packets transmitted, 0 received, 100% packet loss, time 3061ms
+netfilter-stage3: FORWARD ICMP DROP passed
