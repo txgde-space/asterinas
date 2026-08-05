@@ -18,6 +18,9 @@ SCHEME ?= ""
 SMP ?= 1
 OSTD_TASK_STACK_SIZE_IN_PAGES ?= 64
 FEATURES ?=
+# The dashboard/QEMU helper may redirect the interactive transcript to a
+# caller-selected evidence directory. Keep the historical path as default.
+NETFILTER_DEMO_SERIAL_LOG ?= stage-records/demo/netfilter-demo-step-serial.log
 NO_DEFAULT_FEATURES ?= 0
 COVERAGE ?= 0
 EXTRA_KCMD_ARGS ?=
@@ -280,7 +283,7 @@ else ifeq ($(AUTO_TEST), demo)
 	@tail --lines 100 qemu.log | grep -q "^Netfilter demo trace passed." \
 		|| (echo "Netfilter demo failed" && exit 1)
 else ifeq ($(AUTO_TEST), demo-step)
-	@tail --lines 200 stage-records/demo/netfilter-demo-step-serial.log | grep -q "^NETFILTER_DEMO complete=1" \
+	@tail --lines 200 "$(NETFILTER_DEMO_SERIAL_LOG)" | grep -q "^NETFILTER_DEMO complete=1" \
 		|| (echo "Interactive Netfilter demo failed" && exit 1)
 else ifeq ($(AUTO_TEST), boot)
 	@tail --lines 100 qemu.log | grep -q "^Successfully booted." \

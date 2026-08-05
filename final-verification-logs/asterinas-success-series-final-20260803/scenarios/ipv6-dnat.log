@@ -1,0 +1,18 @@
+===== ipv6-dnat / test-ipv6-dnat =====
+Testing IPv6 PREROUTING DNAT to the right endpoint...
+PING fd00:0:0:3::15 (fd00:0:0:3::15) 56 data bytes
+64 bytes from fd00:0:0:3::15: icmp_seq=1 ttl=63 time=0.731 ms
+64 bytes from fd00:0:0:3::15: icmp_seq=2 ttl=63 time=0.400 ms
+64 bytes from fd00:0:0:3::15: icmp_seq=3 ttl=63 time=0.389 ms
+64 bytes from fd00:0:0:3::15: icmp_seq=4 ttl=63 time=0.443 ms
+
+--- fd00:0:0:3::15 ping statistics ---
+4 packets transmitted, 4 received, 0% packet loss, time 3089ms
+rtt min/avg/max/mdev = 0.389/0.490/0.731/0.140 ms
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on as2br1, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+23:15:05.831849 IP6 fd00:0:0:2::2 > fd00:0:0:3::2: ICMP6, echo request, id 3274, seq 1, length 64
+1 packet captured
+1 packet received by filter
+0 packets dropped by kernel
+netfilter-stage12: stateful IPv6 DNAT passed

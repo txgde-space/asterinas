@@ -1,0 +1,32 @@
+--- uplink state ---
+uplink_if=ens33
+uplink_if6=
+left_ns=as2left
+left_br=as2br0
+root_veth=as2uplink0
+ns_veth=as2uplink1
+sysctl_net_ipv4_ip_forward=1
+sysctl_net_ipv6_conf_all_forwarding=1
+ipv6_nat=unavailable
+configured=1
+--- host route ---
+default via 192.168.255.2 dev ens33 proto dhcp src 192.168.255.128 metric 100 
+--- namespace addresses/routes ---
+as2uplink1@if113 UP             172.31.255.2/30 fd00:ffff:2::2/64 fe80::4c4f:c3ff:fe80:4616/64 
+default via 172.31.255.1 dev as2uplink1 
+10.0.2.0/24 dev eth0 proto kernel scope link src 10.0.2.2 
+10.0.3.0/24 via 10.0.2.15 dev eth0 
+172.31.255.0/30 dev as2uplink1 proto kernel scope link src 172.31.255.2 
+fd00:0:0:2::/64 dev eth0 proto kernel metric 256 pref medium
+fd00:0:0:3::/64 via fd00:0:0:2::15 dev eth0 metric 1024 pref medium
+fd00:ffff:2::/64 dev as2uplink1 proto kernel metric 256 pref medium
+fe80::/64 dev eth0 proto kernel metric 256 pref medium
+fe80::/64 dev as2uplink1 proto kernel metric 256 pref medium
+default via fd00:ffff:2::1 dev as2uplink1 metric 1024 pref medium
+--- external probes from left namespace ---
+PING 1.1.1.1 (1.1.1.1) 56(84) bytes of data.
+64 bytes from 1.1.1.1: icmp_seq=1 ttl=127 time=0.515 ms
+
+--- 1.1.1.1 ping statistics ---
+1 packets transmitted, 1 received, 0% packet loss, time 0ms
+rtt min/avg/max/mdev = 0.515/0.515/0.515/0.000 ms
