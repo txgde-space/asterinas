@@ -8,7 +8,7 @@ use crate::{
     net::socket::{
         ip::{
             addr::new_visible_local_endpoint,
-            common::{bind_port, get_ephemeral_endpoint},
+            common::{bind_port_set, get_ephemeral_endpoint},
         },
         util::datagram_common,
     },
@@ -42,18 +42,22 @@ impl datagram_common::Unbound for UnboundDatagram {
         pollee: &Pollee,
         options: BindOptions,
     ) -> Result<Self::Bound> {
-        let bound_port = bind_port(endpoint, options.can_reuse)?;
-        let local_endpoint = new_visible_local_endpoint(endpoint, &bound_port);
+        let bound_ports = bind_port_set(endpoint, options.can_reuse)?;
+        let local_endpoint = new_visible_local_endpoint(endpoint, &bound_ports[0]);
 
-        let bound_socket =
-            match UdpSocket::new_bind(bound_port, DatagramObserver::new(pollee.clone())) {
-                Ok(bound_socket) => bound_socket,
-                Err((_, err)) => {
-                    unreachable!("`new_bind` fails with {:?}, which should not happen", err)
-                }
-            };
+        let mut bound_sockets = Vec::with_capacity(bound_ports.len());
+        for bound_port in bound_ports {
+            let bound_socket =
+                match UdpSocket::new_bind(bound_port, DatagramObserver::new(pollee.clone())) {
+                    Ok(bound_socket) => bound_socket,
+                    Err((_, err)) => {
+                        unreachable!("`new_bind` fails with {:?}, which should not happen", err)
+                    }
+                };
+            bound_sockets.push(bound_socket);
+        }
 
-        Ok(BoundDatagram::new(bound_socket, local_endpoint))
+        Ok(BoundDatagram::new(bound_sockets, local_endpoint))
     }
 
     fn bind_ephemeral(

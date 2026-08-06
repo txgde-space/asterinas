@@ -13,15 +13,15 @@ use crate::{
     net::{
         iface::is_broadcast_endpoint,
         socket::{
-            Socket,
             ip::options::{IpOptionSet, SetIpLevelOption},
-            options::{Error as SocketError, SocketOption, macros::sock_option_mut},
+            options::{macros::sock_option_mut, Error as SocketError, SocketOption},
             private::SocketPrivate,
             util::{
-                MessageHeader, SendRecvFlags, SocketAddr,
-                datagram_common::{Bound, Inner, select_remote_and_bind},
+                datagram_common::{select_remote_and_bind, Inner},
                 options::{GetSocketLevelOption, SetSocketLevelOption, SocketOptionSet},
+                MessageHeader, SendRecvFlags, SocketAddr,
             },
+            Socket,
         },
     },
     prelude::*,
@@ -89,7 +89,7 @@ impl DatagramSocket {
         &self,
         reader: &mut dyn MultiRead,
         remote: Option<&IpEndpoint>,
-        flags: SendRecvFlags,
+        _flags: SendRecvFlags,
     ) -> Result<usize> {
         let (sent_bytes, iface_to_poll) = select_remote_and_bind(
             &self.inner,
@@ -106,9 +106,7 @@ impl DatagramSocket {
                     .bind_ephemeral(remote_endpoint, &self.pollee)
             },
             |bound_datagram, remote_endpoint| {
-                let sent_bytes = bound_datagram.try_send(reader, remote_endpoint, flags)?;
-                let iface_to_poll = bound_datagram.iface().clone();
-                Ok((sent_bytes, iface_to_poll))
+                bound_datagram.try_send_with_iface(reader, remote_endpoint)
             },
         )?;
 
@@ -275,17 +273,17 @@ impl Socket for DatagramSocket {
             Ok(need_iface_poll) => need_iface_poll,
         };
 
-        let iface_to_poll = need_iface_poll
+        let ifaces_to_poll = need_iface_poll
             .then(|| match &*inner {
-                Inner::Unbound(_) => None,
-                Inner::Bound(bound_datagram) => Some(bound_datagram.iface().clone()),
+                Inner::Unbound(_) => Vec::new(),
+                Inner::Bound(bound_datagram) => bound_datagram.ifaces().cloned().collect(),
             })
-            .flatten();
+            .unwrap_or_default();
 
         drop(inner);
         drop(options);
 
-        if let Some(iface) = iface_to_poll {
+        for iface in ifaces_to_poll {
             iface.poll();
         }
 
@@ -309,7 +307,7 @@ impl SetSocketLevelOption for Inner<UnboundDatagram, BoundDatagram> {
             return;
         };
 
-        bound.bound_port().set_can_reuse(reuse_addr);
+        bound.set_can_reuse(reuse_addr);
     }
 }
 
