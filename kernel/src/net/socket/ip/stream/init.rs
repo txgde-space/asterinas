@@ -18,7 +18,7 @@ use crate::{
         socket::{
             ip::{
                 addr::new_visible_local_endpoint,
-                common::{bind_listener_ports, bind_port, get_ephemeral_endpoint},
+                common::{bind_port, bind_wildcard_ports, get_ephemeral_endpoint},
             },
             util::SocketAddr,
         },
@@ -208,7 +208,7 @@ impl InitStream {
             }
         };
 
-        let bound_ports = match bind_listener_ports(bound_port, &local_endpoint, can_reuse) {
+        let bound_ports = match bind_wildcard_ports(bound_port, &local_endpoint, can_reuse) {
             Ok(bound_ports) => bound_ports,
             Err((error, bound_port)) => {
                 return Err((

@@ -14,5 +14,5 @@ pub use common::{BoundPort, InterfaceFlags, InterfaceType};
 pub use iface::Iface;
 pub use phy::{EtherIface, IpIface};
 pub(crate) use poll_iface::{PollKey, PollableIfaceMut};
-pub use port::BindPortConfig;
+pub use port::{BindPortConfig, EPHEMERAL_PORT_END, EPHEMERAL_PORT_START};
 pub use sched::ScheduleNextPoll;

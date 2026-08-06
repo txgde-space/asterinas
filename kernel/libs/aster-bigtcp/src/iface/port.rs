@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
+/// 默认临时端口范围的起始端口
+pub const EPHEMERAL_PORT_START: u16 = 32768;
+
+/// 默认临时端口范围的结束端口
+pub const EPHEMERAL_PORT_END: u16 = 60999;
+
 /// The configuration using for bind to a TCP/UDP port.
 pub enum BindPortConfig {
     /// Binds to the specified non-reusable port.

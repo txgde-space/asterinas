@@ -23,7 +23,7 @@ use super::{
     Iface,
     poll::{FnHelper, PollContext, SocketTableAction},
     poll_iface::PollableIface,
-    port::BindPortConfig,
+    port::{BindPortConfig, EPHEMERAL_PORT_END, EPHEMERAL_PORT_START},
     time::get_network_timestamp,
 };
 use crate::{
@@ -168,9 +168,6 @@ impl<E: Ext> IfaceCommon<E> {
     }
 }
 
-const IP_LOCAL_PORT_START: u16 = 32768;
-const IP_LOCAL_PORT_END: u16 = 60999;
-
 impl<E: Ext> IfaceCommon<E> {
     pub(super) fn bind(
         &self,
@@ -194,7 +191,7 @@ impl<E: Ext> IfaceCommon<E> {
         used_ports: &mut BTreeMap<u16, PortState>,
         _can_reuse: bool,
     ) -> Option<u16> {
-        for port in IP_LOCAL_PORT_START..=IP_LOCAL_PORT_END {
+        for port in EPHEMERAL_PORT_START..=EPHEMERAL_PORT_END {
             if let Entry::Vacant(..) = used_ports.entry(port) {
                 return Some(port);
             }
