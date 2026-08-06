@@ -834,11 +834,8 @@ impl SetSocketLevelOption for State {
     fn set_reuse_addr(&self, reuse_addr: bool) {
         let bound_port = match self {
             State::Init(init_stream) => {
-                if let Some(bound_port) = init_stream.bound_port() {
-                    bound_port
-                } else {
-                    return;
-                }
+                init_stream.set_can_reuse(reuse_addr);
+                return;
             }
             State::Connecting(connecting_stream) => connecting_stream.bound_port(),
             State::Connected(connected_stream) => connected_stream.bound_port(),

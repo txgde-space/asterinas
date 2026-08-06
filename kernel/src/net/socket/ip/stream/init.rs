@@ -18,7 +18,7 @@ use crate::{
         socket::{
             ip::{
                 addr::new_visible_local_endpoint,
-                common::{bind_port, bind_wildcard_ports, get_ephemeral_endpoint},
+                common::{bind_port, bind_port_set, get_ephemeral_endpoint, get_iface_for_remote},
             },
             util::SocketAddr,
         },
@@ -27,7 +27,7 @@ use crate::{
 };
 
 pub(super) struct InitStream {
-    bound_port: Option<BoundPort>,
+    bound_ports: Option<Vec<BoundPort>>,
     local_endpoint: Option<IpEndpoint>,
     /// Indicates if the last `connect()` is considered to be done.
     ///
@@ -54,7 +54,7 @@ pub(super) struct InitStream {
 impl InitStream {
     pub(super) fn new() -> Self {
         Self {
-            bound_port: None,
+            bound_ports: None,
             local_endpoint: None,
             is_connect_done: true,
             is_conn_refused: AtomicBool::new(false),
@@ -65,8 +65,16 @@ impl InitStream {
         bound_port: BoundPort,
         local_endpoint: Option<IpEndpoint>,
     ) -> Self {
+        Self::new_bound_ports_with_local_endpoint(Vec::from([bound_port]), local_endpoint)
+    }
+
+    fn new_bound_ports_with_local_endpoint(
+        bound_ports: Vec<BoundPort>,
+        local_endpoint: Option<IpEndpoint>,
+    ) -> Self {
+        debug_assert!(!bound_ports.is_empty());
         Self {
-            bound_port: Some(bound_port),
+            bound_ports: Some(bound_ports),
             local_endpoint,
             is_connect_done: true,
             is_conn_refused: AtomicBool::new(false),
@@ -83,7 +91,7 @@ impl InitStream {
         local_endpoint: Option<IpEndpoint>,
     ) -> Self {
         Self {
-            bound_port: Some(bound_port),
+            bound_ports: Some(Vec::from([bound_port])),
             local_endpoint,
             is_connect_done: false,
             is_conn_refused: AtomicBool::new(true),
@@ -91,20 +99,25 @@ impl InitStream {
     }
 
     pub(super) fn bind(&mut self, endpoint: &IpEndpoint, can_reuse: bool) -> Result<()> {
-        if self.bound_port.is_some() {
+        if self.bound_ports.is_some() {
             return_errno_with_message!(Errno::EINVAL, "the socket is already bound to an address");
         }
 
-        let bound_port = bind_port(endpoint, can_reuse)?;
-        let local_endpoint = new_visible_local_endpoint(endpoint, &bound_port);
-        self.bound_port = Some(bound_port);
+        let bound_ports = bind_port_set(endpoint, can_reuse)?;
+        let local_endpoint = new_visible_local_endpoint(endpoint, &bound_ports[0]);
+        self.bound_ports = Some(bound_ports);
         self.local_endpoint = Some(local_endpoint);
 
         Ok(())
     }
 
-    pub(super) fn bound_port(&self) -> Option<&BoundPort> {
-        self.bound_port.as_ref()
+    pub(super) fn set_can_reuse(&self, can_reuse: bool) {
+        let Some(bound_ports) = &self.bound_ports else {
+            return;
+        };
+        for bound_port in bound_ports {
+            bound_port.set_can_reuse(can_reuse);
+        }
     }
 
     pub(super) fn connect(
@@ -119,7 +132,19 @@ impl InitStream {
             "`finish_last_connect()` should be called before calling `connect()`"
         );
 
-        let (bound_port, local_endpoint) = if let Some(bound_port) = self.bound_port {
+        let (bound_port, local_endpoint) = if let Some(bound_ports) = self.bound_ports {
+            let bound_port = match take_bound_port_for_remote(bound_ports, remote_endpoint) {
+                Ok(bound_port) => bound_port,
+                Err(bound_ports) => {
+                    return Err((
+                        Error::with_message(
+                            Errno::EADDRNOTAVAIL,
+                            "the wildcard socket is not bound to the selected interface",
+                        ),
+                        Self::new_bound_ports_with_local_endpoint(bound_ports, self.local_endpoint),
+                    ));
+                }
+            };
             (bound_port, self.local_endpoint)
         } else {
             let endpoint = get_ephemeral_endpoint(remote_endpoint);
@@ -187,48 +212,33 @@ impl InitStream {
             ));
         }
 
-        let (bound_port, local_endpoint) = if let Some(bound_port) = self.bound_port {
+        let (bound_ports, local_endpoint) = if let Some(bound_ports) = self.bound_ports {
             // 已经显式 bind() 过的 socket，继续使用原有用户可见本地端点。
             let local_endpoint = self
                 .local_endpoint
-                .unwrap_or_else(|| bound_port.endpoint().unwrap());
-            (bound_port, local_endpoint)
+                .unwrap_or_else(|| bound_ports[0].endpoint().unwrap());
+            (bound_ports, local_endpoint)
         } else {
             // Linux 允许未 bind 的 TCP socket 直接 listen()；
             // 内核会隐式绑定到 INADDR_ANY:0，再分配一个临时端口。
             let endpoint = IpEndpoint::new(IpAddress::Ipv4(Ipv4Address::UNSPECIFIED), 0);
-            match bind_port(&endpoint, can_reuse) {
-                Ok(bound_port) => {
+            match bind_port_set(&endpoint, can_reuse) {
+                Ok(bound_ports) => {
                     // 对内部来说，aster-bigtcp 可以使用具体 iface 地址收包；
                     // 对用户态来说，getsockname() 仍应看到 0.0.0.0:<ephemeral-port>。
-                    let local_endpoint = new_visible_local_endpoint(&endpoint, &bound_port);
-                    (bound_port, local_endpoint)
+                    let local_endpoint = new_visible_local_endpoint(&endpoint, &bound_ports[0]);
+                    (bound_ports, local_endpoint)
                 }
                 Err(err) => return Err((err, self)),
             }
         };
 
-        let bound_ports = match bind_wildcard_ports(bound_port, &local_endpoint, can_reuse) {
-            Ok(bound_ports) => bound_ports,
-            Err((error, bound_port)) => {
-                return Err((
-                    error,
-                    Self::new_bound_with_local_endpoint(bound_port, Some(local_endpoint)),
-                ));
-            }
-        };
-
         match ListenStream::new(bound_ports, local_endpoint, backlog, option, observer) {
             Ok(listen_stream) => Ok(listen_stream),
-            Err((bound_ports, error)) => {
-                let Some(bound_port) = bound_ports.into_iter().next() else {
-                    unreachable!("a listener binding set always contains the original port");
-                };
-                Err((
-                    error,
-                    Self::new_bound_with_local_endpoint(bound_port, Some(local_endpoint)),
-                ))
-            }
+            Err((bound_ports, error)) => Err((
+                error,
+                Self::new_bound_ports_with_local_endpoint(bound_ports, Some(local_endpoint)),
+            )),
         }
     }
 
@@ -284,4 +294,23 @@ impl InitStream {
             None
         }
     }
+}
+
+fn take_bound_port_for_remote(
+    mut bound_ports: Vec<BoundPort>,
+    remote_endpoint: &IpEndpoint,
+) -> core::result::Result<BoundPort, Vec<BoundPort>> {
+    if bound_ports.len() == 1 {
+        return Ok(bound_ports.pop().unwrap());
+    }
+
+    let iface_index = get_iface_for_remote(&remote_endpoint.addr).index();
+    let Some(position) = bound_ports
+        .iter()
+        .position(|bound_port| bound_port.iface().index() == iface_index)
+    else {
+        return Err(bound_ports);
+    };
+
+    Ok(bound_ports.swap_remove(position))
 }
