@@ -50,7 +50,9 @@ fn get_ephemeral_iface(remote_ip_addr: &IpAddress) -> Arc<Iface> {
         return default_service_iface();
     };
     if let Some(iface) = iter_all_ifaces().find(|iface| {
-        iface.ipv4_addr().is_some_and(|address| address == *remote_ipv4_addr)
+        iface
+            .ipv4_addr()
+            .is_some_and(|address| address == *remote_ipv4_addr)
     }) {
         return iface.clone();
     }
@@ -91,6 +93,45 @@ pub(super) fn bind_port(endpoint: &IpEndpoint, can_reuse: bool) -> Result<BoundP
     let bind_port_config = BindPortConfig::new(endpoint.port, can_reuse);
 
     Ok(iface.bind(bind_port_config)?)
+}
+
+/// Expands an `INADDR_ANY` listener binding to every IPv4 interface.
+///
+/// The first port is the original binding. If any additional reservation fails, all reservations
+/// made by this function are dropped and the original binding is returned to the caller.
+pub(super) fn bind_listener_ports(
+    bound_port: BoundPort,
+    visible_endpoint: &IpEndpoint,
+    can_reuse: bool,
+) -> core::result::Result<Vec<BoundPort>, (Error, BoundPort)> {
+    let IpAddress::Ipv4(visible_addr) = visible_endpoint.addr else {
+        return Ok(Vec::from([bound_port]));
+    };
+    if visible_addr != Ipv4Address::UNSPECIFIED {
+        return Ok(Vec::from([bound_port]));
+    }
+
+    let original_iface_index = bound_port.iface().index();
+    let port = bound_port.port();
+    let mut bound_ports = Vec::with_capacity(iter_all_ifaces().len());
+    bound_ports.push(bound_port);
+
+    for iface in iter_all_ifaces() {
+        if iface.index() == original_iface_index || iface.ipv4_addr().is_none() {
+            continue;
+        }
+
+        let config = BindPortConfig::new(port, can_reuse);
+        match iface.bind(config) {
+            Ok(additional_bound_port) => bound_ports.push(additional_bound_port),
+            Err(error) => {
+                let original_bound_port = bound_ports.swap_remove(0);
+                return Err((error.into(), original_bound_port));
+            }
+        }
+    }
+
+    Ok(bound_ports)
 }
 
 impl From<BindError> for Error {

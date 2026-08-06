@@ -168,6 +168,16 @@ impl<E: Ext> TcpListener<E> {
         connecting.values().for_each(|socket| socket.reset());
         connected.iter().for_each(|socket| socket.reset());
     }
+
+    /// 关闭监听器并返回其绑定端口
+    ///
+    /// 监听器从所属接口的套接字表中移除后，此方法才会成功返回
+    /// 此方法用于回滚一组未完整构造的监听器
+    pub fn into_bound_port(mut self) -> Option<BoundPort<E>> {
+        self.close();
+        let this: TcpListenerBg<E> = Arc::into_inner(self.0.take())?;
+        Some(this.bound)
+    }
 }
 
 impl<E: Ext> RawTcpSetOption for TcpListener<E> {

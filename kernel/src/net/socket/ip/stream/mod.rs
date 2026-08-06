@@ -803,7 +803,7 @@ impl State {
     ///
     /// For listening sockets, socket options are inherited by new connections. However, they are
     /// not updated for connections in the backlog queue.
-    fn set_raw_option<R>(&self, set_option: impl FnOnce(&dyn RawTcpSetOption) -> R) -> Option<R> {
+    fn set_raw_option<R>(&self, set_option: impl Fn(&dyn RawTcpSetOption) -> R) -> Option<R> {
         match self {
             State::Init(_) => None,
             State::Connecting(connecting_stream) => {
@@ -882,9 +882,10 @@ impl Drop for StreamSocket {
             State::Connecting(connecting_stream) => connecting_stream.into_connection(),
             State::Connected(connected_stream) => connected_stream.into_connection(),
             State::Listen(listen_stream) => {
-                let listener = listen_stream.into_listener();
-                listener.close();
-                listener.iface().poll();
+                for listener in listen_stream.into_listeners() {
+                    listener.close();
+                    listener.iface().poll();
+                }
                 return;
             }
         };

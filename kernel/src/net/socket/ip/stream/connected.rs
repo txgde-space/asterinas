@@ -208,10 +208,7 @@ impl ConnectedStream {
         }
     }
 
-    pub(super) fn set_raw_option<R>(
-        &self,
-        set_option: impl FnOnce(&dyn RawTcpSetOption) -> R,
-    ) -> R {
+    pub(super) fn set_raw_option<R>(&self, set_option: impl Fn(&dyn RawTcpSetOption) -> R) -> R {
         set_option(&self.tcp_conn)
     }
 

@@ -18,7 +18,7 @@ use crate::{
         socket::{
             ip::{
                 addr::new_visible_local_endpoint,
-                common::{bind_port, get_ephemeral_endpoint},
+                common::{bind_listener_ports, bind_port, get_ephemeral_endpoint},
             },
             util::SocketAddr,
         },
@@ -208,12 +208,27 @@ impl InitStream {
             }
         };
 
-        match ListenStream::new(bound_port, local_endpoint, backlog, option, observer) {
+        let bound_ports = match bind_listener_ports(bound_port, &local_endpoint, can_reuse) {
+            Ok(bound_ports) => bound_ports,
+            Err((error, bound_port)) => {
+                return Err((
+                    error,
+                    Self::new_bound_with_local_endpoint(bound_port, Some(local_endpoint)),
+                ));
+            }
+        };
+
+        match ListenStream::new(bound_ports, local_endpoint, backlog, option, observer) {
             Ok(listen_stream) => Ok(listen_stream),
-            Err((bound_port, error)) => Err((
-                error,
-                Self::new_bound_with_local_endpoint(bound_port, Some(local_endpoint)),
-            )),
+            Err((bound_ports, error)) => {
+                let Some(bound_port) = bound_ports.into_iter().next() else {
+                    unreachable!("a listener binding set always contains the original port");
+                };
+                Err((
+                    error,
+                    Self::new_bound_with_local_endpoint(bound_port, Some(local_endpoint)),
+                ))
+            }
         }
     }
 
