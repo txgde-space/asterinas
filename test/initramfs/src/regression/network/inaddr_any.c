@@ -203,6 +203,80 @@ FN_TEST(tcp_inaddr_any_connects_via_second_virtio)
 }
 END_TEST()
 
+FN_TEST(tcp_inaddr_any_reconnects_after_refusal)
+{
+	SKIP_TEST_IF(!local_addr_is_available(GUEST_SECOND_VIRTIO_ADDR));
+
+	struct sockaddr_in listen_addr;
+	struct sockaddr_in refused_addr;
+	struct sockaddr_in client_bind_addr;
+	struct sockaddr_in client_local_addr;
+	socklen_t listen_addrlen = sizeof(listen_addr);
+	socklen_t refused_addrlen = sizeof(refused_addr);
+	socklen_t client_bind_addrlen = sizeof(client_bind_addr);
+	socklen_t client_local_addrlen = sizeof(client_local_addr);
+	char buf = 'r';
+
+	int listen_fd = TEST_SUCC(socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0));
+	init_addr(&listen_addr, "127.0.0.1", 0);
+	TEST_SUCC(bind(listen_fd, (struct sockaddr *)&listen_addr,
+		       sizeof(listen_addr)));
+	TEST_SUCC(getsockname(listen_fd, (struct sockaddr *)&listen_addr,
+			      &listen_addrlen));
+	TEST_SUCC(listen(listen_fd, 1));
+
+	int refused_fd = TEST_SUCC(socket(AF_INET, SOCK_STREAM, 0));
+	init_addr(&refused_addr, GUEST_SECOND_VIRTIO_ADDR, 0);
+	TEST_SUCC(bind(refused_fd, (struct sockaddr *)&refused_addr,
+		       sizeof(refused_addr)));
+	TEST_SUCC(getsockname(refused_fd, (struct sockaddr *)&refused_addr,
+			      &refused_addrlen));
+	TEST_SUCC(close(refused_fd));
+
+	int client_fd = TEST_SUCC(socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0));
+	init_addr(&client_bind_addr, "0.0.0.0", 0);
+	TEST_SUCC(bind(client_fd, (struct sockaddr *)&client_bind_addr,
+		       sizeof(client_bind_addr)));
+	TEST_SUCC(getsockname(client_fd, (struct sockaddr *)&client_bind_addr,
+			      &client_bind_addrlen));
+	TEST_ERRNO(connect(client_fd, (struct sockaddr *)&refused_addr,
+			   sizeof(refused_addr)),
+		   EINPROGRESS);
+
+	struct pollfd client_poll_fd = { .fd = client_fd, .events = POLLOUT };
+	TEST_RES(poll(&client_poll_fd, 1, 1000),
+		 _ret == 1 && (client_poll_fd.revents & (POLLOUT | POLLERR)));
+	int socket_error = 0;
+	socklen_t socket_error_len = sizeof(socket_error);
+	TEST_SUCC(getsockopt(client_fd, SOL_SOCKET, SO_ERROR, &socket_error,
+			     &socket_error_len));
+	TEST_RES(socket_error, _ret == ECONNREFUSED);
+
+	TEST_ERRNO(connect(client_fd, (struct sockaddr *)&listen_addr,
+			   sizeof(listen_addr)),
+		   ECONNABORTED);
+	TEST_ERRNO(connect(client_fd, (struct sockaddr *)&listen_addr,
+			   sizeof(listen_addr)),
+		   EINPROGRESS);
+	struct pollfd listen_poll_fd = { .fd = listen_fd, .events = POLLIN };
+	TEST_RES(poll(&listen_poll_fd, 1, 1000),
+		 _ret == 1 && (listen_poll_fd.revents & POLLIN));
+	int accepted_fd = TEST_SUCC(accept(listen_fd, NULL, NULL));
+
+	TEST_SUCC(getsockname(client_fd, (struct sockaddr *)&client_local_addr,
+			      &client_local_addrlen));
+	TEST_RES(client_local_addr.sin_addr.s_addr,
+		 _ret == htonl(INADDR_LOOPBACK));
+	TEST_RES(write(client_fd, &buf, sizeof(buf)), _ret == sizeof(buf));
+	TEST_RES(read(accepted_fd, &buf, sizeof(buf)),
+		 _ret == sizeof(buf) && buf == 'r');
+
+	TEST_SUCC(close(accepted_fd));
+	TEST_SUCC(close(client_fd));
+	TEST_SUCC(close(listen_fd));
+}
+END_TEST()
+
 FN_TEST(tcp_inaddr_any_ephemeral_skips_second_iface_conflict)
 {
 	SKIP_TEST_IF(!local_addr_is_available(GUEST_SECOND_VIRTIO_ADDR));

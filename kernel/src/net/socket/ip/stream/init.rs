@@ -61,13 +61,6 @@ impl InitStream {
         }
     }
 
-    fn new_bound_with_local_endpoint(
-        bound_port: BoundPort,
-        local_endpoint: Option<IpEndpoint>,
-    ) -> Self {
-        Self::new_bound_ports_with_local_endpoint(Vec::from([bound_port]), local_endpoint)
-    }
-
     fn new_bound_ports_with_local_endpoint(
         bound_ports: Vec<BoundPort>,
         local_endpoint: Option<IpEndpoint>,
@@ -81,17 +74,13 @@ impl InitStream {
         }
     }
 
-    pub(super) fn new_refused(bound_port: BoundPort) -> Self {
-        let local_endpoint = bound_port.endpoint();
-        Self::new_refused_with_local_endpoint(bound_port, local_endpoint)
-    }
-
-    fn new_refused_with_local_endpoint(
-        bound_port: BoundPort,
+    pub(super) fn new_refused_with_bound_ports(
+        bound_ports: Vec<BoundPort>,
         local_endpoint: Option<IpEndpoint>,
     ) -> Self {
+        debug_assert!(!bound_ports.is_empty());
         Self {
-            bound_ports: Some(Vec::from([bound_port])),
+            bound_ports: Some(bound_ports),
             local_endpoint,
             is_connect_done: false,
             is_conn_refused: AtomicBool::new(true),
@@ -132,46 +121,53 @@ impl InitStream {
             "`finish_last_connect()` should be called before calling `connect()`"
         );
 
-        let (bound_port, local_endpoint) = if let Some(bound_ports) = self.bound_ports {
-            let bound_port = match take_bound_port_for_remote(bound_ports, remote_endpoint) {
-                Ok(bound_port) => bound_port,
-                Err(bound_ports) => {
-                    return Err((
-                        Error::with_message(
-                            Errno::EADDRNOTAVAIL,
-                            "the wildcard socket is not bound to the selected interface",
-                        ),
-                        Self::new_bound_ports_with_local_endpoint(bound_ports, self.local_endpoint),
-                    ));
+        let (bound_port, spare_bound_ports, local_endpoint) =
+            if let Some(bound_ports) = self.bound_ports {
+                let (bound_port, spare_bound_ports) =
+                    match take_bound_port_for_remote(bound_ports, remote_endpoint) {
+                        Ok(result) => result,
+                        Err(bound_ports) => {
+                            return Err((
+                                Error::with_message(
+                                    Errno::EADDRNOTAVAIL,
+                                    "the wildcard socket is not bound to the selected interface",
+                                ),
+                                Self::new_bound_ports_with_local_endpoint(
+                                    bound_ports,
+                                    self.local_endpoint,
+                                ),
+                            ));
+                        }
+                    };
+                (bound_port, spare_bound_ports, self.local_endpoint)
+            } else {
+                let endpoint = get_ephemeral_endpoint(remote_endpoint);
+                match bind_port(&endpoint, can_reuse) {
+                    Ok(bound_port) => {
+                        let local_endpoint = new_visible_local_endpoint(&endpoint, &bound_port);
+                        (bound_port, Vec::new(), Some(local_endpoint))
+                    }
+                    Err(err) => return Err((err, self)),
                 }
             };
-            (bound_port, self.local_endpoint)
-        } else {
-            let endpoint = get_ephemeral_endpoint(remote_endpoint);
-            match bind_port(&endpoint, can_reuse) {
-                Ok(bound_port) => {
-                    let local_endpoint = new_visible_local_endpoint(&endpoint, &bound_port);
-                    (bound_port, Some(local_endpoint))
-                }
-                Err(err) => return Err((err, self)),
-            }
-        };
 
-        ConnectingStream::new(bound_port, *remote_endpoint, option, observer).map_err(
-            |(err, bound_port)| {
-                if err.error() == Errno::ECONNREFUSED {
-                    (
-                        err,
-                        InitStream::new_refused_with_local_endpoint(bound_port, local_endpoint),
-                    )
-                } else {
-                    (
-                        err,
-                        InitStream::new_bound_with_local_endpoint(bound_port, local_endpoint),
-                    )
-                }
-            },
+        ConnectingStream::new(
+            bound_port,
+            spare_bound_ports,
+            local_endpoint,
+            *remote_endpoint,
+            option,
+            observer,
         )
+        .map_err(|(err, bound_port, mut spare_bound_ports)| {
+            spare_bound_ports.push(bound_port);
+            let init_stream = if err.error() == Errno::ECONNREFUSED {
+                InitStream::new_refused_with_bound_ports(spare_bound_ports, local_endpoint)
+            } else {
+                InitStream::new_bound_ports_with_local_endpoint(spare_bound_ports, local_endpoint)
+            };
+            (err, init_stream)
+        })
     }
 
     pub(super) fn finish_last_connect(&mut self) -> Result<()> {
@@ -299,9 +295,12 @@ impl InitStream {
 fn take_bound_port_for_remote(
     mut bound_ports: Vec<BoundPort>,
     remote_endpoint: &IpEndpoint,
-) -> core::result::Result<BoundPort, Vec<BoundPort>> {
+) -> core::result::Result<(BoundPort, Vec<BoundPort>), Vec<BoundPort>> {
     if bound_ports.len() == 1 {
-        return Ok(bound_ports.pop().unwrap());
+        let Some(bound_port) = bound_ports.pop() else {
+            unreachable!("the binding set length was checked above");
+        };
+        return Ok((bound_port, bound_ports));
     }
 
     let iface_index = get_iface_for_remote(&remote_endpoint.addr).index();
@@ -312,5 +311,6 @@ fn take_bound_port_for_remote(
         return Err(bound_ports);
     };
 
-    Ok(bound_ports.swap_remove(position))
+    let bound_port = bound_ports.swap_remove(position);
+    Ok((bound_port, bound_ports))
 }

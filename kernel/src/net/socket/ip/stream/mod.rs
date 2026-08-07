@@ -837,7 +837,10 @@ impl SetSocketLevelOption for State {
                 init_stream.set_can_reuse(reuse_addr);
                 return;
             }
-            State::Connecting(connecting_stream) => connecting_stream.bound_port(),
+            State::Connecting(connecting_stream) => {
+                connecting_stream.set_can_reuse(reuse_addr);
+                return;
+            }
             State::Connected(connected_stream) => connected_stream.bound_port(),
             // Setting a listening address as reusable has no effect,
             // since no other sockets can bind to a listening port.

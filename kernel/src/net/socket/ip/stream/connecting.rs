@@ -15,6 +15,8 @@ use crate::{
 
 pub(super) struct ConnectingStream {
     tcp_conn: TcpConnection,
+    spare_bound_ports: Vec<BoundPort>,
+    visible_local_endpoint: Option<IpEndpoint>,
     remote_endpoint: IpEndpoint,
 }
 
@@ -27,10 +29,12 @@ pub(super) enum ConnResult {
 impl ConnectingStream {
     pub(super) fn new(
         bound_port: BoundPort,
+        spare_bound_ports: Vec<BoundPort>,
+        visible_local_endpoint: Option<IpEndpoint>,
         remote_endpoint: IpEndpoint,
         option: &RawTcpOption,
         observer: StreamObserver,
-    ) -> core::result::Result<Self, (Error, BoundPort)> {
+    ) -> core::result::Result<Self, (Error, BoundPort, Vec<BoundPort>)> {
         let tcp_conn =
             match TcpConnection::new_connect(bound_port, remote_endpoint, option, observer) {
                 Ok(tcp_conn) => tcp_conn,
@@ -38,6 +42,7 @@ impl ConnectingStream {
                     return Err((
                         Error::with_message(Errno::EADDRNOTAVAIL, "connection key conflicts"),
                         bound_port,
+                        spare_bound_ports,
                     ));
                 }
                 Err((bound_port, _)) => {
@@ -54,12 +59,15 @@ impl ConnectingStream {
                             "connecting to an unspecified address is not supported",
                         ),
                         bound_port,
+                        spare_bound_ports,
                     ));
                 }
             };
 
         Ok(Self {
             tcp_conn,
+            spare_bound_ports,
+            visible_local_endpoint,
             remote_endpoint,
         })
     }
@@ -82,9 +90,22 @@ impl ConnectingStream {
                 self.remote_endpoint,
                 true,
             )),
-            ConnectState::Refused => ConnResult::Refused(InitStream::new_refused(
-                self.tcp_conn.into_bound_port().unwrap(),
-            )),
+            ConnectState::Refused => {
+                let Self {
+                    tcp_conn,
+                    mut spare_bound_ports,
+                    visible_local_endpoint,
+                    ..
+                } = self;
+                let Some(bound_port) = tcp_conn.into_bound_port() else {
+                    unreachable!("a refused connection retains its bound port");
+                };
+                spare_bound_ports.push(bound_port);
+                ConnResult::Refused(InitStream::new_refused_with_bound_ports(
+                    spare_bound_ports,
+                    visible_local_endpoint,
+                ))
+            }
         }
     }
 
@@ -100,8 +121,11 @@ impl ConnectingStream {
         self.tcp_conn.iface()
     }
 
-    pub(super) fn bound_port(&self) -> &BoundPort {
-        self.tcp_conn.bound_port()
+    pub(super) fn set_can_reuse(&self, can_reuse: bool) {
+        self.tcp_conn.bound_port().set_can_reuse(can_reuse);
+        for bound_port in &self.spare_bound_ports {
+            bound_port.set_can_reuse(can_reuse);
+        }
     }
 
     pub(super) fn check_io_events(&self) -> IoEvents {
