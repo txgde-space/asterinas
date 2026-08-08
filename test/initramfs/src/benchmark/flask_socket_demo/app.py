@@ -3,102 +3,45 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import argparse
+import datetime
 import os
 import socket
-import struct
-import time
+import socketserver
+import threading
 
 from flask import Flask, jsonify, request
+from werkzeug.serving import WSGIRequestHandler, make_server
 
 
 app = Flask(__name__)
 
-NETFILTER_RULES_PATH = "/proc/netfilter_rules"
-RAW_ICMP_TARGET = "127.0.0.1"
-RAW_ICMP_IDENT = 0x4660
-RAW_ICMP_SEQUENCE = 1
-RAW_ICMP_TIMEOUT_SECONDS = 2.0
+runtime_lock = threading.Lock()
+runtime = {
+    "bind_host": None,
+    "bind_port": None,
+    "generation": os.environ.get("DEMO_GENERATION", "interactive"),
+    "implicit_listener": None,
+    "listener_address": None,
+    "listener_port": None,
+    "request_count": 0,
+    "reuse_address": None,
+    "started_at": None,
+    "wait_backend": getattr(socketserver, "_ServerSelector").__name__,
+}
 
 
-def internet_checksum(data):
-    if len(data) % 2:
-        data += b"\x00"
+class LifecycleRequestHandler(WSGIRequestHandler):
+    """将已接受套接字的地址加入 WSGI 环境"""
 
-    checksum = 0
-    for index in range(0, len(data), 2):
-        checksum += (data[index] << 8) + data[index + 1]
-        checksum = (checksum & 0xFFFF) + (checksum >> 16)
-
-    return (~checksum) & 0xFFFF
-
-
-def raw_icmp_echo():
-    payload = b"asterinas-flask-raw-icmp"
-    header = struct.pack("!BBHHH", 8, 0, 0, RAW_ICMP_IDENT, RAW_ICMP_SEQUENCE)
-    checksum = internet_checksum(header + payload)
-    packet = struct.pack("!BBHHH", 8, 0, checksum, RAW_ICMP_IDENT, RAW_ICMP_SEQUENCE) + payload
-
-    with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as raw_socket:
-        raw_socket.settimeout(RAW_ICMP_TIMEOUT_SECONDS)
-        raw_socket.sendto(packet, (RAW_ICMP_TARGET, 0))
-
-        deadline = time.time() + RAW_ICMP_TIMEOUT_SECONDS
-        while time.time() < deadline:
-            try:
-                data, address = raw_socket.recvfrom(2048)
-            except socket.timeout:
-                break
-
-            if len(data) < 28:
-                continue
-
-            ip_header_len = (data[0] & 0x0F) * 4
-            icmp = data[ip_header_len : ip_header_len + 8]
-            if len(icmp) < 8:
-                continue
-
-            icmp_type, icmp_code, _, ident, sequence = struct.unpack("!BBHHH", icmp)
-            if (
-                icmp_type == 0
-                and icmp_code == 0
-                and ident == RAW_ICMP_IDENT
-                and sequence == RAW_ICMP_SEQUENCE
-            ):
-                return {
-                    "passed": True,
-                    "detail": f"raw ICMP echo reply from {address[0]}",
-                }
-
-    return {
-        "passed": False,
-        "detail": "raw ICMP echo request timed out",
-    }
-
-
-def read_netfilter_rules():
-    with open(NETFILTER_RULES_PATH, "r", encoding="utf-8") as rules:
-        return rules.read()
-
-
-def write_netfilter_command(command):
-    with open(NETFILTER_RULES_PATH, "w", encoding="utf-8") as rules:
-        rules.write(command)
-
-
-def reset_netfilter_output_rules():
-    write_netfilter_command("iptables -F OUTPUT")
-    # 回归测试默认保留一个不会影响普通 ping 的 ICMP Echo 规则，恢复它可以避免
-    # 演示页面改变后续测试环境。
-    write_netfilter_command(
-        "iptables -A OUTPUT -p icmp --icmp-type echo-request --icmp-id 0x0828 -j DROP"
-    )
-
-
-def format_netfilter_snapshot(snapshot):
-    lines = snapshot.splitlines()
-    if not lines:
-        return "(empty)"
-    return "\n".join(lines[:80])
+    def make_environ(self):
+        environ = super().make_environ()
+        local_address, local_port = self.connection.getsockname()[:2]
+        peer_address, peer_port = self.connection.getpeername()[:2]
+        environ["ASTERINAS_LOCAL_ADDRESS"] = local_address
+        environ["ASTERINAS_LOCAL_PORT"] = str(local_port)
+        environ["ASTERINAS_PEER_ADDRESS"] = peer_address
+        environ["ASTERINAS_PEER_PORT"] = str(peer_port)
+        return environ
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -106,421 +49,229 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Asterinas Flask Socket Demo</title>
+  <title>Asterinas Linux Web 应用生命周期</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
-      --panel: #ffffff;
-      --text: #18212f;
-      --muted: #5f6b7a;
-      --line: #d8dde6;
-      --accent: #0f766e;
-      --ok: #15803d;
-      --bad: #b91c1c;
-      --code: #111827;
+      --bg: #f4f6f8;
+      --surface: #ffffff;
+      --text: #17202a;
+      --muted: #5f6b76;
+      --line: #d5dce3;
+      --teal: #087f74;
+      --green: #237a3b;
+      --amber: #9a6700;
+      --red: #b42318;
+      --code: #202934;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
-    }
-    main {
-      max-width: 1120px;
-      margin: 0 auto;
-      padding: 32px 20px 40px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
     }
     header {
-      display: flex;
-      justify-content: space-between;
-      gap: 24px;
-      align-items: flex-start;
-      margin-bottom: 22px;
-    }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 28px;
-      line-height: 1.2;
-    }
-    .lead {
-      margin: 0;
-      color: var(--muted);
-      line-height: 1.6;
-      max-width: 760px;
-    }
-    .badge {
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 8px 12px;
-      border-radius: 8px;
-      white-space: nowrap;
-      color: var(--accent);
-      font-weight: 700;
-      font-size: 14px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: 360px 1fr;
-      gap: 16px;
-      align-items: start;
-    }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 16px;
-    }
-    h2 {
-      margin: 0 0 14px;
-      font-size: 18px;
-    }
-    .actions {
-      display: grid;
-      gap: 10px;
-    }
-    .group {
-      border-top: 1px solid var(--line);
-      padding-top: 12px;
-      margin-top: 12px;
-    }
-    .group:first-child {
-      border-top: 0;
-      padding-top: 0;
-      margin-top: 0;
-    }
-    .group h3 {
-      margin: 0 0 8px;
-      color: var(--muted);
-      font-size: 14px;
-    }
-    button {
-      width: 100%;
-      border: 1px solid #0d9488;
-      background: var(--accent);
-      color: white;
-      border-radius: 6px;
-      padding: 10px 12px;
-      font-weight: 700;
-      cursor: pointer;
-      text-align: left;
-    }
-    button.secondary {
-      background: #ffffff;
-      color: var(--accent);
-    }
-    button:disabled {
-      opacity: 0.55;
-      cursor: wait;
-    }
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 14px;
-    }
-    .metric {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      background: #fbfcfd;
-    }
-    .metric strong {
-      display: block;
-      font-size: 22px;
-      margin-bottom: 4px;
-    }
-    .metric span {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-    th, td {
       border-bottom: 1px solid var(--line);
-      padding: 10px 8px;
-      text-align: left;
-      vertical-align: top;
+      background: var(--surface);
     }
-    th {
-      color: var(--muted);
-      font-weight: 700;
-    }
-    .status-ok { color: var(--ok); font-weight: 700; }
-    .status-bad { color: var(--bad); font-weight: 700; }
-    pre {
-      margin: 14px 0 0;
-      padding: 12px;
-      background: var(--code);
-      color: #e5e7eb;
-      border-radius: 8px;
-      overflow: auto;
-      min-height: 120px;
-      font-size: 13px;
-      line-height: 1.5;
-    }
+    .header-inner, main { max-width: 1120px; margin: 0 auto; padding: 22px 20px; }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    h1 { margin: 0 0 5px; font-size: 24px; line-height: 1.25; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
+    .state { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
+    main { padding-top: 18px; padding-bottom: 34px; }
+    section { border-bottom: 1px solid var(--line); padding: 18px 0; }
+    section:first-child { padding-top: 0; }
+    h2 { margin: 0 0 12px; font-size: 17px; }
+    .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    .metric { min-width: 0; padding: 13px; background: var(--surface); }
+    .metric span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
+    .metric strong { display: block; overflow-wrap: anywhere; font-size: 15px; }
+    .lifecycle { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .phase { min-height: 108px; border: 1px solid var(--line); border-radius: 6px; padding: 11px; background: var(--surface); }
+    .phase b { display: block; margin-bottom: 8px; color: var(--teal); font-size: 13px; }
+    .phase code { display: block; color: var(--code); overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
+    .phase.done { border-top: 3px solid var(--green); }
+    .routes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .address-list { display: grid; gap: 8px; }
+    .address { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: center; padding: 9px 10px; border-left: 3px solid var(--teal); background: var(--surface); }
+    .address span { color: var(--muted); font-size: 13px; }
+    .address code { overflow-wrap: anywhere; }
+    .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    button { min-height: 38px; border: 1px solid var(--teal); border-radius: 6px; background: var(--surface); color: var(--teal); cursor: pointer; font-weight: 700; }
+    button:hover { background: #edf8f6; }
+    button:disabled { cursor: wait; opacity: .55; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 13px; }
+    th, td { padding: 9px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+    th { background: #eef1f4; color: var(--muted); font-weight: 700; }
+    .pass { color: var(--green); font-weight: 700; }
+    .fail { color: var(--red); font-weight: 700; }
+    pre { min-height: 82px; margin: 10px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--line); background: var(--code); color: #f4f7fa; font-size: 12px; line-height: 1.5; }
     @media (max-width: 820px) {
-      header { display: block; }
-      .badge { display: inline-block; margin-top: 12px; }
-      .grid { grid-template-columns: 1fr; }
-      .summary { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .lifecycle { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .routes { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .header-inner { align-items: flex-start; flex-direction: column; }
+      .metrics, .lifecycle, .actions { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <main>
-    <header>
+  <header>
+    <div class="header-inner">
       <div>
-        <h1>Asterinas Linux Socket 兼容性服务测试</h1>
-        <p class="lead">
-          该页面用于展示 Flask 服务在 Asterinas 中可以监听 0.0.0.0、通过 loopback
-          与实际 IPv4 地址访问，并提供 raw socket ping 与 netfilter/iptables 的可视化验证入口。
-        </p>
+        <h1>Flask on Asterinas</h1>
+        <p class="subtitle">指标二 · Linux 网络接口语义兼容</p>
       </div>
-      <div class="badge">Flask on 0.0.0.0:5000</div>
-    </header>
-
-    <div class="grid">
-      <section>
-        <h2>测试操作</h2>
-        <div class="actions">
-          <div class="group">
-            <h3>指标一：Raw Socket / ping</h3>
-            <button data-test="ping">Raw ICMP Echo</button>
-          </div>
-          <div class="group">
-            <h3>指标二：Linux Socket 服务兼容</h3>
-            <button data-test="status">服务状态</button>
-            <button data-test="echo">Echo 请求</button>
-            <button data-test="large">64 KiB 响应</button>
-            <button data-test="info">请求信息</button>
-          </div>
-          <div class="group">
-            <h3>指标三：netfilter / iptables</h3>
-            <button data-test="netfilterList">查看规则</button>
-            <button data-test="netfilterDropPing">DROP ping 生效</button>
-            <button data-test="netfilterReset">恢复默认规则</button>
-          </div>
-          <button class="secondary" id="run-all">运行全部测试</button>
-          <button class="secondary" id="clear">清空结果</button>
-        </div>
-      </section>
-
-      <section>
-        <h2>测试结果</h2>
-        <div class="summary">
-          <div class="metric"><strong id="total">0</strong><span>已运行</span></div>
-          <div class="metric"><strong id="passed">0</strong><span>通过</span></div>
-          <div class="metric"><strong id="failed">0</strong><span>失败</span></div>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>测试项</th>
-              <th>指标</th>
-              <th>结果</th>
-              <th>说明</th>
-            </tr>
-          </thead>
-          <tbody id="results"></tbody>
-        </table>
-        <pre id="log">等待运行测试...</pre>
-      </section>
+      <div class="state"><span class="dot"></span><span>服务运行中</span></div>
     </div>
+  </header>
+  <main>
+    <section>
+      <h2>当前进程</h2>
+      <div class="metrics">
+        <div class="metric"><span>PID</span><strong id="pid">-</strong></div>
+        <div class="metric"><span>监听 socket getsockname()</span><strong id="listener">-</strong></div>
+        <div class="metric"><span>隐式 listen() 绑定</span><strong id="implicit-listener">-</strong></div>
+        <div class="metric"><span>SO_REUSEADDR</span><strong id="reuse">-</strong></div>
+        <div class="metric"><span>进程代次 / 请求数</span><strong id="generation">-</strong></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Web 应用生命周期</h2>
+      <div class="lifecycle">
+        <div class="phase done"><b>1 · Socket</b><code>AF_INET<br>SOCK_STREAM<br>SO_REUSEADDR=1</code></div>
+        <div class="phase done"><b>2 · Bind</b><code>0.0.0.0:5000<br>INADDR_ANY</code></div>
+        <div class="phase done"><b>3 · Listen</b><code>一个用户 fd<br>多接口通配绑定</code></div>
+        <div class="phase done"><b>4 · Wait</b><code id="wait-backend">serve_forever</code></div>
+        <div class="phase done"><b>5 · Accept / I/O</b><code>accept<br>read / write<br>close</code></div>
+        <div class="phase done"><b>6 · Restart</b><code id="restart-state">close listener<br>等待同端口重启</code></div>
+      </div>
+    </section>
+
+    <section class="routes">
+      <div>
+        <h2>同一通配监听的访问路径</h2>
+        <div class="address-list">
+          <div class="address"><span>lo</span><code>http://127.0.0.1:5000</code></div>
+          <div class="address"><span>eth0</span><code>http://10.0.2.15:5000</code></div>
+          <div class="address"><span>eth1</span><code>http://10.0.3.15:5000</code></div>
+        </div>
+      </div>
+      <div>
+        <h2>当前入口功能验证</h2>
+        <div class="actions">
+          <button data-path="/health">健康检查</button>
+          <button data-path="/echo/linux-socket">请求与响应</button>
+          <button data-path="/large">64 KiB 响应</button>
+          <button data-path="/request-info">实际 socket 地址</button>
+        </div>
+        <pre id="output">等待操作</pre>
+      </div>
+    </section>
+
+    <section>
+      <h2>最近一次已接受连接</h2>
+      <table>
+        <thead><tr><th>请求 Host</th><th>accepted socket 本地地址</th><th>客户端地址</th><th>结果</th></tr></thead>
+        <tbody id="last-request"><tr><td colspan="4">尚无请求</td></tr></tbody>
+      </table>
+    </section>
   </main>
-
   <script>
-    const tests = {
-      ping: async () => {
-        const response = await fetch("/api/indicator1/ping");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.passed,
-          detail: data.detail,
-          rawLog: data.raw_log
-        };
-      },
-      status: async () => {
-        const response = await fetch("/api/status");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.status === "ok",
-          detail: `service=${data.service}, bind=${data.bind}`
-        };
-      },
-      echo: async () => {
-        const response = await fetch("/echo/linux-socket");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.echo === "linux-socket",
-          detail: `echo=${data.echo}`
-        };
-      },
-      large: async () => {
-        const response = await fetch("/large");
-        const body = await response.text();
-        return {
-          ok: response.ok && body.length === 65536,
-          detail: `response_size=${body.length} bytes`
-        };
-      },
-      info: async () => {
-        const response = await fetch("/request-info");
-        const data = await response.json();
-        return {
-          ok: response.ok && Boolean(data.host),
-          detail: `host=${data.host}, remote=${data.remote_addr}`
-        };
-      },
-      netfilterList: async () => {
-        const response = await fetch("/api/indicator3/rules");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.passed,
-          detail: data.detail,
-          rawLog: data.raw_log
-        };
-      },
-      netfilterDropPing: async () => {
-        const response = await fetch("/api/indicator3/drop-ping");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.passed,
-          detail: data.detail,
-          rawLog: data.raw_log
-        };
-      },
-      netfilterReset: async () => {
-        const response = await fetch("/api/indicator3/reset");
-        const data = await response.json();
-        return {
-          ok: response.ok && data.passed,
-          detail: data.detail,
-          rawLog: data.raw_log
-        };
-      }
-    };
+    const output = document.getElementById("output");
 
-    const labels = {
-      ping: "Raw ICMP Echo",
-      status: "服务状态",
-      echo: "Echo 请求",
-      large: "64 KiB 响应",
-      info: "请求信息",
-      netfilterList: "查看规则",
-      netfilterDropPing: "DROP ping 生效",
-      netfilterReset: "恢复默认规则"
-    };
-
-    const indicators = {
-      ping: "指标一",
-      status: "指标二",
-      echo: "指标二",
-      large: "指标二",
-      info: "指标二",
-      netfilterList: "指标三",
-      netfilterDropPing: "指标三",
-      netfilterReset: "指标三"
-    };
-
-    let total = 0;
-    let passed = 0;
-    let failed = 0;
-
-    function setBusy(isBusy) {
-      document.querySelectorAll("button").forEach(button => {
-        button.disabled = isBusy;
-      });
+    async function loadStatus() {
+      const response = await fetch("/api/status", { cache: "no-store" });
+      const data = await response.json();
+      document.getElementById("pid").textContent = data.pid;
+      document.getElementById("listener").textContent = `${data.listener.address}:${data.listener.port}`;
+      document.getElementById("implicit-listener").textContent = `${data.implicit_listener.address}:${data.implicit_listener.port}`;
+      document.getElementById("reuse").textContent = data.listener.reuse_address ? "enabled" : "disabled";
+      document.getElementById("generation").textContent = `${data.generation} / ${data.request_count}`;
+      document.getElementById("wait-backend").textContent = `${data.wait_backend}\naccept wait`;
+      document.getElementById("restart-state").textContent = data.generation === "restarted"
+        ? "listener 已关闭\n同端口重新 bind 成功"
+        : "close listener\n等待同端口重启";
     }
 
-    function updateSummary() {
-      document.getElementById("total").textContent = total;
-      document.getElementById("passed").textContent = passed;
-      document.getElementById("failed").textContent = failed;
-    }
-
-    function appendLog(line) {
-      const log = document.getElementById("log");
-      if (log.textContent === "等待运行测试...") {
-        log.textContent = "";
-      }
-      log.textContent += line + "\n";
-      log.scrollTop = log.scrollHeight;
-    }
-
-    function appendResult(name, ok, detail, rawLog = "") {
-      total += 1;
-      if (ok) {
-        passed += 1;
-      } else {
-        failed += 1;
-      }
-      updateSummary();
-
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${labels[name]}</td>
-        <td>${indicators[name]}</td>
-        <td class="${ok ? "status-ok" : "status-bad"}">${ok ? "PASS" : "FAIL"}</td>
-        <td>${detail}</td>
-      `;
-      document.getElementById("results").appendChild(row);
-      appendLog(`${ok ? "PASS" : "FAIL"} ${labels[name]}: ${detail}`);
-      if (rawLog) {
-        appendLog(rawLog);
-      }
-    }
-
-    async function runTest(name) {
+    async function runCheck(button) {
+      button.disabled = true;
       try {
-        const result = await tests[name]();
-        appendResult(name, result.ok, result.detail, result.rawLog);
+        const response = await fetch(button.dataset.path, { cache: "no-store" });
+        const body = await response.text();
+        const size = new TextEncoder().encode(body).length;
+        output.textContent = `${button.dataset.path}\nHTTP ${response.status}\n${size} bytes\n${body.slice(0, 600)}`;
+
+        const infoResponse = await fetch("/request-info", { cache: "no-store" });
+        const info = await infoResponse.json();
+        const row = document.createElement("tr");
+        const values = [
+          info.host,
+          `${info.local_address}:${info.local_port}`,
+          `${info.peer_address}:${info.peer_port}`,
+          response.ok ? "PASS" : "FAIL",
+        ];
+        values.forEach((value, index) => {
+          const cell = document.createElement("td");
+          cell.textContent = value;
+          if (index === values.length - 1) {
+            cell.className = response.ok ? "pass" : "fail";
+          }
+          row.appendChild(cell);
+        });
+        document.getElementById("last-request").replaceChildren(row);
+        await loadStatus();
       } catch (error) {
-        appendResult(name, false, error.message);
+        output.textContent = `FAIL\n${error}`;
+      } finally {
+        button.disabled = false;
       }
     }
 
-    document.querySelectorAll("button[data-test]").forEach(button => {
-      button.addEventListener("click", async () => {
-        setBusy(true);
-        await runTest(button.dataset.test);
-        setBusy(false);
-      });
+    document.querySelectorAll("button[data-path]").forEach((button) => {
+      button.addEventListener("click", () => runCheck(button));
     });
-
-    document.getElementById("run-all").addEventListener("click", async () => {
-      setBusy(true);
-      for (const name of [
-        "ping",
-        "status",
-        "echo",
-        "large",
-        "info",
-        "netfilterList",
-        "netfilterDropPing",
-        "netfilterReset"
-      ]) {
-        await runTest(name);
-      }
-      setBusy(false);
-    });
-
-    document.getElementById("clear").addEventListener("click", () => {
-      total = 0;
-      passed = 0;
-      failed = 0;
-      updateSummary();
-      document.getElementById("results").innerHTML = "";
-      document.getElementById("log").textContent = "等待运行测试...";
-    });
+    loadStatus().catch((error) => { output.textContent = `FAIL\n${error}`; });
   </script>
 </body>
 </html>
 """
+
+
+def socket_request_info():
+    return {
+        "host": request.host,
+        "local_address": request.environ.get("ASTERINAS_LOCAL_ADDRESS"),
+        "local_port": int(request.environ.get("ASTERINAS_LOCAL_PORT", 0)),
+        "peer_address": request.environ.get("ASTERINAS_PEER_ADDRESS"),
+        "peer_port": int(request.environ.get("ASTERINAS_PEER_PORT", 0)),
+        "server_name": request.environ.get("SERVER_NAME"),
+        "server_port": int(request.environ.get("SERVER_PORT", 0)),
+    }
+
+
+def check_implicit_listen_binding():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as implicit_listener:
+        implicit_listener.listen(1)
+        address, port = implicit_listener.getsockname()[:2]
+        if address != "0.0.0.0" or port == 0:
+            raise RuntimeError(
+                f"implicit listen binding returned unexpected address {address}:{port}"
+            )
+        return {"address": address, "port": port}
+
+
+@app.before_request
+def count_request():
+    with runtime_lock:
+        runtime["request_count"] += 1
 
 
 @app.get("/")
@@ -530,169 +281,25 @@ def index():
 
 @app.get("/api/status")
 def api_status():
+    with runtime_lock:
+        snapshot = dict(runtime)
+
     return jsonify(
+        bind={"address": snapshot["bind_host"], "port": snapshot["bind_port"]},
+        generation=snapshot["generation"],
+        implicit_listener=snapshot["implicit_listener"],
+        indicator="linux_network_interface_semantics",
+        listener={
+            "address": snapshot["listener_address"],
+            "port": snapshot["listener_port"],
+            "reuse_address": bool(snapshot["reuse_address"]),
+        },
+        pid=os.getpid(),
+        request_count=snapshot["request_count"],
         service="flask_socket_demo",
+        started_at=snapshot["started_at"],
         status="ok",
-        bind="0.0.0.0:5000",
-        message="Asterinas Linux socket compatibility demo",
-    )
-
-
-@app.get("/api/run-tests")
-def api_run_tests():
-    results = []
-    with app.test_client() as client:
-        status_response = client.get("/api/status")
-        status_data = status_response.get_json()
-        results.append(
-            {
-                "name": "服务状态",
-                "passed": status_response.status_code == 200
-                and status_data["status"] == "ok",
-                "detail": status_data,
-            }
-        )
-
-        echo_response = client.get("/echo/linux-socket")
-        echo_data = echo_response.get_json()
-        results.append(
-            {
-                "name": "Echo 请求",
-                "passed": echo_response.status_code == 200
-                and echo_data["echo"] == "linux-socket",
-                "detail": echo_data,
-            }
-        )
-
-        large_response = client.get("/large")
-        results.append(
-            {
-                "name": "64 KiB 响应",
-                "passed": large_response.status_code == 200
-                and len(large_response.get_data()) == 65536,
-                "detail": {"response_size": len(large_response.get_data())},
-            }
-        )
-
-        info_response = client.get("/request-info")
-        info_data = info_response.get_json()
-        results.append(
-            {
-                "name": "请求信息",
-                "passed": info_response.status_code == 200
-                and bool(info_data["host"]),
-                "detail": info_data,
-            }
-        )
-
-    passed = sum(1 for item in results if item["passed"])
-    return jsonify(total=len(results), passed=passed, failed=len(results) - passed, results=results)
-
-
-@app.get("/api/indicator1/ping")
-def api_indicator1_ping():
-    try:
-        result = raw_icmp_echo()
-    except OSError as err:
-        result = {
-            "passed": False,
-            "detail": f"raw socket error: {err}",
-        }
-
-    return jsonify(
-        passed=result["passed"],
-        detail=result["detail"],
-        raw_log=(
-            "[指标一 Raw Socket / ping]\n"
-            f"target={RAW_ICMP_TARGET}\n"
-            f"icmp_ident=0x{RAW_ICMP_IDENT:04x}\n"
-            f"icmp_sequence={RAW_ICMP_SEQUENCE}\n"
-            f"result={'PASS' if result['passed'] else 'FAIL'}\n"
-            f"detail={result['detail']}"
-        ),
-    )
-
-
-@app.get("/api/indicator3/rules")
-def api_indicator3_rules():
-    try:
-        snapshot = read_netfilter_rules()
-    except OSError as err:
-        return jsonify(passed=False, detail=str(err)), 500
-
-    has_filter = "table filter" in snapshot
-    has_nat = "table nat" in snapshot
-    return jsonify(
-        passed=has_filter and has_nat,
-        detail=f"filter={has_filter}, nat={has_nat}",
-        raw_log=(
-            "[指标三 查看规则]\n"
-            "执行: cat /proc/netfilter_rules\n"
-            f"filter_table={'present' if has_filter else 'missing'}\n"
-            f"nat_table={'present' if has_nat else 'missing'}\n"
-            "原始规则:\n"
-            f"{format_netfilter_snapshot(snapshot)}"
-        ),
-    )
-
-
-@app.get("/api/indicator3/drop-ping")
-def api_indicator3_drop_ping():
-    try:
-        write_netfilter_command("iptables -F OUTPUT")
-        before = raw_icmp_echo()
-        write_netfilter_command("iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP")
-        dropped = raw_icmp_echo()
-        reset_netfilter_output_rules()
-        restored = raw_icmp_echo()
-    except OSError as err:
-        return jsonify(passed=False, detail=str(err)), 500
-
-    passed = before["passed"] and not dropped["passed"] and restored["passed"]
-    return jsonify(
-        passed=passed,
-        detail=(
-            f"before={'通' if before['passed'] else '不通'}, "
-            f"after_drop={'已阻断' if not dropped['passed'] else '仍然通'}, "
-            f"after_restore={'通' if restored['passed'] else '不通'}"
-        ),
-        raw_log=(
-            "[指标三 DROP ping 生效]\n"
-            "执行: iptables -F OUTPUT\n"
-            f"加规则前 raw ICMP: {'PASS/通' if before['passed'] else 'FAIL/不通'} "
-            f"({before['detail']})\n\n"
-            "执行: iptables -A OUTPUT -p icmp --icmp-type echo-request -j DROP\n"
-            f"DROP 后 raw ICMP: {'BLOCKED/不通' if not dropped['passed'] else 'UNEXPECTED PASS/仍然通'} "
-            f"({dropped['detail']})\n\n"
-            "执行: 恢复默认 OUTPUT 规则\n"
-            f"恢复后 raw ICMP: {'PASS/通' if restored['passed'] else 'FAIL/不通'} "
-            f"({restored['detail']})\n\n"
-            f"结论: {'DROP 规则成功阻断 ICMP Echo Request' if passed else 'DROP 规则未按预期生效'}"
-        ),
-    )
-
-
-@app.get("/api/indicator3/reset")
-def api_indicator3_reset():
-    try:
-        reset_netfilter_output_rules()
-        snapshot = read_netfilter_rules()
-    except OSError as err:
-        return jsonify(passed=False, detail=str(err)), 500
-
-    restored = "icmp-echo-ident 0x0828" in snapshot
-    return jsonify(
-        passed=restored,
-        detail=f"default_drop_rule={'present' if restored else 'missing'}",
-        raw_log=(
-            "[指标三 恢复默认规则]\n"
-            "执行: iptables -F OUTPUT\n"
-            "执行: iptables -A OUTPUT -p icmp --icmp-type echo-request "
-            "--icmp-id 0x0828 -j DROP\n"
-            f"default_drop_rule={'present' if restored else 'missing'}\n"
-            "原始规则:\n"
-            f"{format_netfilter_snapshot(snapshot)}"
-        ),
+        wait_backend=snapshot["wait_backend"],
     )
 
 
@@ -713,12 +320,7 @@ def large():
 
 @app.get("/request-info")
 def request_info():
-    return jsonify(
-        host=request.host,
-        remote_addr=request.remote_addr,
-        server_name=request.environ.get("SERVER_NAME"),
-        server_port=request.environ.get("SERVER_PORT"),
-    )
+    return jsonify(**socket_request_info())
 
 
 def main():
@@ -727,17 +329,37 @@ def main():
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args()
 
+    server = make_server(
+        args.host,
+        args.port,
+        app,
+        threaded=True,
+        request_handler=LifecycleRequestHandler,
+    )
+    listener_address, listener_port = server.socket.getsockname()[:2]
+    reuse_address = server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)
+    implicit_listener = check_implicit_listen_binding()
+
+    with runtime_lock:
+        runtime.update(
+            bind_host=args.host,
+            bind_port=args.port,
+            implicit_listener=implicit_listener,
+            listener_address=listener_address,
+            listener_port=listener_port,
+            reuse_address=reuse_address,
+            started_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        )
+
     print(
-        f"flask_socket_demo: starting pid={os.getpid()} "
-        f"on {args.host}:{args.port}",
+        f"flask_socket_demo: pid={os.getpid()} bind={args.host}:{args.port} "
+        f"getsockname={listener_address}:{listener_port} "
+        f"implicit_listen={implicit_listener['address']}:{implicit_listener['port']} "
+        f"reuseaddr={reuse_address} generation={runtime['generation']} "
+        f"wait={runtime['wait_backend']}",
         flush=True,
     )
-    print(
-        "flask_socket_demo: hostname="
-        f"{socket.gethostname()} loopback=127.0.0.1",
-        flush=True,
-    )
-    app.run(host=args.host, port=args.port, debug=False, use_reloader=False)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
