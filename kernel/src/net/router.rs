@@ -11,8 +11,10 @@ use alloc::sync::Arc;
 
 use aster_bigtcp::{
     forwarding::{ForwardedIpv4Packet, ForwardedIpv6Packet, ForwardingResult},
+    iface::ScheduleNextPoll,
     wire::{Ipv4Address, Ipv6Address},
 };
+use ostd::timer::Jiffies;
 
 use super::iface::{Iface, iter_all_ifaces};
 use crate::prelude::println;
@@ -295,9 +297,11 @@ pub fn forward_ipv4_packet(
         return ForwardingResult::QueueFull;
     }
 
-    // The queues are per-interface and the ingress interface is excluded above,
-    // so this does not recurse into the current device lock.
-    egress.poll();
+    // Do not synchronously poll the egress interface while the ingress poll
+    // still holds its interface lock. An immediate reply can otherwise route
+    // back through the ingress interface and spin forever on that same lock.
+    let now_ms = Jiffies::elapsed().as_duration().as_millis() as u64;
+    egress.sched_poll().schedule_next_poll(Some(now_ms));
     ForwardingResult::Queued
 }
 
@@ -330,7 +334,10 @@ pub fn forward_ipv6_packet(
         return ForwardingResult::QueueFull;
     }
 
-    egress.poll();
+    // As in the IPv4 path, let the background poller run after the ingress
+    // interface lock has been released instead of nesting interface polls.
+    let now_ms = Jiffies::elapsed().as_duration().as_millis() as u64;
+    egress.sched_poll().schedule_next_poll(Some(now_ms));
     ForwardingResult::Queued
 }
 
