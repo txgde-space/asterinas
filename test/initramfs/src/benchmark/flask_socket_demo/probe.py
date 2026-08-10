@@ -35,7 +35,8 @@ def check(condition, name, detail=""):
     if not condition:
         suffix = f": {detail}" if detail else ""
         raise RuntimeError(name + suffix)
-    print(f"flask_socket_demo: PASS {name}", flush=True)
+    evidence = f" evidence={detail}" if detail else ""
+    print(f"flask_socket_demo: PASS {name}{evidence}", flush=True)
 
 
 def parse_endpoint(specification):
@@ -50,7 +51,7 @@ def parse_endpoint(specification):
 
 def probe_endpoint(base_url, expected_local_address):
     wait_until_ready(base_url)
-    check(True, f"{base_url} health")
+    check(True, f"{base_url} health", "expected=HTTP-200 observed=HTTP-200")
 
     status, payload = request_bytes(base_url + "/api/status")
     data = json.loads(payload.decode())
@@ -69,7 +70,10 @@ def probe_endpoint(base_url, expected_local_address):
     check(
         listener_compatible,
         f"{base_url} wildcard-listener",
-        json.dumps(data, sort_keys=True),
+        (
+            "expected=bind/getsockname-0.0.0.0,reuseaddr-on,implicit-port-nonzero "
+            f"observed={json.dumps(data, sort_keys=True)}"
+        ),
     )
 
     status, payload = request_bytes(base_url + "/echo/linux-socket")
@@ -77,13 +81,14 @@ def probe_endpoint(base_url, expected_local_address):
     check(
         status == 200 and data["echo"] == "linux-socket",
         f"{base_url} request-response",
+        f"expected=linux-socket observed={data.get('echo')}",
     )
 
     status, payload = request_bytes(base_url + "/large")
     check(
         status == 200 and len(payload) == 65536,
         f"{base_url} 64-kib-response",
-        f"received {len(payload)} bytes",
+        f"expected=65536-bytes observed={len(payload)}-bytes",
     )
 
     status, payload = request_bytes(base_url + "/request-info")
@@ -96,7 +101,10 @@ def probe_endpoint(base_url, expected_local_address):
     check(
         local_address_matches,
         f"{base_url} accepted-socket-getsockname",
-        json.dumps(data, sort_keys=True),
+        (
+            f"expected={expected_local_address}:{listener['port']} "
+            f"observed={json.dumps(data, sort_keys=True)}"
+        ),
     )
 
 

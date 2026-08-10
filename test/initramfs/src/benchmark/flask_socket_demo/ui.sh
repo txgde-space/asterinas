@@ -4,4 +4,4 @@
 
 set -e
 
-exec /benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 5000
+exec /benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080

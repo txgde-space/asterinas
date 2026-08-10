@@ -3,14 +3,20 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import argparse
+import copy
 import datetime
+import json
 import os
 import socket
 import socketserver
 import threading
+import time
+import urllib.request
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, make_response, request
 from werkzeug.serving import WSGIRequestHandler, make_server
+
+from dashboard import COMPETITION_HTML
 
 
 app = Flask(__name__)
@@ -29,9 +35,49 @@ runtime = {
     "wait_backend": getattr(socketserver, "_ServerSelector").__name__,
 }
 
+EXPECTED_INTERFACES = (
+    ("lo", "127.0.0.1"),
+    ("eth0", "10.0.2.15"),
+    ("eth1", "10.0.3.15"),
+)
+BROWSER_PATHS = (
+    {
+        "frontend_port": int(os.environ.get("PRIMARY_FRONTEND_PORT", "18080")),
+        "guest_address": os.environ.get("GUEST_IP", "10.0.2.15"),
+        "interface": "eth0",
+    },
+    {
+        "frontend_port": int(os.environ.get("SECONDARY_FRONTEND_PORT", "18081")),
+        "guest_address": os.environ.get("SECONDARY_GUEST_IP", "10.0.3.15"),
+        "interface": "eth1",
+    },
+)
+verification_lock = threading.Lock()
+verification_state = {
+    "completed_at": None,
+    "current": "等待评委开始验证",
+    "failed": 0,
+    "passed": 0,
+    "results": [],
+    "running": False,
+    "started_at": None,
+    "status": "idle",
+}
+http_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def interface_for_address(address):
+    for interface, expected_address in EXPECTED_INTERFACES:
+        if address == expected_address:
+            return interface
+    return "unknown"
+
 
 class LifecycleRequestHandler(WSGIRequestHandler):
     """将已接受套接字的地址加入 WSGI 环境"""
+
+    def log_request(self, code="-", size="-"):
+        """Keeps the terminal focused on explicit demo evidence."""
 
     def make_environ(self):
         environ = super().make_environ()
@@ -42,207 +88,6 @@ class LifecycleRequestHandler(WSGIRequestHandler):
         environ["ASTERINAS_PEER_ADDRESS"] = peer_address
         environ["ASTERINAS_PEER_PORT"] = str(peer_port)
         return environ
-
-
-INDEX_HTML = r"""<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Asterinas Linux Web 应用生命周期</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f4f6f8;
-      --surface: #ffffff;
-      --text: #17202a;
-      --muted: #5f6b76;
-      --line: #d5dce3;
-      --teal: #087f74;
-      --green: #237a3b;
-      --amber: #9a6700;
-      --red: #b42318;
-      --code: #202934;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      letter-spacing: 0;
-    }
-    header {
-      border-bottom: 1px solid var(--line);
-      background: var(--surface);
-    }
-    .header-inner, main { max-width: 1120px; margin: 0 auto; padding: 22px 20px; }
-    .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
-    h1 { margin: 0 0 5px; font-size: 24px; line-height: 1.25; }
-    .subtitle { margin: 0; color: var(--muted); font-size: 14px; }
-    .state { display: flex; align-items: center; gap: 8px; font-weight: 700; white-space: nowrap; }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); }
-    main { padding-top: 18px; padding-bottom: 34px; }
-    section { border-bottom: 1px solid var(--line); padding: 18px 0; }
-    section:first-child { padding-top: 0; }
-    h2 { margin: 0 0 12px; font-size: 17px; }
-    .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
-    .metric { min-width: 0; padding: 13px; background: var(--surface); }
-    .metric span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
-    .metric strong { display: block; overflow-wrap: anywhere; font-size: 15px; }
-    .lifecycle { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
-    .phase { min-height: 108px; border: 1px solid var(--line); border-radius: 6px; padding: 11px; background: var(--surface); }
-    .phase b { display: block; margin-bottom: 8px; color: var(--teal); font-size: 13px; }
-    .phase code { display: block; color: var(--code); overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
-    .phase.done { border-top: 3px solid var(--green); }
-    .routes { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .address-list { display: grid; gap: 8px; }
-    .address { display: grid; grid-template-columns: 74px 1fr; gap: 10px; align-items: center; padding: 9px 10px; border-left: 3px solid var(--teal); background: var(--surface); }
-    .address span { color: var(--muted); font-size: 13px; }
-    .address code { overflow-wrap: anywhere; }
-    .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-    button { min-height: 38px; border: 1px solid var(--teal); border-radius: 6px; background: var(--surface); color: var(--teal); cursor: pointer; font-weight: 700; }
-    button:hover { background: #edf8f6; }
-    button:disabled { cursor: wait; opacity: .55; }
-    table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 13px; }
-    th, td { padding: 9px 10px; border: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
-    th { background: #eef1f4; color: var(--muted); font-weight: 700; }
-    .pass { color: var(--green); font-weight: 700; }
-    .fail { color: var(--red); font-weight: 700; }
-    pre { min-height: 82px; margin: 10px 0 0; padding: 12px; overflow: auto; border: 1px solid var(--line); background: var(--code); color: #f4f7fa; font-size: 12px; line-height: 1.5; }
-    @media (max-width: 820px) {
-      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .lifecycle { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-      .routes { grid-template-columns: 1fr; }
-    }
-    @media (max-width: 520px) {
-      .header-inner { align-items: flex-start; flex-direction: column; }
-      .metrics, .lifecycle, .actions { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="header-inner">
-      <div>
-        <h1>Flask on Asterinas</h1>
-        <p class="subtitle">指标二 · Linux 网络接口语义兼容</p>
-      </div>
-      <div class="state"><span class="dot"></span><span>服务运行中</span></div>
-    </div>
-  </header>
-  <main>
-    <section>
-      <h2>当前进程</h2>
-      <div class="metrics">
-        <div class="metric"><span>PID</span><strong id="pid">-</strong></div>
-        <div class="metric"><span>监听 socket getsockname()</span><strong id="listener">-</strong></div>
-        <div class="metric"><span>隐式 listen() 绑定</span><strong id="implicit-listener">-</strong></div>
-        <div class="metric"><span>SO_REUSEADDR</span><strong id="reuse">-</strong></div>
-        <div class="metric"><span>进程代次 / 请求数</span><strong id="generation">-</strong></div>
-      </div>
-    </section>
-
-    <section>
-      <h2>Web 应用生命周期</h2>
-      <div class="lifecycle">
-        <div class="phase done"><b>1 · Socket</b><code>AF_INET<br>SOCK_STREAM<br>SO_REUSEADDR=1</code></div>
-        <div class="phase done"><b>2 · Bind</b><code>0.0.0.0:5000<br>INADDR_ANY</code></div>
-        <div class="phase done"><b>3 · Listen</b><code>一个用户 fd<br>多接口通配绑定</code></div>
-        <div class="phase done"><b>4 · Wait</b><code id="wait-backend">serve_forever</code></div>
-        <div class="phase done"><b>5 · Accept / I/O</b><code>accept<br>read / write<br>close</code></div>
-        <div class="phase done"><b>6 · Restart</b><code id="restart-state">close listener<br>等待同端口重启</code></div>
-      </div>
-    </section>
-
-    <section class="routes">
-      <div>
-        <h2>同一通配监听的访问路径</h2>
-        <div class="address-list">
-          <div class="address"><span>lo</span><code>http://127.0.0.1:5000</code></div>
-          <div class="address"><span>eth0</span><code>http://10.0.2.15:5000</code></div>
-          <div class="address"><span>eth1</span><code>http://10.0.3.15:5000</code></div>
-        </div>
-      </div>
-      <div>
-        <h2>当前入口功能验证</h2>
-        <div class="actions">
-          <button data-path="/health">健康检查</button>
-          <button data-path="/echo/linux-socket">请求与响应</button>
-          <button data-path="/large">64 KiB 响应</button>
-          <button data-path="/request-info">实际 socket 地址</button>
-        </div>
-        <pre id="output">等待操作</pre>
-      </div>
-    </section>
-
-    <section>
-      <h2>最近一次已接受连接</h2>
-      <table>
-        <thead><tr><th>请求 Host</th><th>accepted socket 本地地址</th><th>客户端地址</th><th>结果</th></tr></thead>
-        <tbody id="last-request"><tr><td colspan="4">尚无请求</td></tr></tbody>
-      </table>
-    </section>
-  </main>
-  <script>
-    const output = document.getElementById("output");
-
-    async function loadStatus() {
-      const response = await fetch("/api/status", { cache: "no-store" });
-      const data = await response.json();
-      document.getElementById("pid").textContent = data.pid;
-      document.getElementById("listener").textContent = `${data.listener.address}:${data.listener.port}`;
-      document.getElementById("implicit-listener").textContent = `${data.implicit_listener.address}:${data.implicit_listener.port}`;
-      document.getElementById("reuse").textContent = data.listener.reuse_address ? "enabled" : "disabled";
-      document.getElementById("generation").textContent = `${data.generation} / ${data.request_count}`;
-      document.getElementById("wait-backend").textContent = `${data.wait_backend}\naccept wait`;
-      document.getElementById("restart-state").textContent = data.generation === "restarted"
-        ? "listener 已关闭\n同端口重新 bind 成功"
-        : "close listener\n等待同端口重启";
-    }
-
-    async function runCheck(button) {
-      button.disabled = true;
-      try {
-        const response = await fetch(button.dataset.path, { cache: "no-store" });
-        const body = await response.text();
-        const size = new TextEncoder().encode(body).length;
-        output.textContent = `${button.dataset.path}\nHTTP ${response.status}\n${size} bytes\n${body.slice(0, 600)}`;
-
-        const infoResponse = await fetch("/request-info", { cache: "no-store" });
-        const info = await infoResponse.json();
-        const row = document.createElement("tr");
-        const values = [
-          info.host,
-          `${info.local_address}:${info.local_port}`,
-          `${info.peer_address}:${info.peer_port}`,
-          response.ok ? "PASS" : "FAIL",
-        ];
-        values.forEach((value, index) => {
-          const cell = document.createElement("td");
-          cell.textContent = value;
-          if (index === values.length - 1) {
-            cell.className = response.ok ? "pass" : "fail";
-          }
-          row.appendChild(cell);
-        });
-        document.getElementById("last-request").replaceChildren(row);
-        await loadStatus();
-      } catch (error) {
-        output.textContent = `FAIL\n${error}`;
-      } finally {
-        button.disabled = false;
-      }
-    }
-
-    document.querySelectorAll("button[data-path]").forEach((button) => {
-      button.addEventListener("click", () => runCheck(button));
-    });
-    loadStatus().catch((error) => { output.textContent = `FAIL\n${error}`; });
-  </script>
-</body>
-</html>
-"""
 
 
 def socket_request_info():
@@ -268,15 +113,323 @@ def check_implicit_listen_binding():
         return {"address": address, "port": port}
 
 
+def utc_now():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def emit_step_evidence(step, passed, expected, observed, source="guest"):
+    evidence = {
+        "expected": expected,
+        "observed": observed,
+        "source": source,
+        "status": "PASS" if passed else "FAIL",
+        "step": step,
+    }
+    line = "flask_socket_demo: STEP_EVIDENCE " + json.dumps(
+        evidence, ensure_ascii=False, separators=(",", ":")
+    )
+    print(line, flush=True)
+    return evidence, line
+
+
+def get_verification_snapshot():
+    with verification_lock:
+        return copy.deepcopy(verification_state)
+
+
+def add_verification_result(group, name, passed, detail, duration_ms):
+    result = {
+        "detail": detail,
+        "duration_ms": duration_ms,
+        "group": group,
+        "name": name,
+        "status": "pass" if passed else "fail",
+    }
+    with verification_lock:
+        verification_state["results"].append(result)
+        verification_state["current"] = name
+        counter = "passed" if passed else "failed"
+        verification_state[counter] += 1
+
+
+def run_verification_check(group, name, check_fn):
+    started_at = time.monotonic()
+    try:
+        detail = check_fn()
+        passed = True
+    except Exception as error:
+        detail = str(error)
+        passed = False
+    duration_ms = round((time.monotonic() - started_at) * 1000, 1)
+    add_verification_result(group, name, passed, detail, duration_ms)
+
+
+def address_is_local(address):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind((address, 0))
+
+
+def fetch_bytes(url, timeout=2.0):
+    with http_opener.open(url, timeout=timeout) as response:
+        return response.status, response.read()
+
+
+def fetch_json(url, timeout=2.0):
+    status, payload = fetch_bytes(url, timeout)
+    return status, json.loads(payload.decode())
+
+
+def verify_tcp_path(interface, address, port):
+    base_url = f"http://{address}:{port}"
+    status, health_result = fetch_json(base_url + "/health")
+    if status != 200 or health_result.get("status") != "ok":
+        raise RuntimeError(f"{interface} 健康检查失败")
+
+    status, echo_result = fetch_json(base_url + "/echo/indicator-two")
+    if status != 200 or echo_result.get("echo") != "indicator-two":
+        raise RuntimeError(f"{interface} 请求响应失败")
+
+    status, payload = fetch_bytes(base_url + "/large")
+    if status != 200 or len(payload) != 65536:
+        raise RuntimeError(f"{interface} 64 KiB 响应长度为 {len(payload)}")
+
+    status, request_result = fetch_json(base_url + "/request-info")
+    if status != 200 or request_result.get("local_address") != address:
+        actual_address = request_result.get("local_address")
+        raise RuntimeError(f"accepted socket 本地地址为 {actual_address}")
+
+    return f"{base_url} · accepted={address}:{port} · 65536 bytes"
+
+
+def verify_udp_path(interface, address):
+    payload = f"asterinas-{interface}".encode()
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as receiver:
+        receiver.settimeout(2.0)
+        receiver.bind(("0.0.0.0", 0))
+        visible_address, port = receiver.getsockname()[:2]
+        if visible_address != "0.0.0.0" or port == 0:
+            raise RuntimeError(f"UDP 通配端点为 {visible_address}:{port}")
+
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(payload, (address, port))
+        received, _ = receiver.recvfrom(256)
+
+    if received != payload:
+        raise RuntimeError(f"{interface} UDP 数据不一致")
+    return f"0.0.0.0:{port} 接收来自 {address} 的 {len(payload)} bytes"
+
+
+def lifecycle_wsgi_app(_environ, start_response):
+    payload = b'{"status":"ok"}'
+    start_response(
+        "200 OK",
+        [("Content-Type", "application/json"), ("Content-Length", str(len(payload)))],
+    )
+    return [payload]
+
+
+def wait_for_lifecycle_server(port):
+    last_error = None
+    for _ in range(20):
+        try:
+            status, result = fetch_json(f"http://127.0.0.1:{port}", timeout=0.5)
+            if status == 200 and result.get("status") == "ok":
+                return
+        except (OSError, ValueError) as error:
+            last_error = error
+        time.sleep(0.05)
+    raise RuntimeError(f"生命周期服务未就绪: {last_error}")
+
+
+def stop_lifecycle_server(server, server_thread):
+    server.shutdown()
+    server_thread.join(timeout=3.0)
+    server.server_close()
+    if server_thread.is_alive():
+        raise RuntimeError("生命周期服务未能停止")
+
+
+def verify_inaddr_any_listener(snapshot):
+    if snapshot["bind_host"] != "0.0.0.0":
+        raise RuntimeError(f"bind 地址为 {snapshot['bind_host']}")
+    if snapshot["listener_address"] != "0.0.0.0":
+        raise RuntimeError(f"getsockname 地址为 {snapshot['listener_address']}")
+    return (
+        f"bind={snapshot['bind_host']}:{snapshot['bind_port']} · "
+        f"getsockname={snapshot['listener_address']}:{snapshot['listener_port']}"
+    )
+
+
+def verify_implicit_listener(snapshot):
+    implicit_listener = snapshot["implicit_listener"]
+    if implicit_listener["address"] != "0.0.0.0" or implicit_listener["port"] == 0:
+        raise RuntimeError(
+            f"隐式绑定结果为 {implicit_listener['address']}:{implicit_listener['port']}"
+        )
+    return f"getsockname=0.0.0.0:{implicit_listener['port']}"
+
+
+def verify_reuse_address(snapshot):
+    if not snapshot["reuse_address"]:
+        raise RuntimeError("SO_REUSEADDR 未启用")
+    return "监听器已启用地址复用"
+
+
+def verify_same_port_restart():
+    servers = []
+    try:
+        first_server = make_server("0.0.0.0", 0, lifecycle_wsgi_app, threaded=True)
+        first_port = first_server.socket.getsockname()[1]
+        first_thread = threading.Thread(target=first_server.serve_forever, daemon=True)
+        servers.append((first_server, first_thread))
+        first_thread.start()
+        wait_for_lifecycle_server(first_port)
+        stop_lifecycle_server(first_server, first_thread)
+        servers.clear()
+
+        restarted_server = make_server(
+            "0.0.0.0", first_port, lifecycle_wsgi_app, threaded=True
+        )
+        restarted_thread = threading.Thread(
+            target=restarted_server.serve_forever, daemon=True
+        )
+        servers.append((restarted_server, restarted_thread))
+        restarted_thread.start()
+        wait_for_lifecycle_server(first_port)
+        stop_lifecycle_server(restarted_server, restarted_thread)
+        servers.clear()
+    finally:
+        for server, server_thread in servers:
+            stop_lifecycle_server(server, server_thread)
+
+    return f"0.0.0.0:{first_port} 关闭后同端口重新监听成功"
+
+
+def run_verification_suite():
+    try:
+        with runtime_lock:
+            snapshot = dict(runtime)
+
+        run_verification_check(
+            "Linux 监听语义",
+            "INADDR_ANY 通配监听",
+            lambda: verify_inaddr_any_listener(snapshot),
+        )
+        run_verification_check(
+            "Linux 监听语义",
+            "listen 隐式绑定",
+            lambda: verify_implicit_listener(snapshot),
+        )
+        run_verification_check(
+            "Linux 监听语义",
+            "SO_REUSEADDR",
+            lambda: verify_reuse_address(snapshot),
+        )
+        run_verification_check(
+            "Linux 监听语义",
+            "同端口服务重启",
+            verify_same_port_restart,
+        )
+
+        for interface, address in EXPECTED_INTERFACES:
+            def check_interface(interface=interface, address=address):
+                address_is_local(address)
+                return f"{interface} · {address} · UP"
+
+            run_verification_check("多网卡拓扑", f"{interface} 接口可用", check_interface)
+
+        listener_port = snapshot["listener_port"]
+        for interface, address in EXPECTED_INTERFACES:
+            run_verification_check(
+                "TCP 跨接口服务",
+                f"{interface} 通配监听访问",
+                lambda interface=interface, address=address: verify_tcp_path(
+                    interface, address, listener_port
+                ),
+            )
+
+        for interface, address in EXPECTED_INTERFACES:
+            run_verification_check(
+                "UDP 跨接口收发",
+                f"{interface} UDP 通配收发",
+                lambda interface=interface, address=address: verify_udp_path(
+                    interface, address
+                ),
+            )
+    except Exception as error:
+        add_verification_result("验证引擎", "未处理异常", False, str(error), 0.0)
+    finally:
+        with verification_lock:
+            verification_state["completed_at"] = utc_now()
+            verification_state["current"] = "验证完成"
+            verification_state["running"] = False
+            verification_state["status"] = (
+                "pass" if verification_state["failed"] == 0 else "fail"
+            )
+
+
 @app.before_request
 def count_request():
     with runtime_lock:
         runtime["request_count"] += 1
 
 
+@app.after_request
+def attach_socket_evidence(response):
+    request_info = socket_request_info()
+    local_address = request_info["local_address"] or "unknown"
+    local_port = request_info["local_port"]
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Expose-Headers"] = (
+        "Content-Length, X-Asterinas-Accepted-Address, "
+        "X-Asterinas-Accepted-Port, X-Asterinas-Interface, "
+        "X-Asterinas-Listener, X-Asterinas-Pid, X-Asterinas-Step-Evidence, "
+        "X-Asterinas-Step-Status"
+    )
+    response.headers["X-Asterinas-Accepted-Address"] = local_address
+    response.headers["X-Asterinas-Accepted-Port"] = str(local_port)
+    response.headers["X-Asterinas-Interface"] = interface_for_address(local_address)
+    response.headers["X-Asterinas-Listener"] = (
+        f"{runtime['listener_address']}:{runtime['listener_port']}"
+    )
+    response.headers["X-Asterinas-Pid"] = str(os.getpid())
+
+    if request.path == "/api/demo/path-proof":
+        expected_interface = request.args.get("path", "unknown")
+        expected_addresses = dict(EXPECTED_INTERFACES)
+        expected_address = expected_addresses.get(expected_interface, "unknown")
+        actual_interface = interface_for_address(local_address)
+        passed = (
+            expected_interface == actual_interface
+            and local_address == expected_address
+            and runtime["listener_address"] == "0.0.0.0"
+            and local_port == runtime["listener_port"]
+            and response.status_code == 200
+        )
+        evidence, line = emit_step_evidence(
+            f"browser_{expected_interface}",
+            passed,
+            (
+                f"hostfwd->{expected_interface} accepted="
+                f"{expected_address}:{runtime['listener_port']} bytes=65536"
+            ),
+            (
+                f"host={request_info['host']} accepted={local_address}:{local_port} "
+                f"interface={actual_interface} listener="
+                f"{runtime['listener_address']}:{runtime['listener_port']} "
+                f"pid={os.getpid()} sent=65536"
+            ),
+            source="browser",
+        )
+        response.headers["X-Asterinas-Step-Evidence"] = line
+        response.headers["X-Asterinas-Step-Status"] = evidence["status"]
+
+    return response
+
+
 @app.get("/")
 def index():
-    return INDEX_HTML
+    return COMPETITION_HTML
 
 
 @app.get("/api/status")
@@ -286,6 +439,7 @@ def api_status():
 
     return jsonify(
         bind={"address": snapshot["bind_host"], "port": snapshot["bind_port"]},
+        browser_paths=BROWSER_PATHS,
         generation=snapshot["generation"],
         implicit_listener=snapshot["implicit_listener"],
         indicator="linux_network_interface_semantics",
@@ -301,6 +455,123 @@ def api_status():
         status="ok",
         wait_backend=snapshot["wait_backend"],
     )
+
+
+@app.get("/api/verification/status")
+def api_verification_status():
+    return jsonify(**get_verification_snapshot())
+
+
+def execute_demo_step(step):
+    with runtime_lock:
+        snapshot = dict(runtime)
+
+    if step == "wildcard_listener":
+        expected = "bind=0.0.0.0 and getsockname=0.0.0.0:8080"
+        observed = verify_inaddr_any_listener(snapshot)
+    elif step == "implicit_listen":
+        expected = "listen() without bind -> getsockname=0.0.0.0:<ephemeral>"
+        observed = verify_implicit_listener(snapshot)
+    elif step == "reuse_address":
+        expected = "SO_REUSEADDR=1"
+        observed = verify_reuse_address(snapshot)
+    elif step == "loopback_tcp":
+        expected = "127.0.0.1 reaches wildcard listener and returns 65536 bytes"
+        observed = verify_tcp_path("lo", "127.0.0.1", snapshot["listener_port"])
+    elif step == "udp_multi_interface":
+        expected = "one UDP wildcard bind receives through lo, eth0 and eth1"
+        observed = " | ".join(
+            verify_udp_path(interface, address)
+            for interface, address in EXPECTED_INTERFACES
+        )
+    elif step == "same_port_restart":
+        expected = "close listener and bind the same port immediately"
+        observed = verify_same_port_restart()
+    else:
+        raise ValueError(f"unknown demo step: {step}")
+
+    return emit_step_evidence(step, True, expected, observed)
+
+
+@app.post("/api/demo/step")
+def api_demo_step():
+    payload = request.get_json(silent=True) or {}
+    step = payload.get("step", "")
+    try:
+        evidence, line = execute_demo_step(step)
+        return jsonify(evidence=evidence, line=line)
+    except Exception as error:
+        evidence, line = emit_step_evidence(
+            step or "unknown",
+            False,
+            "step-specific Linux socket invariant",
+            str(error),
+        )
+        return jsonify(evidence=evidence, line=line), 422
+
+
+@app.get("/api/demo/path-proof")
+def api_demo_path_proof():
+    token = request.args.get("token", "")
+    if not token or len(token) > 80 or not token.replace("-", "").isalnum():
+        return jsonify(error="invalid evidence token"), 400
+
+    prefix = (token + "\n").encode()
+    response = make_response(prefix + b"A" * (65536 - len(prefix)))
+    response.headers["Content-Type"] = "application/octet-stream"
+    return response
+
+
+@app.post("/api/demo/browser-compare")
+def api_demo_browser_compare():
+    payload = request.get_json(silent=True) or {}
+    proofs = payload.get("proofs", [])
+    expected_addresses = {path["guest_address"] for path in BROWSER_PATHS}
+    observed_addresses = {proof.get("accepted_address") for proof in proofs}
+    observed_pids = {proof.get("pid") for proof in proofs}
+    observed_listeners = {proof.get("listener") for proof in proofs}
+    passed = (
+        len(proofs) == 2
+        and observed_addresses == expected_addresses
+        and observed_pids == {os.getpid()}
+        and observed_listeners
+        == {f"{runtime['listener_address']}:{runtime['listener_port']}"}
+        and all(proof.get("status") == "PASS" for proof in proofs)
+    )
+    expected = (
+        "two hostfwd paths -> different accepted addresses; "
+        "same PID and 0.0.0.0:8080 listener"
+    )
+    observed = (
+        f"addresses={sorted(str(value) for value in observed_addresses)} "
+        f"pids={sorted(str(value) for value in observed_pids)} "
+        f"listeners={sorted(str(value) for value in observed_listeners)}"
+    )
+    evidence, line = emit_step_evidence(
+        "browser_compare", passed, expected, observed, source="browser"
+    )
+    return jsonify(evidence=evidence, line=line), 200 if passed else 422
+
+
+@app.post("/api/verification/run")
+def api_verification_run():
+    with verification_lock:
+        if verification_state["running"]:
+            return jsonify(**copy.deepcopy(verification_state)), 409
+        verification_state.update(
+            completed_at=None,
+            current="准备验证环境",
+            failed=0,
+            passed=0,
+            results=[],
+            running=True,
+            started_at=utc_now(),
+            status="running",
+        )
+
+    verification_thread = threading.Thread(target=run_verification_suite, daemon=True)
+    verification_thread.start()
+    return jsonify(**get_verification_snapshot()), 202
 
 
 @app.get("/health")

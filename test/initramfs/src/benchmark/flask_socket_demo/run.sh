@@ -17,6 +17,17 @@ AVAILABLE_ADDRESSES="127.0.0.1"
 PASSED=0
 GENERATION=initial
 
+print_path_evidence() {
+    address=$1
+    case "$address" in
+        127.0.0.1) interface=lo ;;
+        "$PRIMARY_IP") interface=eth0 ;;
+        "$SECONDARY_IP") interface=eth1 ;;
+        *) interface=unknown ;;
+    esac
+    echo "flask_socket_demo: EVIDENCE interface=$interface address=$address state=configured"
+}
+
 address_is_local() {
     "$PYTHON" - "$1" <<'PY'
 import socket
@@ -77,6 +88,10 @@ else
     echo "flask_socket_demo: SKIP eth1 ($SECONDARY_IP is not configured)"
     echo "flask_socket_demo: set REQUIRE_MULTI_NET=1 for the official multi-NIC demo"
 fi
+
+for address in $AVAILABLE_ADDRESSES; do
+    print_path_evidence "$address"
+done
 
 echo "flask_socket_demo: lifecycle=start bind=${HOST}:${PORT} addresses=$AVAILABLE_ADDRESSES"
 start_server

@@ -277,7 +277,7 @@ make nixos
 target/nixos/asterinas.img
 ```
 
-宿主机运行 QEMU，并把 guest 的 8080 端口映射到宿主机 18080：
+宿主机运行 QEMU，挂载两张 VirtIO 网卡，并分别把两条网络路径上的 guest 8080 端口映射到宿主机 18080 和 18081：
 
 ```bash
 sudo qemu-system-x86_64 \
@@ -288,7 +288,11 @@ sudo qemu-system-x86_64 \
   -drive if=none,format=raw,id=x0,file="$PWD/target/nixos/asterinas.img" \
   -device virtio-blk-pci,drive=x0,disable-legacy=on,disable-modern=off \
   -device virtio-net-pci,netdev=net0,disable-legacy=on,disable-modern=off \
-  -netdev user,id=net0,hostfwd=tcp:0.0.0.0:18080-:8080 \
+  -netdev user,id=net0,net=10.0.2.0/24,dhcpstart=10.0.2.15,hostfwd=tcp:127.0.0.1:18080-:8080 \
+  -object filter-dump,id=flask_net0_dump,netdev=net0,file="$PWD/target/flask-net0.pcap" \
+  -device virtio-net-pci,netdev=net1,disable-legacy=on,disable-modern=off \
+  -netdev user,id=net1,net=10.0.3.0/24,dhcpstart=10.0.3.15,hostfwd=tcp:127.0.0.1:18081-:8080 \
+  -object filter-dump,id=flask_net1_dump,netdev=net1,file="$PWD/target/flask-net1.pcap" \
   -chardev stdio,id=mux,mux=on \
   -device virtio-serial-pci \
   -device virtconsole,chardev=mux \
@@ -298,27 +302,40 @@ sudo qemu-system-x86_64 \
   -nographic
 ```
 
-在 Asterinas guest 中后台启动 Flask 服务：
+在 Asterinas guest 中启动 Flask 现场验收服务：
 
 ```bash
-/benchmark/bin/python3 /benchmark/flask_socket_demo/app.py --host 0.0.0.0 --port 8080 &
+/benchmark/flask_socket_demo/ui.sh
 ```
 
-宿主机命令行访问：
-
-```bash
-curl -v http://127.0.0.1:18080
-```
-
-宿主机浏览器访问：
+宿主机浏览器可以从任一网卡对应入口访问：
 
 ```text
 http://127.0.0.1:18080
+http://127.0.0.1:18081
 ```
 
-网页中依次点击指标二相关按钮，可以观察 `0.0.0.0` 监听、Echo 请求、64 KiB 响应、请求信息等服务路径均返回 `PASS`。
+页面提供九个可自由选择、可重复执行的验证点，不再一键批量运行，也不要求按固定顺序操作。每次点击只检查一个兼容点，网页立即展示该项的期望值和实测值。第七项双入口交叉证明需要先分别执行 `18080 → eth0` 和 `18081 → eth1`，其余项目彼此独立。
 
-其中，页面中的指标二 `PASS` 表示真实 Flask 服务可以在 Asterinas 中绑定 `0.0.0.0`，并通过 QEMU 端口映射被宿主机访问，普通响应、大响应和请求信息读取均正常。
+九步依次覆盖：`INADDR_ANY` 通配监听、未绑定 `listen()`、`SO_REUSEADDR`、loopback TCP、浏览器 `18080 → eth0`、浏览器 `18081 → eth1`、双入口交叉证明、UDP 通配收发和同端口服务重启。两条浏览器路径使用独立请求和唯一令牌，分别证明 accepted socket 为 `10.0.2.15:8080` 与 `10.0.3.15:8080`；交叉步骤再证明两者命中相同 Flask PID 和同一个 `0.0.0.0:8080` listener。
+
+Flask 的 `STEP_EVIDENCE` 只作为被测应用的解释性日志，不作为双网卡路径的最终证明。QEMU 命令中的两个 `filter-dump` 会由虚拟机外部观察者分别生成 `flask-net0.pcap` 和 `flask-net1.pcap`。在宿主机另开终端运行独立监视器：
+
+```bash
+python3 scripts/watch-flask-pcap-evidence.py \
+  target/flask-net0.pcap target/flask-net1.pcap
+```
+
+点击两个浏览器入口项目时，监视器应分别输出：
+
+```text
+QEMU_PCAP_EVIDENCE source=net0/eth0 ... dst=10.0.2.15:8080 request="GET /api/demo/path-proof?..."
+QEMU_PCAP_EVIDENCE source=net1/eth1 ... dst=10.0.3.15:8080 request="GET /api/demo/path-proof?..."
+```
+
+这些记录直接解析 QEMU 在两张虚拟网卡上捕获的原始 Ethernet/IPv4/TCP 帧，不依赖 Flask 对本地地址的自我报告。PCAP 文件还可以交给 Wireshark 或 `tcpdump -nn -r` 独立复核。对于 `listen()`、`SO_REUSEADDR` 等纯 syscall 语义，页面用于现场演示，最终证据仍以独立 C regression 测试为准。
+
+端口冲突原子回滚、连接拒绝后重连和 Linux 131 项共同语义对比仍作为离线 regression 证据，页面会明确标注证据边界，不把历史结果伪装成现场执行结果。
 
 ### 5. 指标三：netfilter / iptables
 

@@ -47,6 +47,9 @@ in {
       ln -s ${flaskSocketDemoSrc}/ui.sh /benchmark/flask_socket_demo/ui.sh
       ln -s ${flaskSocketDemoSrc}/bench_result.yaml /benchmark/flask_socket_demo/bench_result.yaml
     fi
+    if [ ! -e /benchmark/flask_socket_demo/dashboard.py ]; then
+      ln -s ${flaskSocketDemoSrc}/dashboard.py /benchmark/flask_socket_demo/dashboard.py
+    fi
   '';
 
   system.nixos.distroName = "Asterinas NixOS";
