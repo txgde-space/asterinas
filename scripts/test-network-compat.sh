@@ -90,7 +90,7 @@ case "${mode}" in
     run_podman "scripts/test-network-compat.sh compile && make kernel"
     ;;
   flask-demo)
-    run_podman "scripts/test-network-compat.sh compile && make run_kernel BENCHMARK=flask_socket_demo"
+    run_podman "scripts/test-network-compat.sh compile && MULTI_NET=on make run_kernel BENCHMARK=flask_socket_demo"
     ;;
   -h|--help|help)
     usage

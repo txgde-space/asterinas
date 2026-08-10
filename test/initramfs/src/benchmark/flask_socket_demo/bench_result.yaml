@@ -1,7 +1,7 @@
 chart:
-  description: flask_socket_demo starts Flask on 0.0.0.0 and probes loopback and the guest IPv4 address
-  legend: Flask socket compatibility demo
-  title: Flask service startup and Linux socket compatibility demo
+  description: Flask binds INADDR_ANY, serves every configured IPv4 interface, and restarts on the same port
+  legend: Linux wildcard socket lifecycle checks
+  title: Flask Linux network-interface semantics on Asterinas
   unit: tests
 result_extraction:
   result_index: 1
