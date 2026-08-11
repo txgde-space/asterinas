@@ -1219,7 +1219,7 @@ fn parse_iptables_nat_rule(
         return_errno_with_message!(Errno::EINVAL, "missing NAT target");
     };
 
-    validate_nat_rule(chain, target, to_addr, src_port, dst_port)?;
+    validate_nat_rule(chain, target, to_addr)?;
 
     Ok(AppendNatRule {
         chain,
@@ -1489,8 +1489,6 @@ fn validate_nat_rule(
     chain: aster_bigtcp::netfilter::NatRuleChain,
     target: aster_bigtcp::netfilter::NatRuleTarget,
     to_addr: Option<aster_bigtcp::wire::Ipv4Address>,
-    src_port: Option<u16>,
-    dst_port: Option<u16>,
 ) -> Result<()> {
     match target {
         aster_bigtcp::netfilter::NatRuleTarget::Dnat => {
@@ -1513,10 +1511,10 @@ fn validate_nat_rule(
             if chain != aster_bigtcp::netfilter::NatRuleChain::PostRouting {
                 return_errno_with_message!(Errno::EINVAL, "MASQUERADE requires POSTROUTING");
             }
-            if to_addr.is_some() || src_port.is_some() || dst_port.is_some() {
+            if to_addr.is_some() {
                 return_errno_with_message!(
                     Errno::EINVAL,
-                    "MASQUERADE translation address and port matchers are unsupported"
+                    "MASQUERADE does not accept a fixed translation address"
                 );
             }
         }
