@@ -1141,8 +1141,9 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 		"127.0.0.1:5354", NULL
 	};
 	char *const iptables_masquerade_command[] = {
-		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-j",
-		"MASQUERADE", NULL
+		"./iptables", "-t", "nat", "-A", "POSTROUTING", "-p", "tcp",
+		"--sport", "40000", "--dport", "9000", "-j", "MASQUERADE",
+		NULL
 	};
 
 	// NETFILTER_STAGE21: NAT starts as a control-plane feature: iptables-style
@@ -1167,7 +1168,7 @@ FN_TEST(run_userspace_iptables_nat_control_plane)
 			"chain PREROUTING policy ACCEPT\n  rule 0 pkts 0 bytes 0 match udp dport 5353 target DNAT to-destination 127.0.0.1:5354") != NULL,
 			 _ret == 1);
 	TEST_RES(strstr(buffer,
-			"  rule 1 pkts 0 bytes 0 match all target MASQUERADE") != NULL,
+			"  rule 1 pkts 0 bytes 0 match tcp sport 40000 dport 9000 target MASQUERADE") != NULL,
 			 _ret == 1);
 	TEST_RES(strstr(buffer, "state stage7-PREROUTING-nat-rule-count 1") != NULL,
 			 _ret == 1);
