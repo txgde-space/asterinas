@@ -41,6 +41,7 @@ cachix.list
 distro/etc_nixos/_config_for_test.nix
 
 doc/
+docs/
 tmp/
 
 # Local demo videos are too large for git hosting.
