@@ -18,7 +18,7 @@ ipv6_routes=$(ip -6 route)
 printf '%s\n' "$ipv6_routes"
 
 test -n "$ipv6_routes"
-# The network interfaces use deterministic ULA prefixes in the IPv6 stage.
+# IPv6 阶段的网络接口使用确定性的 ULA 前缀。
 printf '%s\n' "$ipv6_routes" | grep -Eq 'fd00:(0:){2}[0-9]+::/64'
 printf '%s\n' "$ipv6_routes" | grep -q 'default'
 

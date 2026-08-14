@@ -43,11 +43,10 @@ use crate::{
 
 /// An IPv4 raw socket.
 ///
-/// The socket owns one `aster-bigtcp` raw queue per registered IPv4 interface;
-/// the queues preserve the requested protocol number on both ingress and
-/// egress.
+/// 该 Socket 为每个已注册 IPv4 接口持有一个 `aster-bigtcp` Raw 队列；
+/// 队列在入口和出口方向都保留请求的协议号。
 pub struct RawSocket {
-    /// `None` represents Linux's IPPROTO_RAW send-any-protocol socket.
+    /// `None` 表示 Linux 的 IPPROTO_RAW 任意协议发送 Socket。
     protocol: Option<IpProtocol>,
     raw_sockets: Vec<BigtcpRawIpSocket>,
     local_endpoint: RwLock<Option<IpEndpoint>>,
@@ -281,8 +280,7 @@ impl RawSocket {
             return_errno_with_message!(Errno::ENETUNREACH, "no raw socket route");
         };
 
-        // Userspace supplies the protocol payload; the IPv4 header is still
-        // owned by the network stack unless IP_HDRINCL was requested.
+        // 用户态提供协议载荷；除非请求了 IP_HDRINCL，否则 IPv4 头仍由网络栈负责。
         if !raw_socket.send_ipv4(
             destination,
             source,
@@ -528,9 +526,8 @@ fn ip_protocol_from_number(protocol: u8) -> IpProtocol {
     }
 }
 
-/// Resolves per-send IPv4 ancillary options. `IP_HDRINCL` remains
-/// authoritative when present, so these values are only consumed for the
-/// normal stack-generated IPv4 header path.
+/// 解析每次发送使用的 IPv4 辅助选项。存在 `IP_HDRINCL` 时仍以其为准，
+/// 因此这些值只用于网络栈正常生成 IPv4 头的路径。
 fn raw_control_options(control_messages: &[ControlMessage]) -> Result<(Option<u8>, Option<u8>)> {
     let mut tos = None;
     let mut ttl = None;

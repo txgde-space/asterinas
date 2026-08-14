@@ -539,9 +539,8 @@ fn parse_iptables_command(command: &str) -> Result<Option<NetfilterCommand>> {
     .map(Some)
 }
 
-/// Parses the deliberately small `ip6tables` compatibility subset.  The
-/// command is written to `/proc/netfilter_rules`, so it remains usable even
-/// before a dedicated netlink nftables ABI exists.
+/// 解析有意保持精简的 `ip6tables` 兼容子集。命令写入 `/proc/netfilter_rules`，
+/// 因此即使尚无专用 netlink nftables ABI 也能使用。
 fn parse_ip6tables_command(command: &str) -> Result<Option<Ipv6NetfilterCommand>> {
     const PREFIX: &str = "ip6tables ";
 
@@ -550,8 +549,8 @@ fn parse_ip6tables_command(command: &str) -> Result<Option<Ipv6NetfilterCommand>
     };
     let mut words = rest.split_whitespace();
 
-    // Keep the nat-table parser next to the filter parser so the procfs ABI
-    // accepts the familiar `ip6tables -t nat ...` spelling directly.
+    // 将 nat 表解析器放在过滤解析器旁，使 procfs ABI 能直接接受熟悉的
+    // `ip6tables -t nat ...` 写法。
     if matches!(words.clone().next(), Some("-t") | Some("--table")) {
         let _ = words.next();
         let Some(table) = words.next() else {

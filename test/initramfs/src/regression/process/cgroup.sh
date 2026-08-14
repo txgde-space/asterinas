@@ -202,8 +202,8 @@ USAGE_BEFORE=$(read_cpu_stat_field "usage_usec" "$CPU_STAT_PATH")
 USER_BEFORE=$(read_cpu_stat_field "user_usec" "$CPU_STAT_PATH")
 echo "cpu.stat before measurement: usage_usec=$USAGE_BEFORE user_usec=$USER_BEFORE"
 
-# cpu.stat measures consumed CPU time, which need not track wall-clock time
-# when the guest vCPU is descheduled by its hypervisor.
+# cpu.stat 测量已消耗的 CPU 时间；当 hypervisor 暂停调度 guest vCPU 时，
+# 该时间不一定与墙上时钟时间同步。
 sleep 2
 
 USAGE_AFTER=$(read_cpu_stat_field "usage_usec" "$CPU_STAT_PATH")

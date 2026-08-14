@@ -10,11 +10,10 @@ use crate::{
     prelude::*,
 };
 
-/// Socket options for the IPv6 protocol level.
+/// IPv6 协议层的 Socket 选项。
 ///
-/// The numeric values follow `<netinet/in.h>`. This stage implements the
-/// options needed by `ping -6`, raw diagnostics, and explicit per-packet
-/// hop-limit/traffic-class control.
+/// 数值遵循 `<netinet/in.h>`。当前阶段实现 `ping -6`、Raw 诊断以及显式逐包
+/// Hop Limit/流量类别控制所需的选项。
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(i32)]

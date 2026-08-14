@@ -96,10 +96,9 @@ impl<E: Ext> PollContext<'_, E> {
         }
     }
 
-    /// Drains packets accepted by the router into the egress device.
+    /// 把路由器接受的数据包排入出口设备。
     ///
-    /// Packets are copied into a bounded queue before this point so the ingress
-    /// device lock is never held while an unrelated interface transmits.
+    /// 数据包在此之前已复制到有界队列，因此无关接口发送时不会持有入口设备锁。
     pub(super) fn poll_forwarded_egress<D, Q>(
         &mut self,
         device: &mut D,
@@ -128,10 +127,8 @@ impl<E: Ext> PollContext<'_, E> {
             }
 
             if !dispatch_forwarded_phy(&packet, self.iface.context_mut(), tx_token) {
-                // Ethernet ARP resolution consumed the transmit token. Keep
-                // the packet at the head of the bounded queue so that the
-                // ARP reply's receive poll can transmit this original packet
-                // instead of relying on an upper-layer retransmission.
+                // 以太网 ARP 解析消耗了发送令牌。把数据包保留在有界队列头部，
+                // 使 ARP 回复触发的接收轮询可以发送原始数据包，而不依赖上层重传。
                 forwarded_packets.lock().push_front(packet);
                 break;
             }
@@ -144,8 +141,8 @@ impl<E: Ext> PollContext<'_, E> {
 
     fn accept_ip_repr_at(&self, hook_point: HookPoint, repr: &IpRepr) -> bool {
         let IpRepr::Ipv4(ipv4_repr) = repr else {
-            // IPv6 packet filtering is added with the IPv6 packet path. Drop
-            // it here instead of accidentally treating it as IPv4.
+            // IPv6 数据包过滤由 IPv6 数据路径提供。这里直接丢弃，
+            // 避免意外将其作为 IPv4 处理。
             return false;
         };
 
@@ -256,13 +253,10 @@ impl<E: Ext> PollContext<'_, E> {
             return None;
         }
 
-        // NAT PREROUTING runs before the local-delivery versus forwarding
-        // decision. This permits DNAT to select a routed backend and permits
-        // a tracked reply addressed to the router to re-enter forwarding.
-        // The ingress DMA buffer is immutable here.  Keep a private forwarded
-        // payload so NAT can rewrite TCP/UDP ports and checksums before the
-        // packet is queued, while local delivery still observes its original
-        // wire representation.
+        // NAT PREROUTING 在本地投递或转发决策之前运行。这样 DNAT 可以选择
+        // 需要路由的后端，发往路由器的已跟踪回复也能重新进入转发路径。
+        // 此处入口 DMA 缓冲区不可变。单独保存转发载荷，使 NAT 能在入队前
+        // 改写 TCP/UDP 端口和校验和，同时本地投递仍观察原始线格式数据。
         let mut forwarded_payload = pkt.payload().to_vec();
         netfilter::rewrite_forwarded_ipv4_prerouting(&mut repr, &mut forwarded_payload);
 
@@ -280,9 +274,8 @@ impl<E: Ext> PollContext<'_, E> {
 
             return match result {
                 ForwardingResult::Queued => None,
-                // Stage 2B deliberately returns the existing host-unreachable
-                // response until the later ICMP-error work adds distinct
-                // no-route, queue-pressure, and time-exceeded responses.
+                // 阶段 2B 暂时有意返回现有的主机不可达响应，
+                // 后续 ICMP 错误处理会区分无路由、队列压力和超时响应。
                 ForwardingResult::Disabled
                 | ForwardingResult::NoRoute
                 | ForwardingResult::HopLimitExceeded
@@ -303,11 +296,9 @@ impl<E: Ext> PollContext<'_, E> {
         let ip_repr = IpRepr::Ipv4(repr);
         let ipv4_repr = &repr;
 
-        // Deliver the complete IPv4 datagram to matching raw sockets before
-        // transport-specific parsing.  This is important for TCP/UDP raw
-        // sockets and for experimental protocol numbers: a malformed or
-        // otherwise unsupported transport must not make the IP raw receive
-        // path disappear.
+        // 在传输层专用解析之前，把完整 IPv4 数据报投递给匹配的 Raw Socket。
+        // 这对 TCP/UDP Raw Socket 和实验协议号很重要：格式错误或不受支持的
+        // 传输层协议不能导致 IP Raw 接收路径消失。
         self.process_raw_ipv4(ipv4_repr, pkt.as_ref());
 
         match next_header {
@@ -386,8 +377,8 @@ impl<E: Ext> PollContext<'_, E> {
                 .is_some_and(|icmp_repr| {
                     self.accept_icmpv4_at(HookPoint::Forward, &ip_repr, &icmp_repr)
                 }),
-            // Stage 2 forwards only parsed TCP, UDP, and ICMPv4 packets.  This
-            // prevents an unknown protocol from bypassing the filter framework.
+            // 阶段 2 只转发已解析的 TCP、UDP 和 ICMPv4 数据包，
+            // 防止未知协议绕过过滤框架。
             _ => false,
         }
     }
@@ -737,11 +728,10 @@ impl<E: Ext> PollContext<'_, E> {
         }
     }
 
-    /// Drains IPv6 datagrams accepted by the router into the egress device.
+    /// 把路由器接受的 IPv6 数据报排入出口设备。
     ///
-    /// Neighbor discovery may consume the available transmit token while the
-    /// packet remains queued. The caller therefore requeues the packet when
-    /// the physical dispatcher reports that resolution is still pending.
+    /// 邻居发现可能消耗可用发送令牌，同时数据包仍留在队列中。
+    /// 因此当物理分发器报告解析仍在进行时，调用方会重新入队该数据包。
     pub(super) fn poll_forwarded_ipv6_egress<D, Q>(
         &mut self,
         device: &mut D,
@@ -1042,10 +1032,9 @@ impl<E: Ext> PollContext<'_, E> {
             let destination = tx_packet.destination();
             let is_local = self.is_unicast_local(IpAddress::Ipv4(destination));
             if tx_packet.protocol() != IpProtocol::Icmp {
-                // Non-ICMP raw sockets carry an opaque protocol payload.  The
-                // `Raw` payload variant deliberately avoids TCP/UDP checksum
-                // and header parsing so experimental protocols and packet
-                // injection tools can use the normal IPv4 output path.
+                // 非 ICMP Raw Socket 携带不透明协议载荷。`Raw` 载荷变体有意跳过
+                // TCP/UDP 校验和与头解析，使实验协议和数据包注入工具可以使用
+                // 普通 IPv4 输出路径。
                 let ipv4_repr = tx_packet.ipv4_repr();
                 if !self.accept_ipv4_at(HookPoint::LocalOut, &ipv4_repr) {
                     return (true, tx_token);
@@ -1105,9 +1094,8 @@ impl<E: Ext> PollContext<'_, E> {
                     return (true, tx_token);
                 }
 
-                // `packet` owns a view into `tx_packet`'s payload through the
-                // parsed ICMP representation. Release that view before
-                // rewriting the raw packet endpoints below.
+                // `packet` 通过已解析的 ICMP 表示持有 `tx_packet` 载荷的视图。
+                // 在下方改写 Raw 数据包端点前先释放该视图。
                 drop(packet);
                 tx_packet.set_endpoints(ipv4_repr.src_addr, ipv4_repr.dst_addr);
                 dispatch_raw_phy(

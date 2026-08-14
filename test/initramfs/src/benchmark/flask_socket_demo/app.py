@@ -77,7 +77,7 @@ class LifecycleRequestHandler(WSGIRequestHandler):
     """将已接受套接字的地址加入 WSGI 环境"""
 
     def log_request(self, code="-", size="-"):
-        """Keeps the terminal focused on explicit demo evidence."""
+        """让终端只关注明确的演示证据。"""
 
     def make_environ(self):
         environ = super().make_environ()

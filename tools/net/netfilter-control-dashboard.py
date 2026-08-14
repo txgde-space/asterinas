@@ -2,14 +2,12 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-"""Local, dependency-free control dashboard for the Asterinas netfilter demo.
+"""Asterinas Netfilter 演示使用的本地无依赖控制 dashboard。
 
-The page is deliberately local-only by default.  It reads the guest's
-NETFILTER_DEMO serial trace and sends a small, validated command language to
-the demo-step guest over its UNIX serial socket.  The guest still performs
-the actual iptables write, procfs snapshot, and ping operation.  Hostname
-lookups are performed here on Ubuntu and only the resulting numeric IPv4
-address is sent to the guest.
+该页面默认有意仅限本地访问。它读取 guest 的 NETFILTER_DEMO 串口记录，
+并通过 UNIX 串口 Socket 向 demo-step guest 发送小型、经过校验的命令语言。
+真实的 iptables 写入、procfs 快照和 ping 操作仍由 guest 执行。
+主机名查询在 Ubuntu 上完成，只把所得数字 IPv4 地址发送给 guest。
 """
 
 from __future__ import annotations
@@ -52,9 +50,8 @@ OPERATION_ALIASES = {
     "--check": "-C", "--replace": "-R",
 }
 
-# Targets on the isolated Stage 2 topology are deterministic and do not
-# depend on the Ubuntu VM's uplink or DNS.  Internet targets are kept as
-# explicit IPv4 presets; the dashboard intentionally does not issue IPv6 pings.
+# 隔离阶段 2 拓扑中的目标是确定的，不依赖 Ubuntu VM 的上行链路或 DNS。
+# 互联网目标保留为显式 IPv4 预设；dashboard 有意不发起 IPv6 ping。
 PROBE_PRESETS = [
     {"id": "v4-left", "family": "4", "label": "IPv4 左端点", "target": "10.0.2.2", "scope": "local"},
     {"id": "v4-right", "family": "4", "label": "IPv4 右端点", "target": "10.0.3.2", "scope": "local"},
@@ -69,10 +66,9 @@ PROBE_SUITES = {
 }
 HOSTNAME_LABEL_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
-# These are the fixed endpoint namespaces created by
-# tools/net/stage2-router-topology.sh.  Keeping the endpoint and namespace
-# names in a small allow-list means the dashboard can run real directional
-# probes without becoming a general-purpose shell endpoint.
+# 这些是 tools/net/stage2-router-topology.sh 创建的固定端点命名空间。
+# 将端点和命名空间名称限制在小型允许列表中，使 dashboard 能运行真实方向性探测，
+# 同时不会变成通用 Shell 端点。
 DIRECTION_TARGETS = {
     "left-to-right": {
         "label": "Left -> right",
@@ -95,10 +91,9 @@ EXPECTATION_PROFILES = {
     "deny-both": {"left-to-right": False, "right-to-left": False},
 }
 
-# Recipes intentionally use only the rule subset already accepted by the
-# Guest procfs parser.  A recipe is still sent through the same validated
-# rule channel as a manually typed command, so the UI demonstrates the real
-# iptables lifecycle rather than maintaining a second fake model.
+# 配方有意只使用 guest procfs 解析器已经接受的规则子集。
+# 配方仍通过与手动输入命令相同、经过校验的规则通道发送，
+# 因而 UI 展示的是真实 iptables 生命周期，而不是维护第二套虚假模型。
 LAB_PROFILES = {
     "allow-both": {
         "label": "允许双向转发",
@@ -184,11 +179,10 @@ LAB_PROFILES = {
 
 
 def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
-    """Resolve a numeric IPv4 address or hostname on the Ubuntu host.
+    """在 Ubuntu 宿主机上解析数字 IPv4 地址或主机名。
 
-    The guest still receives only a numeric address, so this feature does not
-    require a DNS resolver inside Asterinas.  Only A/IPv4 answers are used;
-    IPv6 ping remains deliberately outside the Stage14 demo.
+    guest 仍只接收数字地址，因此该功能不要求 Asterinas 内部具有 DNS 解析器。
+    仅使用 A/IPv4 答案；IPv6 ping 有意不属于阶段 14 演示。
     """
     if not isinstance(target, str):
         return False, "目标必须是 IPv4 地址或主机名", ""
@@ -235,7 +229,7 @@ def resolve_ipv4_target(target: object) -> Tuple[bool, str, str]:
 
 
 def classify_probe(target: str, rc: int) -> Tuple[str, str]:
-    """Return a stable UI status and a human-readable diagnostic."""
+    """返回稳定的 UI 状态和人类可读诊断。"""
     if rc == 0:
         return "PASS", "可达"
     if target in LOCAL_PROBE_TARGETS:
@@ -249,8 +243,7 @@ def parse_pairs(text: str) -> Dict[str, str]:
     try:
         tokens = shlex.split(text)
     except ValueError:
-        # A serial reader can observe a line while its quoted title is still
-        # being written.  The next poll will see the complete line.
+        # 串口读取器可能在带引号标题尚未写完时观察到该行；下一次轮询会看到完整行。
         return {}
     pairs: Dict[str, str] = {}
     for token in tokens:
@@ -298,8 +291,8 @@ def parse_snapshot(lines: Iterable[str]) -> Tuple[List[dict], Dict[str, dict]]:
             "match": rest,
             "target": target_match.group(1) if target_match else "-",
         })
-    # Rule lines do not repeat the chain name.  Walk the source once more with
-    # the active chain so both IPv4 and IPv6 snapshots retain it in the UI.
+    # 规则行不会重复链名。使用活动链再次遍历源内容，
+    # 使 IPv4 和 IPv6 快照都能在 UI 中保留链名。
     rules = []
     table = "filter"
     active_chain = ""
@@ -615,12 +608,11 @@ def validate_probe_numbers(count: object, timeout: object) -> Tuple[bool, str, i
 
 
 def run_namespace_ping(direction: str, count: int, timeout: int) -> dict:
-    """Run a fixed endpoint-to-endpoint probe from the Ubuntu host.
+    """从 Ubuntu 宿主机运行固定的端点到端点探测。
 
-    The dashboard is local-only, but it must not turn the HTTP API into a
-    shell.  Every namespace, address and argument is selected from the
-    allow-list above; only the sudo prefix is conditional on the dashboard's
-    effective uid.
+    dashboard 仅限本地使用，但不能把 HTTP API 变成 Shell。
+    每个命名空间、地址和参数都从上方允许列表中选择；只有 sudo 前缀
+    取决于 dashboard 的有效 uid。
     """
     target = DIRECTION_TARGETS[direction]
     prefix = [] if hasattr(os, "geteuid") and os.geteuid() == 0 else ["sudo", "-n"]
@@ -662,7 +654,7 @@ def run_namespace_ping(direction: str, count: int, timeout: int) -> dict:
 
 
 def counter_deltas(before: Iterable[dict], after: Iterable[dict]) -> List[dict]:
-    """Join two snapshots and expose packet/byte changes per rule."""
+    """合并两个快照并公开每条规则的数据包/字节变化。"""
     def key(rule: dict) -> Tuple[object, ...]:
         return (
             rule.get("family"), rule.get("table"), rule.get("chain"),
@@ -720,10 +712,9 @@ $('snapshotSelect').onchange=()=>{let x=$('snapshotSelect').value;if(x&&state.sn
 document.querySelectorAll('[data-rule]').forEach(b=>b.onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:b.dataset.rule}));document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{let p={v4drop:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j DROP'],v4accept:['iptables','-A OUTPUT -p icmp --icmp-type echo-request -j ACCEPT'],v4nat:['iptables','-t nat -A POSTROUTING -j MASQUERADE'],v6drop:['ip6tables','-A FORWARD -p ipv6-icmp --icmpv6-type echo-request -j DROP']}[b.dataset.preset];$('ruleFamily').value=p[0];$('ruleArgs').value=p[1];control({command:'rule',family:p[0],args:p[1]});});$('applyRule').onclick=()=>control({command:'rule',family:$('ruleFamily').value,args:$('ruleArgs').value});$('ping').onclick=()=>control({command:'ping',family:'4',target:$('pingTarget').value,count:$('pingCount').value,timeout:$('pingTimeout').value});$('pingLocalSuite').onclick=()=>control({command:'probe-suite',suite:'local'});$('pingExternalSuite').onclick=()=>control({command:'probe-suite',suite:'external'});refresh();setInterval(refresh,700);
 </script>
 <script>
-/* Keep protocol and command names in their conventional form, while making
- * the explanatory dashboard copy readable for a Chinese-language demo.  The
- * page contains several render paths (snapshot, probe, and linked labs), so
- * translating text nodes after each render also covers dynamic rows. */
+/* 保留协议和命令的惯用名称，同时让解释性 dashboard 文案适合中文演示。
+ * 页面包含多条渲染路径（快照、探测和联动实验），因此每次渲染后翻译文本节点
+ * 也能覆盖动态行。 */
 document.documentElement.lang='zh-CN';
 const DASHBOARD_ZH=Object.freeze({
   'Asterinas Netfilter Control Lab':'Asterinas Netfilter 控制实验室',
@@ -784,9 +775,8 @@ function translateDashboard(){
     }
   });
 }
-/* Stage13E: keep the guest trace immutable while making the live view usable
- * during a long manual session.  The three clear buttons only hide browser
- * panels; they never flush a guest chain or delete evidence from the log. */
+/* 阶段 13E：保持 guest 记录不可变，同时让实时视图适合长时间手动会话。
+ * 三个清空按钮只隐藏浏览器面板，绝不会清空 guest 链或删除日志证据。 */
 const panelCleared={chains:false,flows:false,timeline:false,probes:false};
 function panelMessage(id){
   return id==='chains'?'Chain-policy view cleared (guest rules are unchanged).':
@@ -833,9 +823,8 @@ function addManualIsolationTools(){
         $('ruleError').textContent='IPv4 counter reset uses iptables; select iptables (IPv4) first.';
         return;
       }
-      // The current guest ABI exposes filter-chain counters reliably.  NAT
-      // counter zeroing is intentionally left out until its procfs ABI is
-      // made compatible; do not present two predictable EINVAL failures.
+      // 当前 guest ABI 能可靠公开过滤链计数器。在其 procfs ABI 兼容前，
+      // 有意不提供 NAT 计数器清零；不要呈现两个可预期的 EINVAL 失败。
       for(const args of ['-Z INPUT','-Z FORWARD','-Z OUTPUT'])
         await control({command:'rule',family:'iptables',args});
     };
@@ -889,10 +878,8 @@ render=function(s){renderBase(s);addPanelTools();addStopButton();addManualIsolat
 addPanelTools();addStopButton();addManualIsolationTools();addPingPresets();translateDashboard();
 </script>
 <script>
-/* Linked experiments intentionally stay on top of the existing ABI.  Rules
- * are still written with command=rule; the extra endpoints only sequence
- * those writes, run fixed host namespace probes, and render the resulting
- * counter delta. */
+/* 联动实验有意建立在现有 ABI 之上。规则仍通过 command=rule 写入；
+ * 新增端点只负责排序这些写入、运行固定宿主机命名空间探测并呈现所得计数器增量。 */
 let linkedLabWired=false;
 function renderLinkedLab(s){
   const profile=$('labProfile');
@@ -950,7 +937,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/state":
             try:
                 state = read_state(self.server.log_path, self.server.control.is_connected())
-            except Exception as exc:  # keep the dashboard alive on a partial serial line
+            except Exception as exc:  # 串口行不完整时保持 dashboard 继续运行
                 state = empty_state(self.server.log_path)
                 state["connected"] = self.server.control.is_connected()
                 state["message"] = f"状态读取器错误：{type(exc).__name__}：{exc}"
@@ -1025,10 +1012,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json({"ok": True, "command": command})
             return
         elif command in ("directional-probe", "rule-and-probe", "lab-profile", "lab"):
-            # These are orchestration commands, not shell passthrough.  The
-            # actual rule writes continue through the same validated Guest
-            # command path and the endpoint probes use the fixed namespace
-            # allow-list above.
+            # 这些是编排命令，不是 Shell 透传。真实规则写入仍经过相同的、
+            # 已校验的 guest 命令路径，端点探测使用上方固定命名空间允许列表。
             if command in ("directional-probe", "rule-and-probe", "lab"):
                 valid, error, directions = validate_direction(data.get("direction", "both"))
                 if not valid:
@@ -1163,11 +1148,10 @@ class DashboardServer(ThreadingHTTPServer):
             return list(self.experiments)
 
     def clear_experiments(self) -> None:
-        """Clear only the dashboard's bounded experiment view.
+        """仅清空 dashboard 的有界实验视图。
 
-        Guest rules, counters, serial evidence, and the JSONL audit file are
-        intentionally preserved.  This is the same non-destructive behavior
-        as the existing panel Clear buttons.
+        guest 规则、计数器、串口证据和 JSONL 审计文件都会有意保留。
+        这与现有面板清空按钮的非破坏性行为一致。
         """
         with self.experiment_lock:
             self.experiments.clear()
@@ -1191,8 +1175,8 @@ class DashboardServer(ThreadingHTTPServer):
     def _send_guest(self, command: str) -> Tuple[bool, str]:
         ok, result = self.control.send(command)
         if ok:
-            # The guest command ABI is deliberately fire-and-forget.  A short
-            # gap prevents a burst of recipe commands from racing fgets().
+            # guest 命令 ABI 有意采用发送后不等待模式。短暂间隔可以防止一批配方命令
+            # 与 fgets() 发生竞争。
             time.sleep(0.12)
         return ok, result
 
@@ -1207,9 +1191,8 @@ class DashboardServer(ThreadingHTTPServer):
             rendered.append(command)
             if not ok:
                 return False, result, rendered
-        # Ask the guest for an explicit post-configuration snapshot.  This is
-        # separate from the per-rule snapshots and makes the experiment table
-        # unambiguous after a multi-command recipe.
+        # 请求 guest 提供显式的配置后快照。该快照与逐规则快照分离，
+        # 使多命令配方执行后的实验表含义明确。
         ok, result = self._send_guest("snapshot")
         if not ok:
             return False, result, rendered
@@ -1223,8 +1206,7 @@ class DashboardServer(ThreadingHTTPServer):
         before: dict, after: dict, expected: Optional[Dict[str, bool]] = None,
     ) -> dict:
         if expected is None:
-            # Manual "observe" mode reports the real result without claiming
-            # that a blocked direction is an infrastructure failure.
+            # 手动“观察”模式报告真实结果，不把被阻断方向声称为基础设施故障。
             for probe in probes:
                 probe["expectation"] = "observe"
                 probe["expectation_met"] = None
@@ -1289,10 +1271,8 @@ class DashboardServer(ThreadingHTTPServer):
             ok, error, rendered = self._apply_actions(definition["actions"])
             if not ok:
                 return False, error, {}
-            # Directional ICMP is a valid traffic check only for the
-            # forwarding-policy recipes.  TCP port/conntrack and NAT recipes
-            # still get a complete rule snapshot, but must not be reported as
-            # failed merely because an unrelated ICMP probe was attempted.
+            # 方向性 ICMP 只对转发策略配方构成有效流量检查。TCP 端口/连接跟踪和 NAT
+            # 配方仍会取得完整规则快照，但不能仅因尝试了无关 ICMP 探测就报告失败。
             probes = (
                 self._run_directional(directions, count, timeout)
                 if probe and definition.get("probe") == "icmp" else []

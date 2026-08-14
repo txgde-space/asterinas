@@ -19,7 +19,7 @@ pub enum HookPoint {
 }
 
 impl HookPoint {
-    /// Returns the stable index used by the built-in IPv4 filter chains.
+    /// 返回内置 IPv4 过滤链使用的稳定索引。
     pub const fn index(self) -> usize {
         match self {
             Self::PreRouting => 0,

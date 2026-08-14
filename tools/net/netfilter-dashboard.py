@@ -2,7 +2,7 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-"""Dependency-free live dashboard and controller for the interactive demo."""
+"""交互式演示使用的无依赖实时 dashboard 和控制器。"""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def read_state(log_path: Path) -> dict:
 
 
 class ControlChannel:
-    """Maintains the single client connection to QEMU's demo serial socket."""
+    """维护到 QEMU 演示串口 Socket 的单一客户端连接。"""
 
     def __init__(self, path: Path):
         self.path = path

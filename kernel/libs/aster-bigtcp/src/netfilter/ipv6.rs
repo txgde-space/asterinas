@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! IPv6 filter hooks for the small netfilter-compatible data path.
+//! 小型 Netfilter 兼容数据路径的 IPv6 过滤 Hook。
 //!
-//! Stage 11 deliberately keeps the matcher set bounded and allocation-free:
-//! source/destination address, next-header protocol, and ICMPv6 type are
-//! enough to demonstrate INPUT/FORWARD/OUTPUT policy without pretending to
-//! implement every ip6tables extension.
+//! 阶段 11 有意保持匹配器集合有界且无分配：源/目标地址、下一头协议和 ICMPv6 类型
+//! 足以演示 INPUT/FORWARD/OUTPUT 策略，同时不宣称实现了所有 ip6tables 扩展。
 
 use aster_softirq::BottomHalfDisabled;
 use ostd::sync::SpinLock;
@@ -23,7 +21,7 @@ static IPV6_FILTER_RULES: [SpinLock<MutableIpv6Rules, BottomHalfDisabled>; 5] = 
     SpinLock::new(MutableIpv6Rules::new()),
 ];
 
-/// Metadata made available to an IPv6 filter hook.
+/// 提供给 IPv6 过滤 Hook 的元数据。
 #[derive(Clone, Copy, Debug)]
 pub struct Ipv6PacketContext {
     hook_point: HookPoint,
@@ -78,7 +76,7 @@ impl Ipv6PacketContext {
     }
 }
 
-/// Protocol selectors understood by the Stage 11 IPv6 matcher.
+/// 阶段 11 IPv6 匹配器支持的协议选择器。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ipv6RuleProtocol {
     Any,
@@ -87,7 +85,7 @@ pub enum Ipv6RuleProtocol {
     Udp,
 }
 
-/// Terminal action for an IPv6 filter rule.
+/// IPv6 过滤规则的终止动作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ipv6RuleTarget {
     Accept,
@@ -195,7 +193,7 @@ impl MutableIpv6Rules {
     }
 }
 
-/// Evaluates one IPv6 packet at an INPUT, FORWARD, or OUTPUT hook.
+/// 在 INPUT、FORWARD 或 OUTPUT Hook 上评估一个 IPv6 数据包。
 pub fn evaluate_ipv6(context: Ipv6PacketContext) -> Verdict {
     let mut rules = IPV6_FILTER_RULES[context.hook_point().index()].lock();
     let rule_count = rules.len;
@@ -211,7 +209,7 @@ pub fn evaluate_ipv6(context: Ipv6PacketContext) -> Verdict {
     rules.policy.into()
 }
 
-/// Appends one bounded IPv6 filter rule to a built-in chain.
+/// 向内置链追加一条有界 IPv6 过滤规则。
 pub fn append_filter_rule(
     hook_point: HookPoint,
     protocol: Ipv6RuleProtocol,
@@ -229,12 +227,12 @@ pub fn append_filter_rule(
     ))
 }
 
-/// Changes the default policy of one IPv6 filter chain.
+/// 修改一条 IPv6 过滤链的默认策略。
 pub fn set_chain_policy(hook_point: HookPoint, target: Ipv6RuleTarget) {
     IPV6_FILTER_RULES[hook_point.index()].lock().policy = target.into();
 }
 
-/// Removes IPv6 rules from one chain, or all chains when `None` is supplied.
+/// 删除指定链中的 IPv6 规则；传入 `None` 时删除所有链中的规则。
 pub fn flush_rules(hook_point: Option<HookPoint>) {
     for (index, rules) in IPV6_FILTER_RULES.iter().enumerate() {
         if hook_point.is_none_or(|hook| hook.index() == index) {
@@ -243,7 +241,7 @@ pub fn flush_rules(hook_point: Option<HookPoint>) {
     }
 }
 
-/// Clears IPv6 rule counters in one chain, or all chains when `None` is supplied.
+/// 清零指定链中的 IPv6 规则计数器；传入 `None` 时清零所有链。
 pub fn zero_counters(hook_point: Option<HookPoint>) {
     for (index, rules) in IPV6_FILTER_RULES.iter().enumerate() {
         if hook_point.is_none_or(|hook| hook.index() == index) {
@@ -252,7 +250,7 @@ pub fn zero_counters(hook_point: Option<HookPoint>) {
     }
 }
 
-/// Renders the IPv6 table in the existing `/proc/netfilter_rules` snapshot.
+/// 在现有 `/proc/netfilter_rules` 快照中呈现 IPv6 表。
 pub fn write_snapshot(writer: &mut impl core::fmt::Write) -> core::fmt::Result {
     writeln!(writer, "table filter6")?;
     for hook_point in [

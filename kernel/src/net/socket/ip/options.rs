@@ -23,7 +23,7 @@ pub(super) struct IpOptionSet {
     recverr: bool,
 }
 
-/// IPv6-level socket options used by raw IPv6 sockets.
+/// Raw IPv6 Socket 使用的 IPv6 层 Socket 选项。
 #[derive(Clone, Copy, CopyGetters, Debug, Setters)]
 #[get_copy = "pub"]
 #[set = "pub"]

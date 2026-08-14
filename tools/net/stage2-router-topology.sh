@@ -2,11 +2,9 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-# Creates only the isolated host-side topology used by Stage 2C forwarding
-# acceptance. QEMU owns the two TAP file descriptors, while the endpoint
-# namespaces provide two independent IPv4 hosts.  Stage 10C also assigns a
-# same-link ULA address on each endpoint so the guest's Ethernet/NDP path can
-# be tested without pretending that IPv6 forwarding is already implemented.
+# 仅创建阶段 2C 转发验收使用的隔离宿主机拓扑。QEMU 持有两个 TAP 文件描述符，
+# 端点命名空间提供两个独立 IPv4 主机。阶段 10C 还会为每个端点分配同链路 ULA 地址，
+# 从而测试 guest 的以太网/NDP 路径，同时不宣称已经实现 IPv6 转发。
 
 set -euo pipefail
 
@@ -284,9 +282,8 @@ test_icmp_masquerade() {
     capture=$(mktemp)
     trap 'rm -f "$capture"' RETURN
 
-    # The bridge observes the packet after the router's right-hand egress.
-    # Capture one Echo request while the endpoint test independently proves
-    # the reverse mapping carried the Echo reply back to the left namespace.
+    # 网桥观察数据包经过路由器右侧出口后的状态。捕获一个 Echo 请求，
+    # 同时由端点测试独立证明反向映射把 Echo 回复带回左侧命名空间。
     timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp[0] == 8' >"$capture" 2>&1 &
     capture_pid=$!
     sleep 0.2
@@ -317,8 +314,8 @@ test_icmp_dnat() {
     capture=$(mktemp)
     trap 'rm -f "$capture"' RETURN
 
-    # 10.0.2.15 is the virtual service address. A right-bridge capture must
-    # show that PREROUTING DNAT selected the 10.0.3.2 backend.
+    # 10.0.2.15 是虚拟服务地址。右侧网桥抓包必须显示 PREROUTING DNAT
+    # 选择了 10.0.3.2 后端。
     timeout 10 tcpdump -n -l -i "$RIGHT_BR" -c 1 'icmp[0] == 8' >"$capture" 2>&1 &
     capture_pid=$!
     sleep 0.2
@@ -358,10 +355,9 @@ test_tcp_masquerade() {
     capture=$(mktemp)
     trap 'rm -f "$capture" "$capture.server"' RETURN
 
-    # Prime both ARP paths before opening the first TCP flow.  A fresh QEMU
-    # instance otherwise has to resolve both neighbours while the five-second
-    # application timeout is already running, which makes the first SYN test
-    # unnecessarily timing-sensitive on a nested VMware/KVM host.
+    # 打开首个 TCP 流前预热两条 ARP 路径。否则新的 QEMU 实例必须在五秒应用超时
+    # 已开始计时后解析两个邻居，使首个 SYN 测试在嵌套 VMware/KVM 宿主机上
+    # 对时序产生不必要的敏感性。
     ip netns exec "$LEFT_NS" ping -4 -n -c 1 -W 1 10.0.3.2 \
         >/dev/null 2>&1 || true
 
@@ -379,8 +375,7 @@ for _ in range(2):
 s.close()
 ' >"$capture.server" 2>&1 &
     server_pid=$!
-    # Wait until the server has completed bind/listen instead of relying on a
-    # fixed sleep. This also leaves a useful diagnostic if startup failed.
+    # 等待服务端完成 bind/listen，而不是依赖固定 sleep；启动失败时也能留下有用诊断。
     for _ in $(seq 1 40); do
         if ip netns exec "$RIGHT_NS" ss -H -ltn 'sport = :9000' \
             2>/dev/null | grep -q ':9000'; then
@@ -412,9 +407,8 @@ for port in (31001, 31002):
 print("stage4 TCP application replies passed")
 ' 2>&1); then
         printf '%s\n' "$output"
-        # Do not wait here: a netns child can survive the parent and make a
-        # failed acceptance test hang indefinitely. These namespaces are
-        # dedicated to this harness, so terminate their test children now.
+        # 此处不要等待：netns 子进程可能在父进程退出后继续存活，使失败的验收测试
+        # 无限挂起。这些命名空间由当前测试框架独占，因此现在终止其中的测试子进程。
         kill "$server_pid" "$capture_pid" 2>/dev/null || true
         for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
             kill "$pid" 2>/dev/null || true
@@ -472,8 +466,7 @@ assert data == payload
 print("stage4 UDP application reply passed")
 ' 2>&1); then
         printf '%s\n' "$output"
-        # Failure diagnostics must not block on a lingering process in the
-        # dedicated right-hand namespace.
+        # 失败诊断不能被专用右侧命名空间中的残留进程阻塞。
         kill "$server_pid" "$capture_pid" 2>/dev/null || true
         for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
             kill "$pid" 2>/dev/null || true
@@ -531,8 +524,7 @@ s.close()
 print("stage4 TCP DNAT application reply passed")
 ' 2>&1); then
         printf '%s\n' "$output"
-        # Failure diagnostics must not block on a lingering process in the
-        # dedicated right-hand namespace.
+        # 失败诊断不能被专用右侧命名空间中的残留进程阻塞。
         kill "$server_pid" "$capture_pid" 2>/dev/null || true
         for pid in $(ip netns pids "$RIGHT_NS" 2>/dev/null); do
             kill "$pid" 2>/dev/null || true
@@ -598,7 +590,7 @@ show() {
 }
 
 teardown() {
-    # These names are fixed and owned solely by this acceptance harness.
+    # 这些名称固定且仅由当前验收框架持有。
     ip netns del "$LEFT_NS" 2>/dev/null || true
     ip netns del "$RIGHT_NS" 2>/dev/null || true
     ip link del "$LEFT_TAP" 2>/dev/null || true

@@ -18,8 +18,8 @@ SCHEME ?= ""
 SMP ?= 1
 OSTD_TASK_STACK_SIZE_IN_PAGES ?= 64
 FEATURES ?=
-# The dashboard/QEMU helper may redirect the interactive transcript to a
-# caller-selected evidence directory. Keep the historical path as default.
+# dashboard/QEMU 辅助工具可以把交互记录重定向到调用方指定的证据目录。
+# 这里保留历史路径作为默认值。
 NETFILTER_DEMO_SERIAL_LOG ?= stage-records/demo/netfilter-demo-step-serial.log
 NO_DEFAULT_FEATURES ?= 0
 COVERAGE ?= 0
@@ -293,8 +293,7 @@ else ifeq ($(AUTO_TEST), vsock)
 		|| (echo "Vsock test failed" && exit 1)
 endif
 
-# Boots with two virtio NICs and checks that the Stage 2A kernel-side
-# enumeration result is present in the QEMU log.
+# 使用两张 VirtIO 网卡启动，并检查 QEMU 日志中是否存在阶段 2A 的内核侧枚举结果。
 .PHONY: stage2_multi_nic_check
 stage2_multi_nic_check:
 	@$(MAKE) --no-print-directory \
@@ -303,9 +302,8 @@ stage2_multi_nic_check:
 	@grep -q "netfilter-stage2a: multi-nic enumeration passed" qemu.log \
 		|| (echo "Stage 2A multi-NIC enumeration failed" && exit 1)
 
-# Builds and boots the Stage 2B forwarding pipeline with the explicit
-# forwarding switch enabled. It verifies configuration and initialization;
-# TAP-backed endpoint forwarding is the next acceptance milestone.
+# 构建并启动阶段 2B 转发流水线，同时显式启用转发开关。
+# 此目标验证配置和初始化；基于 TAP 的端点转发是下一个验收里程碑。
 .PHONY: stage2_forwarding_pipeline_check
 stage2_forwarding_pipeline_check:
 	@$(MAKE) --no-print-directory \

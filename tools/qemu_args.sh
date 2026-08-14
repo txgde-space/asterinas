@@ -9,9 +9,9 @@
 #  - OVMF: "on" or "off";
 #  - BOOT_METHOD: "qemu-direct", "grub-rescue-iso" or "grub-qcow2";
 #  - BOOT_PROTOCOL: "multiboot", "multiboot2", "linux-legacy32", "linux-efi-pe64" or "linux-efi-handover64";
-#  - NETDEV: "user", "tap", or "router-tap";
-#  - MULTI_NET: "on" to attach a second user-mode network (development only);
-#  - ROUTER_TAP0, ROUTER_TAP1: host TAP names for NETDEV=router-tap;
+#  - NETDEV：可取 "user"、"tap" 或 "router-tap"；
+#  - MULTI_NET：设为 "on" 时挂载第二张用户模式网络（仅开发使用）；
+#  - ROUTER_TAP0、ROUTER_TAP1：NETDEV=router-tap 时使用的宿主机 TAP 名称；
 #  - VHOST: "off" or "on";
 #  - VSOCK: "off" or "on";
 #  - CONSOLE: "hvc0" to enable virtio console;
@@ -117,9 +117,8 @@ elif [ "$NETDEV" = "router-tap" ]; then
         echo "NETDEV=router-tap currently supports the normal QEMU scheme only" 1>&2
         exit 1
     fi
-    # The acceptance harness owns TAP lifecycle.  Do not let QEMU run the
-    # normal single-TAP ifup/down scripts, which would attach these endpoints
-    # to the host's default bridge instead of the isolated router bridges.
+    # TAP 生命周期由验收框架负责。不要让 QEMU 运行常规单 TAP ifup/down 脚本，
+    # 否则这些端点会连接到宿主机默认网桥，而不是隔离的路由器网桥。
     NETDEV_ARGS="-netdev tap,id=net01,ifname=$ROUTER_TAP0,script=no,downscript=no,vhost=$VHOST -netdev tap,id=net02,ifname=$ROUTER_TAP1,script=no,downscript=no,vhost=$VHOST"
     VIRTIO_NET_FEATURES=",csum=off,guest_csum=off,ctrl_guest_offloads=off,guest_tso4=off,guest_tso6=off,guest_ecn=off,guest_ufo=off,host_tso4=off,host_tso6=off,host_ecn=off,host_ufo=off,mrg_rxbuf=off,ctrl_vq=off,ctrl_rx=off,ctrl_vlan=off,ctrl_rx_extra=off,guest_announce=off,ctrl_mac_addr=off,host_ufo=off,guest_uso4=off,guest_uso6=off,host_uso=off"
 else 
@@ -127,9 +126,8 @@ else
     NETDEV_ARGS="-nic none"
 fi
 
-# Two user-mode backends are sufficient to exercise device enumeration and
-# interface naming. They are not a forwarding end-to-end topology; Stage 2's
-# router acceptance test will use isolated TAP-backed endpoints.
+# 两个用户模式后端足以测试设备枚举和接口命名。它们不是端到端转发拓扑；
+# 阶段 2 路由器验收测试使用由 TAP 支撑的隔离端点。
 if [ "$MULTI_NET" = "on" ]; then
     if [ "$NETDEV" != "user" ]; then
         echo "MULTI_NET=on currently requires NETDEV=user" 1>&2
@@ -143,9 +141,8 @@ if [ "$MULTI_NET" = "on" ]; then
 fi
 
 if [ "$AUTO_TEST" = "demo-step" ]; then
-    # The interactive demo owns a dedicated serial socket. The host dashboard
-    # writes command lines (next/reset/scenario <name>) to this socket while
-    # QEMU keeps a complete serial transcript in a shared repository path.
+    # 交互式演示独占专用串口 Socket。宿主机 dashboard 向该 Socket 写入命令行
+    #（next/reset/scenario <name>），同时 QEMU 在共享仓库路径中保存完整串口记录。
     mkdir -p "$(dirname "$NETFILTER_DEMO_SOCKET")" "$(dirname "$NETFILTER_DEMO_SERIAL_LOG")"
     rm -f "$NETFILTER_DEMO_SOCKET" "$NETFILTER_DEMO_SERIAL_LOG"
     if [ "$CONSOLE" = "hvc0" ]; then

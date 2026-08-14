@@ -17,9 +17,8 @@ use crate::{
 
 pub(super) fn get_iface_to_bind(ip_addr: &IpAddress) -> Option<Arc<Iface>> {
     let IpAddress::Ipv4(ipv4_addr) = ip_addr else {
-        // The current transport socket tables are IPv4-only. Do not bind an
-        // IPv6 endpoint to an IPv4 interface until the IPv6 transport path is
-        // enabled.
+        // 当前传输层 Socket 表仅支持 IPv4。在启用 IPv6 传输路径前，
+        // 不要把 IPv6 端点绑定到 IPv4 接口。
         return None;
     };
     if *ipv4_addr == Ipv4Address::UNSPECIFIED {

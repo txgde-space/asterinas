@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Stage 2 IPv4 forwarding policy.
+//! 阶段 2 IPv4 转发策略。
 //!
-//! Routes are currently the directly connected IPv4 prefixes of registered
-//! interfaces.  Static routes, a userspace control surface, ICMP-specific
-//! errors, conntrack, and NAT are deliberately later stages.
+//! 当前路由由已注册接口的 IPv4 直连前缀组成。静态路由、用户态控制面、
+//! ICMP 专用错误、连接跟踪和 NAT 有意留给后续阶段。
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use alloc::sync::Arc;
@@ -63,7 +62,7 @@ aster_cmdline::define_flag_param!(
     STAGE6_TCP_CONNTRACK_POLICY_TEST
 );
 
-/// Emits an explicit boot-time marker for the Stage 2 forwarding pipeline.
+/// 为阶段 2 转发流水线输出明确的启动标记。
 pub fn init() {
     if IPV4_FORWARDING_ENABLED.load(Ordering::Relaxed) {
         println!("netfilter-stage2b: ipv4 forwarding pipeline enabled");
@@ -107,8 +106,8 @@ pub fn init() {
             aster_bigtcp::netfilter::Ipv6NatRuleChain::PreRouting,
             aster_bigtcp::netfilter::Ipv6RuleProtocol::Any,
             Some(Ipv6Address::new(0xfd00, 0, 0, 2, 0, 0, 0, 2)),
-            // IPv6 text is hexadecimal: the virtual service `::15` ends in
-            // 0x15, not decimal 15 (`::f`).
+            // IPv6 文本使用十六进制：虚拟服务 `::15` 以 0x15 结尾，
+            // 而不是十进制 15（`::f`）。
             Some(Ipv6Address::new(0xfd00, 0, 0, 3, 0, 0, 0, 0x15)),
             None,
             None,
@@ -120,9 +119,8 @@ pub fn init() {
         }
     }
 
-    // The TAP acceptance topology cannot run an interactive userspace command
-    // in the guest. Install the same in-kernel rule that its iptables parser
-    // would create, solely when this explicit test flag is present.
+    // TAP 验收拓扑无法在 guest 中运行交互式用户态命令。
+    // 仅在显式测试标志存在时，安装与 iptables 解析器所创建规则相同的内核规则。
     if STAGE3_ICMP_MASQUERADE_TEST.load(Ordering::Relaxed) {
         let installed = aster_bigtcp::netfilter::append_nat_rule(
             aster_bigtcp::netfilter::NatRuleChain::PostRouting,
@@ -170,10 +168,9 @@ pub fn init() {
         }
     }
 
-    // Stage 4 uses explicit boot flags because the TAP acceptance setup does
-    // not yet have an interactive guest-side rule-management ABI. These are
-    // intentionally ordinary TCP/UDP NAT rules, so the same table API will be
-    // used by the later iptables-compatible control plane.
+    // 阶段 4 使用显式启动标志，因为 TAP 验收环境还没有交互式 guest 侧规则管理 ABI。
+    // 这些规则有意采用普通 TCP/UDP NAT 规则，使后续 iptables 兼容控制面可以复用
+    // 相同的表 API。
     if STAGE4_TCP_MASQUERADE_TEST.load(Ordering::Relaxed) {
         let installed = aster_bigtcp::netfilter::append_nat_rule(
             aster_bigtcp::netfilter::NatRuleChain::PostRouting,
@@ -226,9 +223,8 @@ pub fn init() {
     }
 
     if STAGE6_TCP_CONNTRACK_POLICY_TEST.load(Ordering::Relaxed) {
-        // The policy is intentionally DROP: a successful bidirectional TCP
-        // exchange proves that the outbound SYN matched NEW and the reply
-        // tuple was promoted to ESTABLISHED before FORWARD evaluation.
+        // 策略有意设为 DROP：双向 TCP 交换成功即可证明发出的 SYN 匹配 NEW，
+        // 且回复 tuple 在 FORWARD 评估前已提升为 ESTABLISHED。
         aster_bigtcp::netfilter::set_filter_chain_policy(
             aster_bigtcp::netfilter::HookPoint::Forward,
             aster_bigtcp::netfilter::OutputRuleTarget::Drop,
@@ -270,7 +266,7 @@ pub fn init() {
     }
 }
 
-/// Selects a directly connected egress route and queues the packet.
+/// 选择直连出口路由并把数据包加入队列。
 pub fn forward_ipv4_packet(
     ingress_ifindex: u32,
     mut packet: ForwardedIpv4Packet,
@@ -290,22 +286,21 @@ pub fn forward_ipv4_packet(
         return ForwardingResult::NoRoute;
     };
 
-    // Ipv4Repr is re-emitted at egress, which computes a fresh header checksum.
+    // 在出口重新生成 Ipv4Repr，从而计算新的头校验和。
     packet.ip_repr.hop_limit -= 1;
 
     if !egress.enqueue_forwarded_ipv4(packet) {
         return ForwardingResult::QueueFull;
     }
 
-    // Do not synchronously poll the egress interface while the ingress poll
-    // still holds its interface lock. An immediate reply can otherwise route
-    // back through the ingress interface and spin forever on that same lock.
+    // 入口轮询仍持有接口锁时，不要同步轮询出口接口。
+    // 否则立即回复可能经入口接口返回，并在同一把锁上永久自旋。
     let now_ms = Jiffies::elapsed().as_duration().as_millis() as u64;
     egress.sched_poll().schedule_next_poll(Some(now_ms));
     ForwardingResult::Queued
 }
 
-/// Selects a directly connected IPv6 egress route and queues the packet.
+/// 选择直连 IPv6 出口路由并把数据包加入队列。
 pub fn forward_ipv6_packet(
     ingress_ifindex: u32,
     mut packet: ForwardedIpv6Packet,
@@ -322,9 +317,8 @@ pub fn forward_ipv6_packet(
         return ForwardingResult::NoRoute;
     };
 
-    // POSTROUTING is evaluated only after the egress interface is known so a
-    // MASQUERADE rule can use that interface's IPv6 address.  The NAT module
-    // also records the mapping used by the reverse PREROUTING path.
+    // 仅在确定出口接口后评估 POSTROUTING，使 MASQUERADE 规则可以使用该接口的
+    // IPv6 地址。NAT 模块还会记录反向 PREROUTING 路径使用的映射。
     aster_bigtcp::netfilter::apply_ipv6_nat_postrouting(
         &mut packet,
         egress.ipv6_addr(),
@@ -334,19 +328,16 @@ pub fn forward_ipv6_packet(
         return ForwardingResult::QueueFull;
     }
 
-    // As in the IPv4 path, let the background poller run after the ingress
-    // interface lock has been released instead of nesting interface polls.
+    // 与 IPv4 路径相同，释放入口接口锁后再运行后台轮询器，避免嵌套接口轮询。
     let now_ms = Jiffies::elapsed().as_duration().as_millis() as u64;
     egress.sched_poll().schedule_next_poll(Some(now_ms));
     ForwardingResult::Queued
 }
 
-/// Looks up the egress interface for an IPv4 destination.
+/// 查询 IPv4 目标地址对应的出口接口。
 ///
-/// Connected prefixes win by longest-prefix match.  If no connected route
-/// matches, an interface with a configured gateway supplies the default route.
-/// The optional exclusion is used by forwarding so a packet cannot be queued
-/// back onto the interface it arrived on.
+/// 直连前缀按最长前缀匹配胜出。如果没有直连路由匹配，则由配置了网关的接口提供
+/// 默认路由。转发使用可选排除项，防止数据包重新排入其入口接口。
 pub(crate) fn lookup_ipv4_iface(
     destination: Ipv4Address,
     exclude_ifindex: Option<u32>,
@@ -381,7 +372,7 @@ pub(crate) fn lookup_ipv4_iface(
         .cloned()
 }
 
-/// Looks up the egress interface for an IPv6 destination.
+/// 查询 IPv6 目标地址对应的出口接口。
 pub(crate) fn lookup_ipv6_iface(
     destination: Ipv6Address,
     exclude_ifindex: Option<u32>,

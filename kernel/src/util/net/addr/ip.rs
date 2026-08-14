@@ -43,21 +43,21 @@ impl From<CSocketAddrInet> for (Ipv4Address, PortNum) {
     }
 }
 
-/// IPv6 socket address.
+/// IPv6 Socket 地址。
 ///
-/// The field order and widths match Linux's `struct sockaddr_in6`.
+/// 字段顺序和宽度与 Linux `struct sockaddr_in6` 一致。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub(super) struct CSocketAddrInet6 {
-    /// Address family (AF_INET6).
+    /// 地址族（AF_INET6）。
     sin6_family: u16,
-    /// Port number.
+    /// 端口号。
     sin6_port: CPortNum,
-    /// IPv6 flow label and traffic class.
+    /// IPv6 流标签和流量类别。
     sin6_flowinfo: u32,
-    /// IPv6 address.
+    /// IPv6 地址。
     sin6_addr: CInet6Addr,
-    /// Scope identifier for link-local addresses.
+    /// 链路本地地址的作用域标识符。
     sin6_scope_id: u32,
 }
 
@@ -106,7 +106,7 @@ impl From<CInetAddr> for Ipv4Address {
     }
 }
 
-/// IPv6 16-byte address.
+/// 16 字节 IPv6 地址。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 struct CInet6Addr {

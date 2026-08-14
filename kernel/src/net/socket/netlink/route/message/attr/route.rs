@@ -6,9 +6,9 @@ use crate::{
     util::MultiRead,
 };
 
-/// Route-level attributes.
+/// 路由级属性。
 ///
-/// Reference: <https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L256>.
+/// 参考：<https://elixir.bootlin.com/linux/v6.13/source/include/uapi/linux/rtnetlink.h#L256>。
 #[expect(non_camel_case_types)]
 #[expect(clippy::upper_case_acronyms)]
 #[repr(u16)]
@@ -81,9 +81,8 @@ impl Attribute for RouteAttr {
     where
         Self: Sized,
     {
-        // GETROUTE requests accepted by this implementation are dump requests.  Their
-        // attributes are filters that are not needed for the initial read-only route dump;
-        // consume and ignore them so iproute2 can complete the request.
+        // 此实现接受的 GETROUTE 请求都是转储请求。其属性属于过滤条件，
+        // 初始只读路由转储并不需要；消费并忽略这些属性，使 iproute2 能完成请求。
         reader.skip_some(header.payload_len());
         Ok(ContinueRead::Skipped)
     }

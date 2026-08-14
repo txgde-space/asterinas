@@ -24,10 +24,10 @@ pub trait Ext {
     /// The type for UDP sockets to observe events.
     type UdpEventObserver: SocketEventObserver;
 
-    /// Applies platform routing policy to a non-local IPv4 packet.
+    /// 对非本地 IPv4 数据包应用平台路由策略。
     ///
-    /// The default deliberately disables forwarding so existing users of
-    /// `aster-bigtcp` retain host-only behavior until they opt in.
+    /// 默认实现有意禁用转发，使 `aster-bigtcp` 的现有使用方在主动启用前
+    /// 保持仅限本机的行为。
     fn forward_ipv4_packet(
         _ingress_ifindex: u32,
         _packet: ForwardedIpv4Packet,
@@ -35,10 +35,10 @@ pub trait Ext {
         ForwardingResult::Disabled
     }
 
-    /// Applies platform routing policy to a non-local IPv6 packet.
+    /// 对非本地 IPv6 数据包应用平台路由策略。
     ///
-    /// The default deliberately disables forwarding so IPv6-enabled users of
-    /// `aster-bigtcp` retain host-only behavior until they opt in.
+    /// 默认实现有意禁用转发，使启用 IPv6 的 `aster-bigtcp` 使用方在主动启用前
+    /// 保持仅限本机的行为。
     fn forward_ipv6_packet(
         _ingress_ifindex: u32,
         _packet: ForwardedIpv6Packet,

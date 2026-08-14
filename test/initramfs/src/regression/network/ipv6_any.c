@@ -23,14 +23,14 @@ static struct sockaddr_in6 loopback_addr(void)
 
 FN_TEST(ipv6_tcp_socket_is_not_supported)
 {
-	/* IPv6 TCP remains outside this raw-socket stage. */
+	/* IPv6 TCP 仍不属于当前 Raw Socket 阶段。 */
 	TEST_ERRNO(socket(AF_INET6, SOCK_STREAM, 0), EAFNOSUPPORT);
 }
 END_TEST()
 
 FN_TEST(ipv6_udp_socket_is_not_supported)
 {
-	/* IPv6 UDP remains outside this raw-socket stage. */
+	/* IPv6 UDP 仍不属于当前 Raw Socket 阶段。 */
 	TEST_ERRNO(socket(AF_INET6, SOCK_DGRAM, 0), EAFNOSUPPORT);
 }
 END_TEST()
@@ -159,7 +159,7 @@ FN_TEST(ipv6_raw_hdrincl_custom_protocol)
 	struct pollfd poll_fd = { 0 };
 	int hdrincl = 1;
 
-	packet[0] = 0x62; /* IPv6 version plus a non-zero traffic class. */
+	packet[0] = 0x62; /* IPv6 版本加非零流量类别。 */
 	packet[4] = 0;
 	packet[5] = sizeof(payload);
 	packet[6] = 143;

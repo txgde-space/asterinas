@@ -2,14 +2,12 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-# Reversible host-side uplink for the isolated Asterinas router topology.
+# 隔离 Asterinas 路由器拓扑使用的可逆宿主机上行链路。
 #
-# The demo guest has two TAP interfaces.  Its first interface uses the left
-# namespace (10.0.2.2 / fd00:0:0:2::2) as the gateway.  This helper turns that
-# namespace into a small, temporary NAT gateway without changing the guest
-# kernel or the user's normal Ubuntu routes.  The right-hand isolated network
-# keeps an explicit route through Asterinas, while non-local destinations use
-# a second veth towards the Ubuntu host's default uplink.
+# 演示 guest 有两个 TAP 接口。第一个接口使用左侧命名空间
+#（10.0.2.2 / fd00:0:0:2::2）作为网关。此辅助脚本把该命名空间变为小型临时
+# NAT 网关，而不修改 guest 内核或用户的常规 Ubuntu 路由。右侧隔离网络保留
+# 经 Asterinas 的显式路由，非本地目标则使用第二条 veth 通往 Ubuntu 宿主机默认上行。
 
 set -euo pipefail
 
@@ -181,8 +179,8 @@ setup() {
     ip addr replace "$ROOT_IPV4" dev "$ROOT_VETH"
     ip addr replace "$ROOT_IPV6" dev "$ROOT_VETH"
     ip link set "$ROOT_VETH" up
-    # Return traffic restored by conntrack is addressed to the guest on the
-    # left TAP bridge, not to the uplink veth itself.
+    # 连接跟踪恢复的返回流量以左侧 TAP 网桥上的 guest 为目标，
+    # 而不是上行 veth 本身。
     ip route replace 10.0.2.0/24 dev "$LEFT_BR"
     ip -6 route replace fd00:0:0:2::/64 dev "$LEFT_BR"
     ip -n "$LEFT_NS" addr replace "$NS_IPV4" dev "$NS_VETH"
@@ -196,7 +194,7 @@ setup() {
     ip -n "$LEFT_NS" route replace default via "$ROOT_IPV4_ADDR" dev "$NS_VETH"
     ip -n "$LEFT_NS" -6 route replace default via "$ROOT_IPV6_ADDR" dev "$NS_VETH"
 
-    # Make repeated setup calls safe after an interrupted dashboard session.
+    # 确保 dashboard 会话中断后重复调用配置仍然安全。
     delete_jump iptables "" "$FILTER_CHAIN" FORWARD
     delete_jump iptables -t nat "$NAT_CHAIN" POSTROUTING
     delete_namespace_jump iptables

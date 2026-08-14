@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-/* Interactive presentation walkthrough for the Stage8 netfilter demo. */
+/* 阶段 8 Netfilter 演示的交互式展示流程。 */
 
 #include <errno.h>
 #include <fcntl.h>
@@ -145,9 +145,8 @@ static int run_manual_rule_command(const char *command)
 	if (program == NULL || operation == NULL)
 		return EINVAL;
 
-	/* Listing is read-only and is represented by the same snapshot used by
-	 * the dashboard. All mutating operations go through the real procfs
-	 * iptables/ip6tables parser. */
+	/* 列表为只读内容，使用与 dashboard 相同的快照呈现。
+	 * 所有修改操作都经过真实的 procfs iptables/ip6tables 解析器。 */
 	if (strcmp(operation, "-L") == 0 || strcmp(operation, "--list") == 0)
 		rc = 0;
 	else
@@ -248,9 +247,8 @@ static int reset_rules(void)
 	rc |= run_iptables("reset-nat-flush", nat_flush) != 0;
 	rc |= run_iptables("reset-filter-policy", filter_policy) != 0;
 	rc |= run_iptables("reset-forward-policy", forward_policy) != 0;
-	/* IPv6 rules are reset as part of the same dashboard operation so the
-	 * IPv6 rule table remains inspectable even though this demo exposes only
-	 * IPv4 ping probes. */
+	/* IPv6 规则会在同一次 dashboard 操作中重置，使 IPv6 规则表仍可检查，
+	 * 即使当前演示只公开 IPv4 ping 探测。 */
 	if (access("./ip6tables", X_OK) == 0) {
 		rc |= run_iptables("reset-ipv6-filter-flush", filter6_flush) != 0;
 		rc |= run_iptables("reset-ipv6-forward-flush", forward6_flush) != 0;

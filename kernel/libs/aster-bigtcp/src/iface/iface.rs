@@ -24,12 +24,12 @@ pub trait Iface<E: Ext>: internal::IfaceInternal<E> + Send + Sync {
     /// Returns the maximum transmission unit.
     fn mtu(&self) -> usize;
 
-    /// Queues a routed IPv4 datagram for egress from this interface.
+    /// 把已路由的 IPv4 数据报加入队列，等待从该接口发出。
     fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
         self.common().enqueue_forwarded_ipv4(packet)
     }
 
-    /// Queues a routed IPv6 datagram for egress from this interface.
+    /// 把已路由的 IPv6 数据报加入队列，等待从该接口发出。
     fn enqueue_forwarded_ipv6(&self, packet: ForwardedIpv6Packet) -> bool {
         self.common().enqueue_forwarded_ipv6(packet)
     }
@@ -92,27 +92,27 @@ impl<E: Ext> dyn Iface<E> {
         self.common().prefix_len()
     }
 
-    /// Gets the configured IPv4 next-hop gateway, if any.
+    /// 获取已配置的 IPv4 下一跳网关（如果存在）。
     pub fn ipv4_gateway(&self) -> Option<Ipv4Address> {
         self.common().ipv4_gateway()
     }
 
-    /// Gets the configured IPv6 address of the iface, if any.
+    /// 获取接口已配置的 IPv6 地址（如果存在）。
     pub fn ipv6_addr(&self) -> Option<Ipv6Address> {
         self.common().ipv6_addr()
     }
 
-    /// Retrieves the prefix length of the interface's IPv6 address.
+    /// 获取接口 IPv6 地址的前缀长度。
     pub fn ipv6_prefix_len(&self) -> Option<u8> {
         self.common().ipv6_prefix_len()
     }
 
-    /// Gets the configured IPv6 next-hop gateway, if any.
+    /// 获取已配置的 IPv6 下一跳网关（如果存在）。
     pub fn ipv6_gateway(&self) -> Option<Ipv6Address> {
         self.common().ipv6_gateway()
     }
 
-    /// Returns the configured IPv6 CIDR, if this interface has one.
+    /// 如果接口配置了 IPv6 CIDR，则返回该配置。
     pub fn ipv6_cidr(&self) -> Option<Ipv6Cidr> {
         Some(Ipv6Cidr::new(self.ipv6_addr()?, self.ipv6_prefix_len()?))
     }

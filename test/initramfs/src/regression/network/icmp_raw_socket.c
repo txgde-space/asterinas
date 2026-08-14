@@ -25,9 +25,8 @@ END_TEST()
 
 FN_TEST(create_multi_protocol_raw_sockets)
 {
-	// RAW_SOCKET_P0: protocol numbers are no longer restricted to ICMP at
-	// socket creation.  TCP, UDP and an experimental protocol all use the same
-	// IPv4 raw-socket ABI and must retain their protocol selector.
+	// RAW_SOCKET_P0：创建 Socket 时协议号不再仅限 ICMP。TCP、UDP 和实验协议
+	// 都使用相同的 IPv4 Raw Socket ABI，并且必须保留各自的协议选择器。
 	const int protocols[] = { IPPROTO_TCP, IPPROTO_UDP, 143 };
 	for (size_t i = 0; i < sizeof(protocols) / sizeof(protocols[0]); i++) {
 		int socket_fd =
@@ -49,8 +48,8 @@ FN_TEST(send_loopback_raw_udp_payload)
 	socklen_t source_len = sizeof(source);
 	struct pollfd poll_fd = { 0 };
 	int ttl = 31;
-	// The existing IP_TOS ABI preserves the ECN low bits; use an ECN-zero
-	// value here so the wire-level assertion tests the DSCP/TOS propagation.
+	// 现有 IP_TOS ABI 会保留 ECN 低位；这里使用 ECN 为零的值，
+	// 使线格式断言能够测试 DSCP/TOS 传播。
 	int tos = 0x2c;
 
 	int raw_fd =
@@ -131,8 +130,8 @@ FN_TEST(sendmsg_raw_udp_ancillary_options)
 	int raw_receiver =
 		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
 
-	// RAW_SOCKET_STAGE9D: sendmsg ancillary data overrides the socket-level
-	// defaults for one IPv4 raw packet without changing later sends.
+	// RAW_SOCKET_STAGE9D：sendmsg 辅助数据仅覆盖一个 IPv4 Raw 数据包的
+	// Socket 级默认值，不改变后续发送。
 	TEST_RES(sendmsg(raw_sender, &message, 0),
 		 _ret == (ssize_t)sizeof(payload));
 
@@ -183,8 +182,8 @@ FN_TEST(raw_ip_recverr_local_error_queue)
 	int raw_fd =
 		TEST_SUCC(socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_UDP));
 
-	// RAW_SOCKET_STAGE9E: IP_RECVERR retains a local routing failure, exposes
-	// POLLERR, and returns the fixed sock_extended_err cmsg via MSG_ERRQUEUE.
+	// RAW_SOCKET_STAGE9E：IP_RECVERR 保留本地路由失败，公开 POLLERR，
+	// 并通过 MSG_ERRQUEUE 返回固定的 sock_extended_err 控制消息。
 	TEST_SUCC(setsockopt(raw_fd, IPPROTO_IP, IP_RECVERR, &recverr,
 			     sizeof(recverr)));
 	TEST_ERRNO(sendto(raw_fd, payload, sizeof(payload), 0,
@@ -494,7 +493,7 @@ FN_TEST(send_ipproto_raw_hdrincl_preserves_options)
 	memcpy(packet + sizeof(*ip_header), payload, sizeof(payload));
 	ip_header->check = internet_checksum(ip_header, sizeof(*ip_header));
 
-	// IPPROTO_RAW is send-only and selects the protocol from IP_HDRINCL.
+	// IPPROTO_RAW 仅用于发送，并从 IP_HDRINCL 中选择协议。
 	int raw_sender = TEST_SUCC(
 		socket(AF_INET, SOCK_RAW | SOCK_NONBLOCK, IPPROTO_RAW));
 	int raw_receiver =

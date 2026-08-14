@@ -56,10 +56,8 @@ pub fn sys_socket(domain: i32, type_: i32, protocol: i32, ctx: &Context) -> Resu
             }
         }
         (CSocketAddrFamily::AF_INET, SockType::SOCK_RAW) => {
-            // Raw IPv4 sockets use the protocol number verbatim.  Do not run
-            // it through the `Protocol` enum: that enum intentionally lists
-            // only the well-known values and would reject applications that
-            // use an experimental or private protocol number.
+            // Raw IPv4 Socket 原样使用协议号，不要通过 `Protocol` 枚举转换：
+            // 该枚举有意只列出知名值，会拒绝使用实验或私有协议号的应用。
             if !(1..=255).contains(&protocol) {
                 return_errno_with_message!(
                     Errno::EPROTONOSUPPORT,

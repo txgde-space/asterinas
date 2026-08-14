@@ -102,13 +102,11 @@ struct NatRule {
     bytes: u64,
 }
 
-/// A bounded, address-only ICMP NAT mapping.
+/// 有界、仅地址的 ICMP NAT 映射。
 ///
-/// This is deliberately narrower than Linux conntrack: it gives the first
-/// usable stateful NAT path to Echo traffic without pretending that TCP/UDP
-/// port and lifecycle tracking are complete. `original_*` names the packet as
-/// received before NAT, while `translated_*` names the packet emitted after
-/// PREROUTING and POSTROUTING translations.
+/// 该实现有意比 Linux conntrack 更窄：它为 Echo 流量提供首个可用的有状态 NAT 路径，
+/// 但不宣称 TCP/UDP 端口和生命周期跟踪已经完整。`original_*` 表示 NAT 前收到的
+/// 数据包，`translated_*` 表示经 PREROUTING 和 POSTROUTING 转换后发出的数据包。
 #[derive(Clone, Copy, Debug)]
 struct NatIcmpConnection {
     original_src: Ipv4Address,
@@ -118,12 +116,11 @@ struct NatIcmpConnection {
     last_seen_millis: u64,
 }
 
-/// A bounded stateful TCP or UDP NAT mapping.
+/// 有界的有状态 TCP 或 UDP NAT 映射。
 ///
-/// The tuple is deliberately kept in a fixed-size table: the forwarding path
-/// cannot allocate memory, and a translated source port is never reused while
-/// an active mapping owns the same egress tuple. Stage 6 reclaims idle slots
-/// with bounded per-protocol timeouts, so exhaustion remains deterministic.
+/// tuple 有意保存在固定大小的表中：转发路径不能分配内存；只要活动映射仍占用相同出口
+/// tuple，就不会复用转换后的源端口。阶段 6 使用按协议设置的有界超时回收空闲槽位，
+/// 因此耗尽行为保持确定性。
 #[derive(Clone, Copy, Debug)]
 struct NatTransportConnection {
     protocol: OutputRuleProtocol,
@@ -480,10 +477,9 @@ impl MutableNatRules {
         true
     }
 
-    /// Inserts a rule at a zero-based position within one NAT chain.
+    /// 在一条 NAT 链中按从零开始的位置插入规则。
     ///
-    /// The fixed backing array is shared by PREROUTING and POSTROUTING, while
-    /// the position follows iptables' per-chain numbering.
+    /// PREROUTING 和 POSTROUTING 共享固定后备数组，但位置遵循 iptables 的链内编号。
     fn insert_rule(&mut self, chain: NatRuleChain, index: usize, rule: NatRule) -> bool {
         if self.len == MAX_NAT_RULES {
             return false;
@@ -544,7 +540,7 @@ impl MutableNatRules {
         false
     }
 
-    /// Deletes a zero-based rule position within one NAT chain.
+    /// 删除一条 NAT 链中从零开始编号的规则位置。
     fn delete_rule(&mut self, chain: NatRuleChain, index: usize) -> bool {
         let mut chain_index = 0;
         let mut delete_at = None;
@@ -614,9 +610,8 @@ impl MutableNatRules {
         }
         self.len = next_len;
 
-        // A rule flush is also a NAT state reset. Keeping mappings that were
-        // created by deleted rules would make the control plane surprising
-        // and could route reply traffic through an obsolete translation.
+        // 清空规则时也要重置 NAT 状态。保留由已删除规则创建的映射会让控制面行为
+        // 出乎预期，还可能使回复流量经过已废弃的转换。
         for connection in &mut self.icmp_connections {
             *connection = None;
         }
@@ -704,9 +699,8 @@ impl MutableNatRules {
             return;
         }
 
-        // Reverse translations take precedence over new DNAT rules. A reply
-        // to an SNAT/MASQUERADE address is addressed to the router itself, so
-        // this happens before local-delivery selection in the caller.
+        // 反向转换优先于新的 DNAT 规则。发往 SNAT/MASQUERADE 地址的回复以路由器
+        // 自身为目标，因此该处理发生在调用方选择本地投递之前。
         if let Some(connection) = self.icmp_connections.iter().flatten().find(|connection| {
             connection.translated_dst == ipv4_repr.src_addr
                 && connection.translated_src == ipv4_repr.dst_addr
@@ -804,9 +798,8 @@ impl MutableNatRules {
             return;
         };
 
-        // Reply traffic has a translated destination tuple.  Restore both
-        // addresses and ports before route lookup, so a reply to a router
-        // address is forwarded rather than mistaken for local traffic.
+        // 回复流量包含转换后的目标 tuple。在路由查询前恢复地址和端口，
+        // 使发往路由器地址的回复得到转发，而不会被误认为本地流量。
         if let Some(connection) = self
             .transport_connections
             .iter_mut()
@@ -833,9 +826,8 @@ impl MutableNatRules {
             return;
         }
 
-        // Reuse a DNAT mapping for every packet in the original direction.
-        // SNAT mappings are deliberately deferred to POSTROUTING because the
-        // selected egress interface supplies the MASQUERADE address.
+        // 原始方向上的每个数据包都复用 DNAT 映射。
+        // SNAT 映射有意推迟到 POSTROUTING，因为 MASQUERADE 地址由选定的出口接口提供。
         if let Some(connection) = self
             .transport_connections
             .iter_mut()
@@ -927,9 +919,8 @@ impl MutableNatRules {
             return;
         };
 
-        // A repeated original-direction packet reuses the allocated NAT
-        // tuple. This covers TCP retransmissions and UDP datagrams without
-        // changing their translated source port.
+        // 重复的原始方向数据包复用已分配的 NAT tuple。
+        // 这样可以覆盖 TCP 重传和 UDP 数据报，而不改变其转换后的源端口。
         if let Some(connection) = self
             .transport_connections
             .iter_mut()
@@ -955,9 +946,8 @@ impl MutableNatRules {
             return;
         }
 
-        // A DNAT flow was already translated at PREROUTING and needs no
-        // further mutation unless a future stage explicitly supports paired
-        // DNAT+SNAT rules.
+        // DNAT 流已经在 PREROUTING 完成转换，除非后续阶段明确支持成对的
+        // DNAT+SNAT 规则，否则无需进一步修改。
         if self.transport_connections.iter().flatten().any(|connection| {
             connection.protocol == protocol
                 && connection.translated_src == ipv4_repr.src_addr
@@ -1205,12 +1195,10 @@ fn transport_header_len(protocol: OutputRuleProtocol) -> usize {
     }
 }
 
-/// Recomputes a TCP or UDP checksum after a forwarded NAT rewrite.
+/// 转发数据包经过 NAT 改写后，重新计算 TCP 或 UDP 校验和。
 ///
-/// smoltcp computes checksums when it emits locally generated packet
-/// representations. Forwarded packets intentionally preserve a raw transport
-/// payload, so this bounded helper performs the RFC 793/768 pseudo-header
-/// checksum update before Ethernet/IP serialization.
+/// smoltcp 在发送本地生成的数据包表示时计算校验和。转发数据包有意保留原始传输层载荷，
+/// 因此这个有界辅助函数会在以太网/IP 序列化前更新 RFC 793/768 伪首部校验和。
 fn update_transport_checksum(
     protocol: OutputRuleProtocol,
     ipv4_repr: &Ipv4Repr,
@@ -1239,7 +1227,7 @@ fn update_transport_checksum(
     sum = checksum_add(sum, payload);
 
     let mut checksum = checksum_finish(sum);
-    // RFC 768 encodes a computed UDP checksum of zero as all ones.
+    // RFC 768 规定，计算结果为零的 UDP 校验和应编码为全一。
     if protocol == OutputRuleProtocol::Udp && checksum == 0 {
         checksum = u16::MAX;
     }
@@ -1473,7 +1461,7 @@ impl MutableFilterRules {
     }
 }
 
-/// Describes the protocol matched by a mutable IPv4 filter rule.
+/// 描述可变 IPv4 过滤规则匹配的协议。
 ///
 /// NETFILTER_STAGE20: The table now covers ICMP Echo plus TCP/UDP port
 /// matchers, which is enough for common firewall demonstrations such as
@@ -1485,19 +1473,18 @@ pub enum OutputRuleProtocol {
     Udp,
 }
 
-/// The minimal connection states available to the filter table.
+/// 过滤表可用的最小连接状态集合。
 ///
-/// A flow is `New` until the bounded NAT table observes its first reply
-/// tuple. It becomes `Established` after that reverse-direction packet.
-/// RELATED, INVALID, TCP state-machine validation, and protocol helpers are
-/// intentionally outside this allocation-free Stage 6 subset.
+/// 在有界 NAT 表观察到首个回复 tuple 前，流处于 `New` 状态；观察到该反向数据包后
+/// 变为 `Established`。RELATED、INVALID、TCP 状态机校验和协议辅助器有意不属于
+/// 这个无分配的阶段 6 子集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConntrackState {
     New,
     Established,
 }
 
-/// Describes the terminal target selected by a mutable IPv4 filter rule.
+/// 描述可变 IPv4 过滤规则选择的终止目标。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputRuleTarget {
     Accept,
@@ -1535,9 +1522,8 @@ impl OutputRuleTarget {
 impl FilterTable {
     /// Evaluates generic IPv4 rules and returns the first matching verdict.
     pub(super) fn evaluate_ipv4(&self, context: Ipv4PacketContext<'_>) -> Verdict {
-        // Transport-aware evaluation below owns mutable filter policies. Keep
-        // this generic pre-parser gate permissive so an ACCEPT exception can
-        // be considered after the TCP, UDP, or ICMP header is available.
+        // 下方感知传输层的评估负责可变过滤策略。这里保持通用预解析入口宽松，
+        // 以便在取得 TCP、UDP 或 ICMP 头后再考虑 ACCEPT 例外。
         let Some(chain) = self.find_chain(context.hook_point()) else {
             return Verdict::Accept;
         };
@@ -1609,15 +1595,14 @@ impl FilterTable {
         src_port: u16,
         dst_port: u16,
     ) -> Verdict {
-        // Resolve NAT state before taking the filter-chain lock. Conntrack
-        // lookups mutate bounded idle timestamps and therefore take NAT_RULES;
-        // keeping the two lock scopes separate prevents a filter/NAT lock
-        // inversion while forwarding is active.
+        // 获取过滤链锁前先解析 NAT 状态。连接跟踪查询会修改有界空闲时间戳，
+        // 因而需要获取 NAT_RULES；分离两个锁的作用域可以避免转发期间
+        // 过滤锁与 NAT 锁顺序反转。
         let conntrack_state =
             conntrack_state_for_transport(protocol, context.ipv4_repr(), src_port, dst_port);
 
-        // NETFILTER_STAGE20: TCP/UDP rules use the same first-match chain
-        // semantics at INPUT, OUTPUT, and FORWARD.
+        // NETFILTER_STAGE20：TCP/UDP 规则在 INPUT、OUTPUT 和 FORWARD 上
+        // 使用相同的首条匹配链语义。
         let packet_len = IPV4_MIN_HEADER_LEN.saturating_add(context.ipv4_repr().payload_len);
         let mut rules = FILTER_RULES[context.hook_point().index()].lock();
         if let Some(verdict) =
@@ -1739,7 +1724,7 @@ pub fn append_output_icmp_echo_rule(
     append_filter_icmp_echo_rule(HookPoint::LocalOut, ident, src_addr, dst_addr, target)
 }
 
-/// Appends an ICMP Echo filter rule to one built-in IPv4 chain.
+/// 向一条内置 IPv4 链追加 ICMP Echo 过滤规则。
 pub fn append_filter_icmp_echo_rule(
     hook_point: HookPoint,
     ident: Option<u16>,
@@ -1774,7 +1759,7 @@ pub fn append_output_transport_rule(
     )
 }
 
-/// Appends a TCP or UDP filter rule to one built-in IPv4 chain.
+/// 向一条内置 IPv4 链追加 TCP 或 UDP 过滤规则。
 pub fn append_filter_transport_rule(
     hook_point: HookPoint,
     protocol: OutputRuleProtocol,
@@ -1798,7 +1783,7 @@ pub fn append_filter_transport_rule(
         )
 }
 
-/// Inserts an ICMP Echo rule before the zero-based rule index in one chain.
+/// 在一条链中从零开始的规则索引前插入 ICMP Echo 规则。
 pub fn insert_filter_icmp_echo_rule(
     hook_point: HookPoint,
     index: usize,
@@ -1812,7 +1797,7 @@ pub fn insert_filter_icmp_echo_rule(
         .insert_icmp_echo(index, ident, src_addr, dst_addr, target)
 }
 
-/// Inserts a TCP or UDP rule before the zero-based rule index in one chain.
+/// 在一条链中从零开始的规则索引前插入 TCP 或 UDP 规则。
 pub fn insert_filter_transport_rule(
     hook_point: HookPoint,
     index: usize,
@@ -1836,7 +1821,7 @@ pub fn insert_filter_transport_rule(
     )
 }
 
-/// Checks whether one filter-chain rule already exists.
+/// 检查一条过滤链规则是否已存在。
 pub fn check_filter_icmp_echo_rule(
     hook_point: HookPoint,
     ident: Option<u16>,
@@ -1849,7 +1834,7 @@ pub fn check_filter_icmp_echo_rule(
         .check_rule(OutputRule::icmp_echo(ident, src_addr, dst_addr, target.into_action()))
 }
 
-/// Checks whether one TCP or UDP filter-chain rule already exists.
+/// 检查一条 TCP 或 UDP 过滤链规则是否已存在。
 pub fn check_filter_transport_rule(
     hook_point: HookPoint,
     protocol: OutputRuleProtocol,
@@ -1871,7 +1856,7 @@ pub fn check_filter_transport_rule(
     ))
 }
 
-/// Replaces a zero-based rule in one filter chain.
+/// 替换一条过滤链中从零开始编号的规则。
 pub fn replace_filter_icmp_echo_rule(
     hook_point: HookPoint,
     index: usize,
@@ -1886,7 +1871,7 @@ pub fn replace_filter_icmp_echo_rule(
     )
 }
 
-/// Replaces a zero-based TCP or UDP rule in one filter chain.
+/// 替换一条过滤链中从零开始编号的 TCP 或 UDP 规则。
 pub fn replace_filter_transport_rule(
     hook_point: HookPoint,
     index: usize,
@@ -1912,7 +1897,7 @@ pub fn replace_filter_transport_rule(
     )
 }
 
-/// Sets the default policy for one built-in IPv4 filter chain.
+/// 设置一条内置 IPv4 过滤链的默认策略。
 pub fn set_filter_chain_policy(hook_point: HookPoint, target: OutputRuleTarget) {
     FILTER_RULES[hook_point.index()]
         .lock()
@@ -1924,7 +1909,7 @@ pub fn delete_output_rule(index: usize) -> bool {
     delete_filter_rule(HookPoint::LocalOut, index)
 }
 
-/// Deletes one rule from a built-in IPv4 filter chain.
+/// 从一条内置 IPv4 过滤链中删除一条规则。
 pub fn delete_filter_rule(hook_point: HookPoint, index: usize) -> bool {
     FILTER_RULES[hook_point.index()].lock().delete(index)
 }
@@ -1934,7 +1919,7 @@ pub fn flush_output_rules() {
     flush_filter_rules(HookPoint::LocalOut);
 }
 
-/// Flushes one built-in IPv4 filter chain.
+/// 清空一条内置 IPv4 过滤链。
 pub fn flush_filter_rules(hook_point: HookPoint) {
     FILTER_RULES[hook_point.index()].lock().flush();
 }
@@ -1944,7 +1929,7 @@ pub fn zero_output_rule_counters() {
     zero_filter_rule_counters(HookPoint::LocalOut);
 }
 
-/// Clears counters in one built-in IPv4 filter chain.
+/// 清零一条内置 IPv4 过滤链中的计数器。
 pub fn zero_filter_rule_counters(hook_point: HookPoint) {
     FILTER_RULES[hook_point.index()].lock().zero_counters();
 }
@@ -1966,7 +1951,7 @@ pub fn append_nat_rule(
     ))
 }
 
-/// Inserts a NAT rule at a zero-based position within one NAT chain.
+/// 在一条 NAT 链中从零开始编号的位置插入 NAT 规则。
 pub fn insert_nat_rule(
     chain: NatRuleChain,
     index: usize,
@@ -1988,7 +1973,7 @@ pub fn insert_nat_rule(
     )
 }
 
-/// Checks whether one NAT rule already exists in either built-in chain.
+/// 检查任一内置链中是否已存在指定 NAT 规则。
 pub fn check_nat_rule(
     chain: NatRuleChain,
     protocol: Option<OutputRuleProtocol>,
@@ -2005,7 +1990,7 @@ pub fn check_nat_rule(
     ))
 }
 
-/// Replaces a zero-based rule position within one NAT chain.
+/// 替换一条 NAT 链中从零开始编号的规则位置。
 pub fn replace_nat_rule(
     chain: NatRuleChain,
     index: usize,
@@ -2027,7 +2012,7 @@ pub fn replace_nat_rule(
     )
 }
 
-/// Deletes a zero-based NAT rule position within one chain.
+/// 删除一条链中从零开始编号的 NAT 规则位置。
 pub fn delete_nat_rule(chain: NatRuleChain, index: usize) -> bool {
     NAT_RULES.lock().delete_rule(chain, index)
 }
@@ -2037,26 +2022,25 @@ pub fn flush_nat_rules(chain: Option<NatRuleChain>) {
     NAT_RULES.lock().flush(chain);
 }
 
-/// Clears NAT rule counters from one chain or from the whole NAT table.
+/// 清零一条链或整张 NAT 表中的规则计数器。
 pub fn zero_nat_rule_counters(chain: Option<NatRuleChain>) {
     NAT_RULES.lock().zero_counters(chain);
 }
 
-/// Applies bounded stateful NAT before an IPv4 forwarding decision.
+/// 在 IPv4 转发决策前应用有界有状态 NAT。
 ///
-/// ICMP keeps its Stage 3 address-only mapping. TCP and UDP additionally
-/// rewrite their four-tuple and checksum for DNAT or reverse NAT replies.
+/// ICMP 保留阶段 3 的纯地址映射。TCP 和 UDP 还会为 DNAT 或反向 NAT 回复
+/// 改写四元组和校验和。
 pub fn rewrite_forwarded_ipv4_prerouting(ipv4_repr: &mut Ipv4Repr, payload: &mut [u8]) {
     NAT_RULES
         .lock()
         .rewrite_forwarded_prerouting(ipv4_repr, payload);
 }
 
-/// Applies bounded stateful NAT after an egress interface is known.
+/// 确定出口接口后应用有界有状态 NAT。
 ///
-/// A MASQUERADE target takes the selected interface's IPv4 address; an SNAT
-/// target takes its configured `--to-source` address. TCP/UDP source ports
-/// are allocated collision-free from a fixed range when a rule omits one.
+/// MASQUERADE 目标使用选定接口的 IPv4 地址；SNAT 目标使用配置的 `--to-source`
+/// 地址。规则未指定 TCP/UDP 源端口时，从固定范围内无冲突分配。
 pub fn rewrite_forwarded_ipv4_postrouting(
     ipv4_repr: &mut Ipv4Repr,
     payload: &mut [u8],

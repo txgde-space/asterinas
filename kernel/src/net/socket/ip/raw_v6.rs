@@ -34,15 +34,13 @@ const RAW_RECV_PACKET_LIMIT: usize = 64;
 const RAW_RECV_BYTE_LIMIT: usize = 256 * 1024;
 const MAX_ERROR_QUEUE: usize = 16;
 
-/// A raw IPv6 socket backed by the kernel loopback path.
+/// 由内核回环路径支撑的 Raw IPv6 Socket。
 ///
-/// This stage intentionally keeps the Ethernet/router path unchanged. It
-/// nevertheless implements the complete AF_INET6 raw socket ABI needed by
-/// `ping -6 ::1`, protocol probes, `IPV6_HDRINCL`, ancillary hop-limit and
-/// traffic-class control, and the local error queue. The next IPv6 stage wires
-/// the same packet representation into Ethernet and route lookup.
+/// 当前阶段有意保持以太网/路由器路径不变，但实现了 `ping -6 ::1`、协议探测、
+/// `IPV6_HDRINCL`、辅助 Hop Limit 与流量类别控制及本地错误队列所需的完整
+/// AF_INET6 Raw Socket ABI。下一 IPv6 阶段会把相同的数据包表示接入以太网和路由查询。
 pub struct Ipv6RawSocket {
-    /// `None` represents Linux's IPPROTO_RAW send-any-protocol socket.
+    /// `None` 表示 Linux 的 IPPROTO_RAW 任意协议发送 Socket。
     protocol: Option<u8>,
     recv_queue: RwLock<RawIpv6RecvQueue>,
     local_endpoint: RwLock<Option<Ipv6Endpoint>>,
@@ -55,7 +53,7 @@ pub struct Ipv6RawSocket {
 }
 
 impl Ipv6RawSocket {
-    /// Creates an IPv6 raw socket after checking `CAP_NET_RAW`.
+    /// 检查 `CAP_NET_RAW` 后创建 IPv6 Raw Socket。
     pub fn new(is_nonblocking: bool, protocol: i32) -> Result<Arc<Self>> {
         check_raw_socket_privilege()?;
         let protocol = raw_ipv6_protocol(protocol)?;

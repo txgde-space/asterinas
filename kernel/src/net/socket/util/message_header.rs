@@ -40,12 +40,11 @@ pub enum ControlMessage {
     IpV6(Ipv6ControlMessage),
 }
 
-/// IPv4 ancillary data accepted by `sendmsg`.
+/// `sendmsg` 接受的 IPv4 辅助数据。
 ///
-/// Linux exposes these values as `int` payloads in a `SOL_IP` control
-/// message.  Keeping the original integer here lets the socket layer perform
-/// the same range validation as `setsockopt` while preserving the ABI shape
-/// of the userspace control message.
+/// Linux 在 `SOL_IP` 控制消息中以 `int` 载荷公开这些值。这里保留原始整数，
+/// 使 Socket 层能够执行与 `setsockopt` 相同的范围校验，同时保持用户态控制消息的
+/// ABI 结构。
 #[derive(Debug)]
 pub enum IpControlMessage {
     Tos(i32),
@@ -53,7 +52,7 @@ pub enum IpControlMessage {
     ExtendedError(IpExtendedError),
 }
 
-/// IPv6 ancillary data accepted by `sendmsg` and returned by `recvmsg`.
+/// `sendmsg` 接受并由 `recvmsg` 返回的 IPv6 辅助数据。
 #[derive(Debug)]
 pub enum Ipv6ControlMessage {
     HopLimit(i32),
@@ -61,11 +60,10 @@ pub enum Ipv6ControlMessage {
     ExtendedError(IpExtendedError),
 }
 
-/// Linux `struct sock_extended_err` carried by an `IP_RECVERR` cmsg.
+/// `IP_RECVERR` 控制消息携带的 Linux `struct sock_extended_err`。
 ///
-/// The first implementation deliberately keeps the fixed 16-byte portion of
-/// the ABI.  An offending address and quoted packet are added by a later
-/// stage once the network stack has a common ICMP error delivery path.
+/// 初始实现有意只保留 ABI 中固定的 16 字节部分。待网络栈拥有通用 ICMP 错误
+/// 投递路径后，后续阶段再加入出错地址和引用数据包。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod)]
 pub struct IpExtendedError {
@@ -211,8 +209,8 @@ impl Ipv6ControlMessage {
     }
 }
 
-// Values from <netinet/in.h>.  They are deliberately local to the ancillary
-// parser so the socket-option enum does not have to model cmsg type numbers.
+// 数值来自 <netinet/in.h>。它们有意只存在于辅助数据解析器中，
+// 使 Socket 选项枚举无需描述控制消息类型号。
 const IP_TOS: i32 = 1;
 const IP_TTL: i32 = 2;
 const IP_RECVERR: i32 = 11;

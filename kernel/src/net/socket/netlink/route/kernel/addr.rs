@@ -28,9 +28,8 @@ pub(super) fn do_get_addr(request_segment: &AddrSegment) -> Result<Vec<RtnlSegme
         return_errno_with_message!(Errno::EOPNOTSUPP, "GETADDR only supports dump requests");
     }
 
-    // Keep the historical dump behavior for unknown family values: older
-    // callers of this read-only implementation used them as an implicit
-    // AF_UNSPEC request.  Explicit AF_INET6 now selects IPv6-only output.
+    // 对未知地址族值保留历史转储行为：该只读实现的旧调用方将其作为隐式
+    // AF_UNSPEC 请求。现在显式 AF_INET6 只选择 IPv6 输出。
     let family = match request_segment.body().family {
         family if family == CSocketAddrFamily::AF_INET as i32 => {
             CSocketAddrFamily::AF_INET as i32

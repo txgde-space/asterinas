@@ -414,9 +414,8 @@ FN_TEST(mutate_netfilter_output_rule_list)
 	fd = TEST_SUCC(open(NETFILTER_RULES_PATH, O_RDWR));
 
 	// NETFILTER_STAGE14: This covers a real ordered rule-list lifecycle:
-	// create two rules, delete the first rule by index, flush the chain, and
-	// restore the default rule for later tests. The default rule is test-owned;
-	// the production table starts empty.
+	// 创建两条规则，按索引删除第一条，清空链，并为后续测试恢复默认规则。
+	// 默认规则由测试持有；生产表初始为空。
 	TEST_RES(write(fd, flush_command, sizeof(flush_command) - 1),
 		 _ret == sizeof(flush_command) - 1);
 	TEST_RES(write(fd, append_default_command,
@@ -531,8 +530,8 @@ END_TEST()
 
 FN_TEST(match_netfilter_ipv4_addresses)
 {
-	// Stage 1 renders all built-in filter chains, so the legacy 512-byte
-	// snapshot buffer can truncate the LocalOut compatibility counter.
+	// 阶段 1 会呈现所有内置过滤链，因此旧的 512 字节快照缓冲区可能截断
+	// LocalOut 兼容计数器。
 	char buffer[2048];
 	const char flush_command[] = "flush OUTPUT";
 	const char append_dst_miss_command[] =
@@ -922,8 +921,8 @@ FN_TEST(run_userspace_iptables_input_forward_filter_chains)
 		"-j", "DROP", NULL
 	};
 
-	// NETFILTER_STAGE1: INPUT and FORWARD rules must be independently managed
-	// even before Stage 2 enables actual multi-interface forwarding.
+	// NETFILTER_STAGE1：即使阶段 2 尚未启用真实多接口转发，
+	// INPUT 和 FORWARD 规则也必须独立管理。
 	TEST_RES(run_iptables_command(input_flush_command), _ret == 0);
 	TEST_RES(run_iptables_command(forward_flush_command), _ret == 0);
 	TEST_RES(run_iptables_command(input_drop_command), _ret == 0);
@@ -967,10 +966,9 @@ FN_TEST(run_userspace_iptables_conntrack_state_matches)
 		"--ctstate", "RELATED", "-j", "DROP", NULL
 	};
 
-	// Stage 6 establishes the user-visible boundary of the bounded conntrack
-	// table. The forwarding acceptance test exercises state transitions; this
-	// regression test proves parser, insertion order, snapshot, and rejection
-	// of unsupported Linux conntrack states through the real iptables shim.
+	// 阶段 6 建立有界连接跟踪表的用户可见边界。转发验收测试覆盖状态转换；
+	// 此回归测试通过真实 iptables shim 验证解析器、插入顺序、快照，
+	// 以及对不受支持的 Linux 连接跟踪状态的拒绝。
 	TEST_RES(run_iptables_command(flush_command), _ret == 0);
 	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
 	TEST_RES(run_iptables_command(tcp_new_command), _ret == 0);
@@ -1014,9 +1012,8 @@ FN_TEST(run_userspace_iptables_insert_and_policy)
 		"echo-request", "--icmp-id", "0x0828", "-j", "DROP", NULL
 	};
 
-	// Stage 5 makes the chain default verdict and first-rule insertion
-	// user-visible. This is the smallest useful policy workflow used by
-	// common firewall setup scripts: default DROP plus explicit exceptions.
+	// 阶段 5 让链的默认判定和首条规则插入对用户可见。
+	// 这是常见防火墙配置脚本使用的最小实用策略流程：默认 DROP 加显式例外。
 	TEST_RES(run_iptables_command(flush_command), _ret == 0);
 	TEST_RES(run_iptables_command(policy_accept_command), _ret == 0);
 	TEST_RES(run_iptables_command(append_drop_command), _ret == 0);
@@ -1090,9 +1087,8 @@ FN_TEST(run_userspace_iptables_check_replace)
 		"MASQUERADE", NULL
 	};
 
-	// NETFILTER_STAGE8: `-C` and `-R` complete the bounded rule lifecycle
-	// for both filter and NAT tables. Checks compare rule configuration while
-	// ignoring runtime counters; replacements reset counters and NAT state.
+	// NETFILTER_STAGE8：`-C` 和 `-R` 补全过滤表与 NAT 表的有界规则生命周期。
+	// 检查会忽略运行时计数器并比较规则配置；替换会重置计数器和 NAT 状态。
 	TEST_RES(run_iptables_command(flush_filter), _ret == 0);
 	TEST_RES(run_iptables_command(append_drop), _ret == 0);
 	TEST_RES(run_iptables_command(check_drop), _ret == 0);
@@ -1224,9 +1220,8 @@ FN_TEST(run_userspace_iptables_nat_rule_lifecycle)
 		"./iptables", "-t", "nat", "-D", "PREROUTING", "1", NULL
 	};
 
-	// NETFILTER_STAGE23: Stage 7 exposes the minimum mutable NAT control
-	// plane needed by setup scripts: per-chain insert/delete, counter zeroing,
-	// and snapshots with independent PREROUTING/POSTROUTING numbering.
+	// NETFILTER_STAGE23：阶段 7 公开配置脚本所需的最小可变 NAT 控制面：
+	// 按链插入/删除、计数器清零，以及使用独立 PREROUTING/POSTROUTING 编号的快照。
 	TEST_RES(run_iptables_command(flush_nat), _ret == 0);
 	TEST_RES(run_iptables_command(append_masquerade), _ret == 0);
 	TEST_RES(run_iptables_command(append_snat), _ret == 0);
@@ -1340,10 +1335,9 @@ FN_TEST(run_netfilter_demo_trace)
 		"MASQUERADE", NULL
 	};
 
-	/* NETFILTER_STAGE8_DEMO: Emit a machine-readable trace consumed by the
-	 * host-side dashboard. This is intentionally a test-only observability
-	 * layer: it changes no kernel behavior and keeps all actions inside the
-	 * existing userspace iptables shim. */
+	/* NETFILTER_STAGE8_DEMO：输出供宿主机 dashboard 消费的机器可读记录。
+	 * 这是有意限定为仅测试使用的可观测层：它不改变任何内核行为，
+	 * 所有操作仍通过现有用户态 iptables shim。 */
 	fprintf(stderr,
 		"NETFILTER_DEMO topology left=10.0.2.2 router-left=10.0.2.15 "
 		"router-right=10.0.3.15 right=10.0.3.2\n");

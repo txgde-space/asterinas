@@ -1,13 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Bounded stateful IPv6 NAT (NAT66) for the forwarding data path.
+//! 转发数据路径使用的有界有状态 IPv6 NAT（NAT66）。
 //!
-//! This is deliberately a small, deterministic subset of ip6tables' nat
-//! table.  It supports address-only SNAT, MASQUERADE, and DNAT for ICMPv6,
-//! TCP, and UDP.  A fixed-size connection table keeps the early kernel data
-//! path allocation-free and makes failure behavior explicit: once the table
-//! is full, a new translation is skipped instead of dropping an unrelated
-//! packet.
+//! 这是 ip6tables nat 表的一个小型、确定性子集。它支持 ICMPv6、TCP 和 UDP 的
+//! 纯地址 SNAT、MASQUERADE 和 DNAT。固定大小的连接表使早期内核数据路径无需分配，
+//! 并明确规定失败行为：表满后跳过新的转换，而不是丢弃无关数据包。
 
 use aster_softirq::BottomHalfDisabled;
 use core::fmt::Write as _;
@@ -23,14 +20,14 @@ const MAX_IPV6_NAT_CONNECTIONS: usize = 64;
 static IPV6_NAT: SpinLock<MutableIpv6Nat, BottomHalfDisabled> =
     SpinLock::new(MutableIpv6Nat::new());
 
-/// The two IPv6 nat-table hooks implemented by this stage.
+/// 当前阶段实现的两个 IPv6 nat 表 Hook。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ipv6NatRuleChain {
     PreRouting,
     PostRouting,
 }
 
-/// Address translation target understood by the Stage 12 control plane.
+/// 阶段 12 控制面支持的地址转换目标。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ipv6NatRuleTarget {
     Dnat,
@@ -129,8 +126,8 @@ impl Ipv6Tuple {
                 Some(u16::from_be_bytes([bytes[40], bytes[41]])),
                 Some(u16::from_be_bytes([bytes[42], bytes[43]])),
             ),
-            // ICMPv6 Echo uses the identifier as a stable flow key.  Other
-            // ICMPv6 messages remain address-matched and carry no ports.
+            // ICMPv6 Echo 使用标识符作为稳定流键。其他 ICMPv6 消息仍按地址匹配，
+            // 并且不携带端口。
             58 if payload_len >= 6 && (bytes[40] == 128 || bytes[40] == 129) => (
                 Some(u16::from_be_bytes([bytes[44], bytes[45]])),
                 None,
@@ -188,8 +185,7 @@ impl Ipv6NatConnection {
             return false;
         }
         if self.protocol == 58 {
-            // Echo request and reply carry the same identifier in the
-            // request's source-port slot; there is no destination port.
+            // Echo 请求和回复在请求的源端口槽位中携带相同标识符；不存在目标端口。
             return self.translated_src_port == tuple.src_port;
         }
         self.translated_dst_port == tuple.src_port
@@ -251,8 +247,7 @@ impl MutableIpv6Nat {
             *slot = None;
         }
         self.rule_len = kept;
-        // A rule flush invalidates mappings that could otherwise rewrite a
-        // later packet using a policy which no longer exists.
+        // 清空规则会使现有映射失效，避免后续数据包使用已不存在的策略进行改写。
         self.connections.fill(None);
     }
 
@@ -416,7 +411,7 @@ impl MutableIpv6Nat {
     }
 }
 
-/// Adds one IPv6 NAT66 rule.
+/// 添加一条 IPv6 NAT66 规则。
 pub fn append_nat_rule(
     chain: Ipv6NatRuleChain,
     protocol: Ipv6RuleProtocol,
@@ -432,12 +427,12 @@ pub fn append_nat_rule(
     ))
 }
 
-/// Applies PREROUTING NAT66 and reverse conntrack mapping to an ingress frame.
+/// 对入口帧应用 PREROUTING NAT66 和反向连接跟踪映射。
 pub fn apply_prerouting(packet: &mut [u8]) -> bool {
     IPV6_NAT.lock().apply_prerouting(packet)
 }
 
-/// Applies POSTROUTING NAT66 after the IPv6 egress interface is selected.
+/// 选定 IPv6 出口接口后应用 POSTROUTING NAT66。
 pub fn apply_postrouting(
     packet: &mut ForwardedIpv6Packet,
     masquerade_addr: Option<Ipv6Address>,
@@ -447,17 +442,17 @@ pub fn apply_postrouting(
         .apply_postrouting(packet, masquerade_addr)
 }
 
-/// Flushes one IPv6 nat chain, or the complete table when `None` is supplied.
+/// 清空一条 IPv6 nat 链；传入 `None` 时清空整张表。
 pub fn flush_rules(chain: Option<Ipv6NatRuleChain>) {
     IPV6_NAT.lock().flush(chain);
 }
 
-/// Clears IPv6 NAT rule and conntrack counters.
+/// 清零 IPv6 NAT 规则和连接跟踪计数器。
 pub fn zero_counters() {
     IPV6_NAT.lock().zero();
 }
 
-/// Renders the IPv6 NAT rules and bounded conntrack table in procfs format.
+/// 以 procfs 格式呈现 IPv6 NAT 规则和有界连接跟踪表。
 pub fn write_snapshot(writer: &mut impl core::fmt::Write) -> core::fmt::Result {
     let nat = IPV6_NAT.lock();
     writeln!(writer, "table nat6")?;

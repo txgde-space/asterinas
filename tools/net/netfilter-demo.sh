@@ -2,9 +2,8 @@
 
 # SPDX-License-Identifier: MPL-2.0
 
-# Host-side helper for the Stage8-Demo dashboard. The QEMU guest emits a
-# machine-readable NETFILTER_DEMO trace; this script prepares the shared log
-# directory and starts the dependency-free Python dashboard.
+# 阶段 8 演示 dashboard 的宿主机辅助脚本。QEMU guest 输出机器可读的
+# NETFILTER_DEMO 记录；此脚本准备共享日志目录，并启动无依赖 Python dashboard。
 
 set -euo pipefail
 

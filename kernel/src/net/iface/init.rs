@@ -162,8 +162,8 @@ fn new_virtio(device_name: &str, index: usize) -> Option<Arc<Iface>> {
 
     const VIRTIO_ADDRESS_PREFIX_LEN: u8 = 24; // mask: 255.255.255.0
 
-    // QEMU's first user network is 10.0.2.0/24.  The optional second
-    // network uses 10.0.3.0/24; further interfaces follow the same layout.
+    // QEMU 的第一张用户网络为 10.0.2.0/24，可选的第二张网络使用 10.0.3.0/24；
+    // 更多接口沿用相同布局。
     let subnet = u8::try_from(index.checked_add(2)?).ok()?;
     let virtio_address = Ipv4Address::new(10, 0, subnet, 15);
     let virtio_gateway = Ipv4Address::new(10, 0, subnet, 2);

@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Types shared by the IPv4 forwarding data path and its platform integration.
+//! IPv4 转发数据路径及其平台集成所共享的类型。
 //!
-//! The forwarding decision is made by the platform because it owns the set of
-//! interfaces and the routing policy.  This crate owns the bounded egress
-//! queue and the packet serialization that sends a selected packet.
+//! 转发决策由平台作出，因为平台持有接口集合和路由策略。本 crate 负责有界出口
+//! 队列，以及发送选定数据包所需的序列化。
 
 use alloc::vec::Vec;
 
 use smoltcp::wire::{Ipv4Repr, Ipv6Address};
 
-/// An IPv4 datagram that has passed ingress validation and is ready for an
-/// egress interface.
+/// 已通过入口校验并可交给出口接口的 IPv4 数据报。
 ///
-/// `ip_repr` deliberately contains a parsed IPv4 header.  Re-emitting it at
-/// egress recalculates the IPv4 header checksum after the router decrements
-/// the hop limit.  The transport payload is otherwise opaque in Stage 2.
+/// `ip_repr` 有意保存解析后的 IPv4 头。路由器递减跳数限制后，在出口重新生成该头
+/// 会重算 IPv4 头校验和。阶段 2 不解析其余传输层载荷。
 #[derive(Debug)]
 pub struct ForwardedIpv4Packet {
     pub ip_repr: Ipv4Repr,
@@ -23,10 +20,8 @@ pub struct ForwardedIpv4Packet {
     postrouting_nat_applied: bool,
 }
 
-/// An IPv6 datagram that has passed ingress validation and is ready for an
-/// egress interface.  IPv6 forwarding keeps the complete wire datagram so
-/// extension headers and opaque transport payloads survive the router.  The
-/// only mutation performed by the forwarding policy is the Hop Limit byte.
+/// 已通过入口校验并可交给出口接口的 IPv6 数据报。IPv6 转发保留完整线格式数据报，
+/// 使扩展头和不透明传输层载荷能够穿过路由器。转发策略只修改 Hop Limit 字节。
 #[derive(Debug)]
 pub struct ForwardedIpv6Packet {
     pub src_addr: Ipv6Address,
@@ -37,7 +32,7 @@ pub struct ForwardedIpv6Packet {
 impl ForwardedIpv6Packet {
     const HEADER_LEN: usize = 40;
 
-    /// Parses a complete IPv6 datagram copied from an Ethernet frame.
+    /// 解析从以太网帧复制出的完整 IPv6 数据报。
     pub fn new(bytes: Vec<u8>) -> Option<Self> {
         if bytes.len() < Self::HEADER_LEN || bytes[0] >> 4 != 6 {
             return None;
@@ -92,7 +87,7 @@ impl ForwardedIpv6Packet {
         &self.bytes
     }
 
-    /// Rewrites the source address and repairs the IPv6 transport checksum.
+    /// 改写源地址并修复 IPv6 传输层校验和。
     pub(crate) fn rewrite_source_address(&mut self, address: Ipv6Address) -> bool {
         if !rewrite_ipv6_addresses(&mut self.bytes, Some(address), None) {
             return false;
@@ -101,8 +96,7 @@ impl ForwardedIpv6Packet {
         true
     }
 
-    /// Rewrites the destination address and repairs the IPv6 transport
-    /// checksum.
+    /// 改写目标地址并修复 IPv6 传输层校验和。
     pub(crate) fn rewrite_destination_address(&mut self, address: Ipv6Address) -> bool {
         if !rewrite_ipv6_addresses(&mut self.bytes, None, Some(address)) {
             return false;
@@ -112,12 +106,11 @@ impl ForwardedIpv6Packet {
     }
 }
 
-/// Rewrites one or both IPv6 addresses in a serialized datagram and
-/// recalculates the checksum of the fixed-header TCP, UDP, or ICMPv6 payload.
+/// 改写序列化数据报中的一个或两个 IPv6 地址，并重算固定头 TCP、UDP 或 ICMPv6
+/// 载荷的校验和。
 ///
-/// Stage 12 intentionally does not parse extension-header chains.  Packets
-/// using an extension header are left untouched by NAT rather than being
-/// rewritten with an incorrect pseudo-header checksum.
+/// 阶段 12 有意不解析扩展头链。对于使用扩展头的数据包，NAT 保持其不变，
+/// 避免用错误的伪首部校验和进行改写。
 pub(crate) fn rewrite_ipv6_addresses(
     bytes: &mut [u8],
     source: Option<Ipv6Address>,
@@ -135,9 +128,9 @@ pub(crate) fn rewrite_ipv6_addresses(
     }
 
     let checksum_offset = match bytes[6] {
-        6 => HEADER_LEN + 16,  // TCP checksum
-        17 => HEADER_LEN + 6,  // UDP checksum
-        58 => HEADER_LEN + 2,  // ICMPv6 checksum
+        6 => HEADER_LEN + 16,  // TCP 校验和
+        17 => HEADER_LEN + 6,  // UDP 校验和
+        58 => HEADER_LEN + 2,  // ICMPv6 校验和
         _ => return false,
     };
     if checksum_offset + 2 > end {
@@ -195,40 +188,39 @@ impl ForwardedIpv4Packet {
         }
     }
 
-    /// Returns the bytes required to serialize this complete IPv4 datagram.
+    /// 返回序列化该完整 IPv4 数据报所需的字节数。
     ///
-    /// `Ipv4Repr::buffer_len` describes the IPv4 header alone. The forwarding
-    /// path keeps the transport payload separately, so transmitters must add
-    /// both lengths before obtaining a device buffer.
+    /// `Ipv4Repr::buffer_len` 只描述 IPv4 头。转发路径单独保存传输层载荷，
+    /// 因此发送方在获取设备缓冲区前必须把两者长度相加。
     pub fn buffer_len(&self) -> usize {
         self.ip_repr.buffer_len().saturating_add(self.payload.len())
     }
 
-    /// Returns whether POSTROUTING NAT has already been evaluated.
+    /// 返回是否已经执行过 POSTROUTING NAT 判定。
     ///
-    /// The egress queue may retain a packet while Ethernet resolves ARP. NAT
-    /// must run once per forwarded datagram rather than once per retry.
+    /// 以太网解析 ARP 时，出口队列可能保留数据包。每个转发数据报只能执行一次 NAT，
+    /// 而不能在每次重试时重复执行。
     pub fn postrouting_nat_applied(&self) -> bool {
         self.postrouting_nat_applied
     }
 
-    /// Marks this packet after its POSTROUTING NAT decision is made.
+    /// 在完成 POSTROUTING NAT 决策后标记该数据包。
     pub fn mark_postrouting_nat_applied(&mut self) {
         self.postrouting_nat_applied = true;
     }
 }
 
-/// Result of asking the platform forwarding policy to route a packet.
+/// 请求平台转发策略路由数据包所得的结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ForwardingResult {
-    /// The packet was accepted by an egress interface queue.
+    /// 数据包已被出口接口队列接收。
     Queued,
-    /// IPv4 forwarding is administratively disabled.
+    /// IPv4 转发被管理配置禁用。
     Disabled,
-    /// No eligible egress interface owns a route for the destination.
+    /// 没有符合条件的出口接口拥有到目标地址的路由。
     NoRoute,
-    /// The packet cannot be forwarded because its hop limit would expire.
+    /// 数据包的跳数限制即将耗尽，无法继续转发。
     HopLimitExceeded,
-    /// The selected egress queue is bounded and currently full.
+    /// 选定的有界出口队列当前已满。
     QueueFull,
 }

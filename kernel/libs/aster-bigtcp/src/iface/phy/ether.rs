@@ -32,9 +32,8 @@ pub struct EtherIface<D, E: Ext> {
     common: IfaceCommon<E>,
     ether_addr: EthernetAddress,
     arp_table: SpinLock<BTreeMap<Ipv4Address, EthernetAddress>, BottomHalfDisabled>,
-    /// A small, non-expiring IPv6 neighbor cache used by the packet-path
-    /// implementation.  NDP advertisements refresh entries; a later stage
-    /// will add timers and queue packets while resolution is in progress.
+    /// 数据包路径实现使用的小型、不会过期的 IPv6 邻居缓存。
+    /// NDP 通告会刷新表项；后续阶段将增加定时器，并在解析期间缓存数据包。
     ndp_table: SpinLock<BTreeMap<Ipv6Address, EthernetAddress>, BottomHalfDisabled>,
 }
 
@@ -131,10 +130,9 @@ impl<D, E: Ext> EtherIface<D, E> {
         iface_cx: &mut Context,
         tx_token: T,
     ) -> Option<(Ipv4Packet<&'pkt [u8]>, T)> {
-        // IPv6 is handled before the IPv4-only poll context.  This keeps the
-        // existing IPv4/NAT path unchanged while giving Ethernet interfaces a
-        // real ICMPv6 + NDP receive path.  The reply consumes the transmit
-        // token directly, just like an ARP response does below.
+        // 在仅支持 IPv4 的轮询上下文之前处理 IPv6。这样既不改变现有 IPv4/NAT 路径，
+        // 又能为以太网接口提供真实的 ICMPv6 + NDP 接收路径。
+        // 回复会像下方的 ARP 响应一样直接消耗发送令牌。
         if let Ok(frame) = EthernetFrame::new_checked(data) {
             if let Ok(repr) = EthernetRepr::parse(&frame) {
                 if repr.ethertype == EthernetProtocol::Ipv6 {
@@ -191,11 +189,9 @@ impl<D, E: Ext> EtherIface<D, E> {
         }
     }
 
-    /// Processes the fixed-header ICMPv6 messages needed to make an Ethernet
-    /// interface usable by ordinary `ping -6` peers.  We intentionally keep
-    /// this routine byte-oriented: the vendored smoltcp wire API is used by
-    /// the existing IPv4 path, while this boundary must also accept frames
-    /// before they can enter that IPv4-only poll context.
+    /// 处理普通 `ping -6` 对端使用以太网接口所需的固定头 ICMPv6 消息。
+    /// 该例程有意按字节处理：现有 IPv4 路径使用内置的 smoltcp wire API，
+    /// 而此边界还必须接收尚未进入仅 IPv4 轮询上下文的帧。
     fn process_ipv6_frame<T: TxToken>(
         &self,
         packet: &[u8],
@@ -218,10 +214,9 @@ impl<D, E: Ext> EtherIface<D, E> {
             return;
         }
 
-        // PREROUTING owns both configured DNAT and the reverse half of an
-        // existing NAT66 connection.  Work on a bounded copy so the
-        // Ethernet receive buffer remains immutable while the translated
-        // addresses and transport checksum are validated below.
+        // PREROUTING 同时负责已配置的 DNAT 和现有 NAT66 连接的反向转换。
+        // 在有界副本上操作，使以太网接收缓冲区保持不可变，
+        // 同时便于下方校验转换后的地址和传输层校验和。
         let mut translated_packet = packet[..IPV6_HEADER_LEN + payload_len].to_vec();
         crate::netfilter::apply_ipv6_nat_prerouting(&mut translated_packet);
         let packet = translated_packet.as_slice();
@@ -255,10 +250,8 @@ impl<D, E: Ext> EtherIface<D, E> {
             return;
         }
 
-        // A non-local unicast frame is a routed datagram. Keep extension
-        // headers and opaque transport payloads intact; IPv6 forwarding only
-        // decrements Hop Limit before handing the packet to the platform
-        // routing policy.
+        // 非本地单播帧属于需要路由的数据报。保留扩展头和不透明传输层载荷；
+        // IPv6 转发只递减 Hop Limit，然后把数据包交给平台路由策略。
         if !destination.is_multicast()
             && iface_cx
                 .ipv6_addr()
@@ -336,9 +329,8 @@ impl<D, E: Ext> EtherIface<D, E> {
                 Self::emit_ipv6_frame(&ether, &reply, tx_token);
             }
             ICMPV6_ECHO_REPLY => {
-                // Echo replies are consumed by the future IPv6 raw/ICMP
-                // socket path.  The NDP cache update above remains useful for
-                // subsequent egress packets.
+                // Echo Reply 将由后续的 IPv6 Raw/ICMP Socket 路径消费。
+                // 上方的 NDP 缓存更新仍可供后续出口数据包使用。
             }
             _ => {}
         }
@@ -431,8 +423,8 @@ impl<D, E: Ext> EtherIface<D, E> {
         packet[24..40].copy_from_slice(&destination.octets());
         packet[40] = 135;
         packet[48..64].copy_from_slice(&target.octets());
-        packet[64] = 1; // Source link-layer address.
-        packet[65] = 1; // One 8-byte option unit.
+        packet[64] = 1; // 源链路层地址。
+        packet[65] = 1; // 一个 8 字节选项单元。
         packet[66..72].copy_from_slice(self.ether_addr.as_bytes());
         let checksum = Self::ipv6_checksum(&packet[8..24], &packet[24..40], &packet[40..]);
         packet[42..44].copy_from_slice(&checksum.to_be_bytes());
@@ -451,10 +443,10 @@ impl<D, E: Ext> EtherIface<D, E> {
         reply[24..40].copy_from_slice(&destination.octets());
 
         reply[40] = 136;
-        reply[44] = 0x60; // Solicited + Override.
+        reply[44] = 0x60; // Solicited + Override 标志。
         reply[48..64].copy_from_slice(&source.octets());
-        reply[64] = 2; // Target link-layer address.
-        reply[65] = 1; // One 8-byte option unit.
+        reply[64] = 2; // 目标链路层地址。
+        reply[65] = 1; // 一个 8 字节选项单元。
         reply[66..72].copy_from_slice(self.ether_addr.as_bytes());
         reply[42] = 0;
         reply[43] = 0;
@@ -599,9 +591,8 @@ impl<D, E: Ext> EtherIface<D, E> {
         } else if let Some(address) = self.ndp_table.lock().get(&next_hop) {
             *address
         } else {
-            // A forwarded packet is kept at the head of the queue while the
-            // solicitation consumes this transmit token. The Neighbor
-            // Advertisement is processed on the next receive poll.
+            // 邻居请求消耗当前发送令牌时，转发数据包会保留在队首。
+            // 下一次接收轮询会处理邻居通告。
             let Some(source) = iface_cx.ipv6_addr() else {
                 return true;
             };
@@ -669,9 +660,8 @@ impl<D, E: Ext> EtherIface<D, E> {
                 } else if let Some(next_hop_ether) = self.ndp_table.lock().get(&next_hop_ip) {
                     *next_hop_ether
                 } else {
-                    // NDP solicitation/retransmission is emitted by the
-                    // receive path in this stage.  Do not send an IPv6 frame
-                    // to an unresolved unicast neighbor.
+                    // 当前阶段由接收路径发送 NDP 请求或重传。
+                    // 不要向尚未解析的单播邻居发送 IPv6 帧。
                     return Err(None);
                 };
 
@@ -690,10 +680,9 @@ impl<D, E: Ext> EtherIface<D, E> {
         } else if let Some(next_hop_ether) = self.arp_table.lock().get(&next_hop_ip) {
             *next_hop_ether
         } else {
-            // If the next-hop Ethernet address cannot be resolved, ask for it.
-            // Forwarded packets are requeued by the caller after the ARP frame
-            // consumes this transmit token, so they can be sent after the ARP
-            // reply is processed instead of depending on upper-layer retries.
+            // 如果无法解析下一跳以太网地址，则发起查询。
+            // ARP 帧消耗当前发送令牌后，调用方会重新入队转发数据包；
+            // 因此处理 ARP 回复后即可发送，而不依赖上层重试。
             return Err(Some(ArpRepr::EthernetIpv4 {
                 operation: ArpOperation::Request,
                 source_hardware_addr: self.ether_addr,
@@ -734,8 +723,7 @@ impl<D, E: Ext> EtherIface<D, E> {
         );
     }
 
-    /// Consumes the token and emits a routed packet without reparsing or
-    /// mutating its transport payload.
+    /// 消耗令牌并发送已路由的数据包，不重新解析或修改其传输层载荷。
     fn emit_forwarded_ip<T: TxToken>(
         ether_repr: &EthernetRepr,
         packet: &ForwardedIpv4Packet,

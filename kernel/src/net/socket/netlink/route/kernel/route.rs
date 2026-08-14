@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Handle read-only IPv4 and IPv6 route dumps.
+//! 处理只读 IPv4 和 IPv6 路由转储。
 
 use aster_bigtcp::wire::{Ipv4Address, Ipv6Address};
 
@@ -66,7 +66,7 @@ fn append_ipv4_routes(
         return;
     };
 
-    // Every configured IPv4 address contributes a directly-connected route.
+    // 每个已配置的 IPv4 地址都会产生一条直连路由。
     let network = network_address(address, prefix_len);
     let connected_attrs = connected_route_attrs(iface, address, prefix_len, network);
     response_segments.push(RtnlSegment::NewRoute(RouteSegment::new(
@@ -85,9 +85,8 @@ fn append_ipv4_routes(
         connected_attrs,
     )));
 
-    // EtherIface stores the configured smoltcp next hop.  Expose it as a
-    // conventional default route so `ip -4 route` shows the same path used
-    // by raw sockets and transport sockets.
+    // EtherIface 保存已配置的 smoltcp 下一跳。将其暴露为常规默认路由，
+    // 使 `ip -4 route` 显示 Raw Socket 和传输层 Socket 所使用的相同路径。
     if let Some(gateway) = iface.ipv4_gateway() {
         let attrs = vec![
             RouteAttr::Gateway(gateway.octets()),

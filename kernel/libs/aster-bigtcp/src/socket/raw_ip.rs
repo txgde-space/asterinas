@@ -98,11 +98,10 @@ impl RawIpv4TxPacket {
         }
     }
 
-    /// Emits a raw IPv4 datagram while retaining the socket's TOS byte.
+    /// 发送 Raw IPv4 数据报，同时保留 Socket 的 TOS 字节。
     ///
-    /// smoltcp's high-level `Ipv4Repr` intentionally has no TOS field, so the
-    /// header is emitted normally and then the DSCP/ECN byte and checksum are
-    /// fixed up here before copying the opaque protocol payload.
+    /// smoltcp 的高层 `Ipv4Repr` 有意不包含 TOS 字段，因此先正常生成头，
+    /// 再在此修正 DSCP/ECN 字节和校验和，最后复制不透明协议载荷。
     pub(crate) fn emit_ipv4(
         &self,
         buffer: &mut [u8],

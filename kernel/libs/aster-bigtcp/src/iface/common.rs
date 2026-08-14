@@ -130,10 +130,10 @@ pub static INTERFACE_INDEX_ALLOCATOR: AtomicU32 = AtomicU32::new(1);
 
 // Lock order: `interface` -> `sockets`
 impl<E: Ext> IfaceCommon<E> {
-    /// Queues a routed packet for this interface.
+    /// 把已路由的数据包加入该接口的队列。
     ///
-    /// The queue is intentionally bounded: ingress runs in an interrupt-adjacent
-    /// path, so forwarding must not be able to consume unbounded kernel memory.
+    /// 该队列有意设置为有界：入口处理运行在靠近中断的路径中，
+    /// 因此转发不能无限消耗内核内存。
     pub(crate) fn enqueue_forwarded_ipv4(&self, packet: ForwardedIpv4Packet) -> bool {
         const FORWARD_QUEUE_LIMIT: usize = 256;
 
@@ -145,7 +145,7 @@ impl<E: Ext> IfaceCommon<E> {
         true
     }
 
-    /// Queues a routed IPv6 datagram for this interface.
+    /// 把已路由的 IPv6 数据报加入该接口的队列。
     pub(crate) fn enqueue_forwarded_ipv6(&self, packet: ForwardedIpv6Packet) -> bool {
         const FORWARD_QUEUE_LIMIT: usize = 256;
 

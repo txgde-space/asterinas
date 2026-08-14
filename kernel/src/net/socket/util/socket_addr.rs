@@ -16,12 +16,11 @@ pub enum SocketAddr {
     Vsock(VsockSocketAddr),
 }
 
-/// A 128-bit IPv6 address used by the socket ABI.
+/// Socket ABI 使用的 128 位 IPv6 地址。
 ///
-/// The network dataplane is being enabled in stages. Keeping the address type
-/// in the kernel socket layer lets AF_INET6 raw sockets work before the
-/// Ethernet/router path grows IPv6 support, while preserving the exact
-/// `sockaddr_in6` byte representation exposed to applications.
+/// 网络数据面分阶段启用。把地址类型保留在内核 Socket 层，可以在以太网/路由器路径
+/// 加入 IPv6 支持前先让 AF_INET6 Raw Socket 工作，同时保持向应用暴露的
+/// `sockaddr_in6` 精确字节表示。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Ipv6Address([u8; 16]);
 
