@@ -9,14 +9,20 @@
 ## 文档与演示
 
 - [技术文档](docs/技术文档-Rust%20OS%20网络栈功能扩展与%20Linux%20兼容性增强.docx)
-- [进度汇报 PPT](docs/进度汇报-Rust%20OS%20网络栈功能扩展与%20Linux%20兼容性增强.pptx)
-- [进度汇报 PDF](docs/进度汇报-Rust%20OS%20网络栈功能扩展与%20Linux%20兼容性增强.pdf)
+- [进度汇报 PPT](docs/进度汇报PPT-Rust%20OS%20网络栈功能扩展与%20Linux%20兼容性增强.pptx)
+- [进度汇报 PDF](docs/进度汇报PPT-Rust%20OS%20网络栈功能扩展与%20Linux%20兼容性增强.pdf)
 
 > **视频文件较大，无法上传完整视频至平台。可通过以下地址观看项目演示视频及决赛展示视频（分P）：**
 >
 > **【操作演示视频（Rust OS 网络栈功能扩展与 Linux 兼容性增强---Proj12）】**
 >
 > https://www.bilibili.com/video/BV1LpTw6DETN/?share_source=copy_web&vd_source=9d6745e0ab38139840865d59e701a2f0
+
+
+> 项目在github存在镜像仓库，链接及大概热力图如下
+>
+>[GitHub 镜像仓库](https://github.com/txgde-space/asterinas)
+![Github镜像仓库大概热力图](./docs/github.png)
 
 ## 项目背景
 
@@ -288,6 +294,8 @@ linux_socket_compat
 ```bash
 scripts/compare-linux-socket-compat.sh all
 ```
+
+脚本默认使用项目开发前的初始提交 `2843ea036615fef5eb9248459e01872622611980` 作为原始 Asterinas 基线，因此不依赖额外的远程分支。也可以通过 `ORIGINAL_REF=<commit>` 指定其他基线版本。
 
 对比结果：
 

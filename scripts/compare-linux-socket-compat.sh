@@ -8,7 +8,7 @@ COMMON_TEST="test/initramfs/src/regression/network/linux_socket_compat_common.c"
 REGRESSION_RUNNER="test/initramfs/src/regression/scripts/run_regression_test.sh"
 UBUNTU_IMAGE="${UBUNTU_IMAGE:-docker.io/library/ubuntu:24.04}"
 ASTERINAS_IMAGE="${ASTERINAS_IMAGE:-docker.io/asterinas/asterinas:0.18.0-20260603}"
-ORIGINAL_REF="${ORIGINAL_REF:-old-origin/main}"
+ORIGINAL_REF="${ORIGINAL_REF:-2843ea036615fef5eb9248459e01872622611980}"
 MODE="${1:-all}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/target/linux-socket-compat-compare}"
 RESULT_FILE="${LOG_DIR}/summary.tsv"
@@ -19,7 +19,8 @@ Usage:
   scripts/compare-linux-socket-compat.sh [all|ubuntu|current|original]
 
 Environment:
-  ORIGINAL_REF       Git ref used as the pre-fix Asterinas baseline. Default: old-origin/main
+  ORIGINAL_REF       Git ref used as the pre-fix Asterinas baseline.
+                     Default: 2843ea036615fef5eb9248459e01872622611980
   UBUNTU_IMAGE       Linux baseline image. Default: docker.io/library/ubuntu:24.04
   ASTERINAS_IMAGE    Asterinas build image. Default: docker.io/asterinas/asterinas:0.18.0-20260603
   LOG_DIR            Directory for captured logs. Default: target/linux-socket-compat-compare
